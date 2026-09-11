@@ -40,6 +40,14 @@
 # `UNVERIFIED` / `NOT_IMPLEMENTED`, so the one measurement this file was written to take has
 # been taken. The Windows failure is recorded at the step that owns it, below.
 #
+# WHAT THE LOCAL CONTAINERS COVER, so the dormancy costs less than it looks. The same seven
+# steps run under docker on this operator's machine against `gb-export-public.py`'s output —
+# `python:3.12-slim`, `python:3.9-slim` and `python:3.12-alpine`, all three GREEN (54/54 gate
+# fixtures, 6/6 planted platforms, 8/8 spine proofs including the SIGINT/exit-130 one). That
+# widens Linux coverage past what this matrix ever had: aarch64 as well as the runner's x86_64,
+# and musl as well as glibc. What containers CANNOT replace is `windows-latest` and the
+# `macos-13` Intel floor, which is exactly what the table above leaves open.
+#
 # WHY THIS WORKFLOW IS DORMANT. The trigger is `workflow_dispatch` only: no push, no
 # pull_request. Hosted minutes are a recurring cost and this tool has no users yet, so the
 # matrix runs when a human asks it to and not one minute sooner. Flip `on:` back to
@@ -91,10 +99,19 @@ jobs:
         # the gate: Git for Windows defaults to `core.autocrlf=true` and the runner image keeps
         # that default, so checkout rewrote LF to CRLF in every `fixtures/**/pages/*.md`, and
         # `bin/gb-surface-gate.py:121` hashes the file's RAW BYTES against a manifest digest
-        # taken over LF. Reproduced locally on macOS by CRLF-converting a copy of
-        # `fixtures/known-good`: GREEN becomes `RED 16 source(s) failed integrity`, same
-        # message. Turning the translation off makes the runner hash what git stores, which is
-        # what the digest is a digest OF — it does not weaken the check.
+        # taken over LF.
+        #
+        # PROVEN WITHOUT A WINDOWS MACHINE, which is why this step is trusted despite the
+        # matrix being dormant. `core.autocrlf` is a git setting, not a Windows one, so the
+        # whole failure reproduces on macOS by cloning the published tree twice:
+        #
+        #   git -c core.autocrlf=true  clone …  ->  SELFTEST FAIL — 49/54 fixtures
+        #   git -c core.autocrlf=false clone …  ->  SELFTEST PASS — 54/54 fixtures
+        #
+        # 49/54 is the same number both Windows cells produced, so this is the same defect and
+        # not a lookalike, and the second line is the fix below being exercised. Turning the
+        # translation off makes the runner hash what git stores, which is what the digest is a
+        # digest OF — it does not weaken the check.
         #
         # THIS IS A WORKAROUND FOR A REAL DEFECT, recorded so it is not mistaken for a fix. Any
         # human cloning this repository on Windows with stock Git settings gets the same RED on
