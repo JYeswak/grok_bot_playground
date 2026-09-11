@@ -27,12 +27,29 @@
 #      `send_signal(SIGINT)` raises there, and 130 is a POSIX shell convention. The step is
 #      therefore SCOPED to POSIX runners rather than made to pass, because a proof that was
 #      weakened until it went green proves nothing. Windows cancel-correctness is UNMEASURED.
+#
+# WHAT HAS ACTUALLY BEEN MEASURED, and when. Run 34615248803 on JYeswak/grok_bot_playground,
+# commit 88a6a7e, 2026-09-11 — the first time any of this ran on a machine nobody here owns:
+#
+#   ubuntu-latest  py3.9   SUCCESS     ubuntu-latest  py3.12  SUCCESS
+#   macos-latest   py3.12  SUCCESS     macos-13       py3.9   never started (run cancelled)
+#   windows-latest py3.9   FAILURE     windows-latest py3.12  FAILURE
+#
+# Both Windows cells reached step 8 and died there, which means steps 1-7 passed — including
+# "this runner classifies itself correctly". A real Windows machine answered `windows` /
+# `UNVERIFIED` / `NOT_IMPLEMENTED`, so the one measurement this file was written to take has
+# been taken. The Windows failure is recorded at the step that owns it, below.
+#
+# WHY THIS WORKFLOW IS DORMANT. The trigger is `workflow_dispatch` only: no push, no
+# pull_request. Hosted minutes are a recurring cost and this tool has no users yet, so the
+# matrix runs when a human asks it to and not one minute sooner. Flip `on:` back to
+# `push: {branches: [main]}` + `pull_request:` when downloads justify the spend; nothing else
+# in the file has to change.
 name: ci
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  # MANUAL ONLY — deliberately. See "WHY THIS WORKFLOW IS DORMANT" in the header. `push:` and
+  # `pull_request:` are absent on purpose, not forgotten; re-add them when this tool has users.
   workflow_dispatch:
 
 permissions:
@@ -67,6 +84,27 @@ jobs:
             python: "3.9"
 
     steps:
+      - name: check out the bytes that were committed, not a translation of them
+        # MEASURED, run 34615248803: both Windows cells went RED here at `gb-surface-gate.py
+        # --selftest` — 49/54, with all five `known-good*` fixtures failing on
+        # `g1-surface-fetch-integrity: sha256 mismatch between manifest and file`. Cause is not
+        # the gate: Git for Windows defaults to `core.autocrlf=true` and the runner image keeps
+        # that default, so checkout rewrote LF to CRLF in every `fixtures/**/pages/*.md`, and
+        # `bin/gb-surface-gate.py:121` hashes the file's RAW BYTES against a manifest digest
+        # taken over LF. Reproduced locally on macOS by CRLF-converting a copy of
+        # `fixtures/known-good`: GREEN becomes `RED 16 source(s) failed integrity`, same
+        # message. Turning the translation off makes the runner hash what git stores, which is
+        # what the digest is a digest OF — it does not weaken the check.
+        #
+        # THIS IS A WORKAROUND FOR A REAL DEFECT, recorded so it is not mistaken for a fix. Any
+        # human cloning this repository on Windows with stock Git settings gets the same RED on
+        # a clean tree, and they have no workflow to patch. The actual fix is a `.gitattributes`
+        # at the repository root declaring the hashed corpus untranslatable (`fixtures/** -text`
+        # at minimum), which lives outside this file.
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
