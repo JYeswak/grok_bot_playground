@@ -1,0 +1,28 @@
+{
+ "why": "a Linux client installed under $XDG_CONFIG_HOME, same Electron rule",
+ "sys_platform": "linux",
+ "plant": [
+  "config/Grok Bot"
+ ],
+ "env": {
+  "HOME": "home",
+  "XDG_CONFIG_HOME": "config"
+ },
+ "expect": {
+  "os": "linux",
+  "status": "UNVERIFIED",
+  "support_dir": "config/Grok Bot",
+  "support_dir_exists": true,
+  "capabilities": {
+   "credential_read": "NOT_IMPLEMENTED",
+   "scheduler_install": "NOT_IMPLEMENTED",
+   "deployment_audit": "PARTIAL",
+   "local_exec_policy": "AVAILABLE"
+  },
+  "why_mentions": "INFERRED",
+  "keychain_probe": {
+   "status": "NOT_IMPLEMENTED",
+   "has_remediation": true
+  }
+ }
+}

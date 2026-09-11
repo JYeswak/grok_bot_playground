@@ -845,11 +845,13 @@ def _cli_contract_fixtures(
             '"""A CLI whose HANDLERS lost a verb. Parsed by g24, never executed."""\n'
             "EXIT_CODES = {0: 'ok', 1: 'findings', 2: 'usage', 3: 'env', 4: 'upstream', 5: 'refused'}\n"
             "COMMANDS = {'triage': 1, 'doctor': 1, 'health': 1, 'repair': 1, 'validate': 1,\n"
-            "            'audit': 1, 'why': 1, 'capabilities': 1, 'robot-docs': 1, 'quickstart': 1,\n"
-            "            'examples': 1, 'info': 1, 'help': 1, 'completion': 1}\n"
+            "            'audit': 1, 'why': 1, 'work': 1, 'setup': 1, 'platform': 1,\n"
+            "            'capabilities': 1, 'robot-docs': 1, 'quickstart': 1, 'examples': 1,\n"
+            "            'info': 1, 'help': 1, 'completion': 1}\n"
             "HANDLERS = {'triage': 1, 'doctor': 1, 'health': 1, 'repair': 1, 'validate': 1,\n"
-            "            'audit': 1, 'why': 1, 'capabilities': 1, 'robot-docs': 1, 'quickstart': 1,\n"
-            "            'examples': 1, 'info': 1, 'help': 1}\n"
+            "            'audit': 1, 'why': 1, 'work': 1, 'setup': 1, 'platform': 1,\n"
+            "            'capabilities': 1, 'robot-docs': 1, 'quickstart': 1, 'examples': 1,\n"
+            "            'info': 1, 'help': 1}\n"
         ),
     )
     gb_stub.chmod(0o755)
@@ -925,6 +927,216 @@ def _typed_spine_fixtures(
             "    return out.decode()\n"
         ),
     )
+
+
+# ---------------------------------------------------------------------------------------------
+# The planted-platform corpus — `fixtures/platform/`
+#
+# A DIFFERENT KIND OF FIXTURE, deliberately in its own subtree. Every root above is a working
+# root the GATE grades. These are not: they are planted HOMES, planted `%APPDATA%`s and planted
+# `$XDG_CONFIG_HOME`s that `gb platform --selftest` resolves through `gblib.platform_support`.
+# They live under `fixtures/platform/` so the gate's fixture sweep (which iterates its own
+# FIXTURE_EXPECT table, not the directory) never sees them and never has to learn about them.
+#
+# WHY THEY EXIST. Nobody in this repo owns a Windows machine or a Linux machine. Before this
+# corpus the Windows and Linux branches of the resolver could only be asserted in prose, which
+# is the same standard as not having written them. Making `platform_support` a pure function of
+# (platform string, environment) makes those branches executable on a Mac: plant a foreign
+# environment, resolve it, and check the answer against what the fixture says must happen.
+#
+# WHAT THEY DO NOT PROVE, stated here because the fixture is the place someone will look: that
+# `%APPDATA%\\Grok Bot` is where the Windows client actually writes. That is an Electron
+# inference, it is reported as UNVERIFIED everywhere, and only a real install closes it.
+#
+# ONE REASON PER CASE, the same discipline as the roots above.
+# ---------------------------------------------------------------------------------------------
+BOOTSTRAP = {
+    "_why": "a synthetic stand-in for the desktop client's sand-statsig-bootstrap.json; its "
+    "presence is what makes a planted directory look like a real support directory",
+    "config": "{}",
+}
+
+WIN_LINUX_CAPS = {
+    "credential_read": "NOT_IMPLEMENTED",
+    "scheduler_install": "NOT_IMPLEMENTED",
+    "deployment_audit": "PARTIAL",
+    "local_exec_policy": "AVAILABLE",
+}
+REFUSED_CAPS = {
+    "credential_read": "NOT_IMPLEMENTED",
+    "scheduler_install": "NOT_IMPLEMENTED",
+    "deployment_audit": "NOT_IMPLEMENTED",
+    "local_exec_policy": "AVAILABLE",
+}
+
+PLATFORM_CASES: tuple[dict, ...] = (
+    {
+        "case": "macos-supported",
+        "why": "the measured platform: the only one this tool calls SUPPORTED",
+        "sys_platform": "darwin",
+        "plant": ["home/Library/Application Support/Grok Bot"],
+        "env": {"HOME": "home"},
+        "expect": {
+            "os": "macos",
+            "status": "SUPPORTED",
+            "support_dir": "home/Library/Application Support/Grok Bot",
+            "support_dir_exists": True,
+            "capabilities": {
+                "credential_read": "AVAILABLE",
+                "scheduler_install": "AVAILABLE",
+                "deployment_audit": "AVAILABLE",
+                "local_exec_policy": "AVAILABLE",
+            },
+        },
+    },
+    {
+        "case": "windows-unverified",
+        "why": "a Windows client installed where Electron's userData rule says it should be",
+        "sys_platform": "win32",
+        "plant": ["appdata/Grok Bot"],
+        "env": {"HOME": "home", "APPDATA": "appdata"},
+        "expect": {
+            "os": "windows",
+            "status": "UNVERIFIED",
+            "support_dir": "appdata/Grok Bot",
+            "support_dir_exists": True,
+            "capabilities": WIN_LINUX_CAPS,
+            "why_mentions": "INFERRED",
+            # The refusal, driven through the same function `gb setup` calls. NOT_IMPLEMENTED
+            # rather than ABSENT: there is no keychain item to be absent, because Windows does
+            # not store the session in one.
+            "keychain_probe": {"status": "NOT_IMPLEMENTED", "has_remediation": True},
+        },
+    },
+    {
+        "case": "linux-unverified",
+        "why": "a Linux client installed under $XDG_CONFIG_HOME, same Electron rule",
+        "sys_platform": "linux",
+        "plant": ["config/Grok Bot"],
+        "env": {"HOME": "home", "XDG_CONFIG_HOME": "config"},
+        "expect": {
+            "os": "linux",
+            "status": "UNVERIFIED",
+            "support_dir": "config/Grok Bot",
+            "support_dir_exists": True,
+            "capabilities": WIN_LINUX_CAPS,
+            "why_mentions": "INFERRED",
+            "keychain_probe": {"status": "NOT_IMPLEMENTED", "has_remediation": True},
+        },
+    },
+    {
+        "case": "override-moves-path-not-status",
+        "why": "GB_SUPPORT_DIR wins over the inferred path — and the status stays UNVERIFIED",
+        "sys_platform": "win32",
+        # BOTH are planted. If only the override existed, the case would also pass for a
+        # resolver that simply fell back to whatever exists, which is not what is being claimed.
+        "plant": ["appdata/Grok Bot", "elsewhere/GrokBotData"],
+        "env": {
+            "HOME": "home",
+            "APPDATA": "appdata",
+            "GB_SUPPORT_DIR": "elsewhere/GrokBotData",
+        },
+        "expect": {
+            "os": "windows",
+            "status": "UNVERIFIED",
+            "support_dir": "elsewhere/GrokBotData",
+            "support_dir_exists": True,
+            "capabilities": WIN_LINUX_CAPS,
+            "path_source_mentions": "never the status",
+            # The override path is NOT an inference and must not be described as one: an
+            # operator who has already told the tool where the directory is must not be handed
+            # a remediation asking him to do it again.
+            "why_mentions": "the path is not a guess here",
+        },
+    },
+    {
+        "case": "linux-client-absent",
+        "why": "the inferred Linux path does not exist — the remediation must name the override",
+        "sys_platform": "linux",
+        "plant": ["config"],
+        "env": {"HOME": "home", "XDG_CONFIG_HOME": "config"},
+        "expect": {
+            "os": "linux",
+            "status": "UNVERIFIED",
+            "support_dir": "config/Grok Bot",
+            "support_dir_exists": False,
+            "capabilities": WIN_LINUX_CAPS,
+            # The known-bad shape for an UNVERIFIED platform: absent is ambiguous between "not
+            # installed" and "we guessed the wrong path", so the remediation must offer the
+            # override rather than only telling him to install what he already installed.
+            "remediation_mentions": "GB_SUPPORT_DIR",
+        },
+    },
+    {
+        "case": "android-credential-refused",
+        "why": "UNSUPPORTED, and a producer asks for the credential read anyway: it must be "
+        "refused with a remediation, never raised and never answered empty",
+        # Termux reports sys.platform == "linux". Resolving it as Linux would hand a phone the
+        # Linux desktop's userData path and report the client merely missing.
+        "sys_platform": "linux",
+        "plant": ["home"],
+        "env": {"HOME": "home"},
+        "env_literal": {"ANDROID_ROOT": "/system"},
+        "expect": {
+            "os": "android",
+            "status": "UNSUPPORTED",
+            "support_dir": None,
+            "support_dir_exists": False,
+            "capabilities": REFUSED_CAPS,
+            "why_mentions": "no Grok Bot desktop client",
+            "keychain_probe": {"status": "NOT_IMPLEMENTED", "has_remediation": True},
+        },
+    },
+)
+
+
+def _platform_fixtures(out: pathlib.Path) -> int:
+    """Plant every foreign environment `gb platform --selftest` resolves. Returns the count."""
+    root = out / "platform"
+    if root.exists():
+        shutil.rmtree(root)
+    for spec in PLATFORM_CASES:
+        case = root / str(spec["case"])
+        for rel in spec.get("plant") or []:
+            planted = case / str(rel)
+            planted.mkdir(parents=True, exist_ok=True)
+            # Only a directory that holds the client's own bootstrap file looks like a support
+            # directory rather than an empty folder someone happened to create.
+            is_support = str(rel).endswith(("Grok Bot", "GrokBotData"))
+            if is_support:
+                atomic_write_text(
+                    planted / "sand-statsig-bootstrap.json",
+                    json.dumps(BOOTSTRAP, indent=1) + "\n",
+                )
+            # EVERY planted directory gets a file, including the ones that stand for "this
+            # exists but the client's folder inside it does not". Git does not track empty
+            # directories and neither does the export, so a plant with no file in it would
+            # silently stop existing in the published tree — and the fixture would keep
+            # passing there for the wrong reason.
+            atomic_write_text(
+                planted / "README.md",
+                f"# planted: `{rel}`\n\n"
+                + (
+                    "Stands in for the Grok Bot desktop client's userData directory.\n"
+                    if is_support
+                    else "Stands in for the directory the client's userData would live UNDER; the\n"
+                    "client's own folder is deliberately absent here.\n"
+                )
+                + "\nGenerated by `bin/gb-make-fixtures.py`. Do not hand-edit.\n",
+            )
+        atomic_write_text(
+            case / "expect.json",
+            json.dumps({k: v for k, v in spec.items() if k != "case"}, indent=1) + "\n",
+        )
+        atomic_write_text(
+            case / "README.md",
+            f"# platform fixture: {spec['case']}\n\n{spec['why']}\n\n"
+            f"Generated by `bin/gb-make-fixtures.py`. Do not hand-edit. Resolved by\n"
+            f"`gb platform --selftest`, which reads `expect.json` and compares it with what\n"
+            f"`gblib.platform_support` answers for this planted environment. Paths in\n"
+            f"`expect.json` are relative to this directory.\n",
+        )
+    return len(PLATFORM_CASES)
 
 
 def main() -> int:
@@ -1769,9 +1981,15 @@ def main() -> int:
 
     _cli_contract_fixtures(out, man, files, prev)
     _typed_spine_fixtures(out, man, files, prev)
+    planted = _platform_fixtures(out)
 
+    # `platform/` is counted apart because it is not a gate root: the gate's selftest iterates
+    # its own FIXTURE_EXPECT table, and folding these into the root count would make that table
+    # look short by six for the rest of time.
+    roots = [p.name for p in out.iterdir() if p.is_dir() and p.name != "platform"]
     print(
-        f"fixtures written to {out}: {len(sorted(p.name for p in out.iterdir() if p.is_dir()))} roots"
+        f"fixtures written to {out}: {len(roots)} gate roots, "
+        f"{planted} planted platforms under platform/"
     )
     return 0
 

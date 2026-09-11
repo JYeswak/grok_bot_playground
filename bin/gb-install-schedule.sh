@@ -29,6 +29,23 @@
 #   bin/gb-install-schedule.sh --uninstall
 set -euo pipefail
 
+# THE PLATFORM GATE. Everything below is launchd, which exists only on macOS. Off it, the
+# failure used to be `launchctl: command not found` in the middle of a bootstrap — after the
+# plist had already been written to a `~/Library/LaunchAgents` directory that does not belong
+# on that machine. Exit 3 ENVIRONMENT and write nothing: `gb platform` reports this same fact
+# as `scheduler_install: NOT_IMPLEMENTED`, with the same workaround.
+if [[ "$(uname -s)" != "Darwin" ]]; then
+    cat >&2 <<REFUSAL
+gb-install-schedule: scheduler_install is NOT_IMPLEMENTED on $(uname -s).
+    This installs a launchd agent, and launchd is macOS-only. The Windows equivalent is Task
+    Scheduler (schtasks); the Linux equivalent is a systemd --user timer, or cron. Neither is
+    implemented here, and nothing was written.
+    fix: schedule bin/gb-weekly.sh yourself, weekly, and keep the 8-day snapshot ceiling g3
+         enforces. See: gb platform
+REFUSAL
+    exit 3
+fi
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LABEL="ai.zeststream.grokbot.weekly"
 PLIST="$HOME/Library/LaunchAgents/${LABEL}.plist"

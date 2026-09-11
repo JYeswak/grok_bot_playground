@@ -1,0 +1,24 @@
+{
+ "why": "the inferred Linux path does not exist \u2014 the remediation must name the override",
+ "sys_platform": "linux",
+ "plant": [
+  "config"
+ ],
+ "env": {
+  "HOME": "home",
+  "XDG_CONFIG_HOME": "config"
+ },
+ "expect": {
+  "os": "linux",
+  "status": "UNVERIFIED",
+  "support_dir": "config/Grok Bot",
+  "support_dir_exists": false,
+  "capabilities": {
+   "credential_read": "NOT_IMPLEMENTED",
+   "scheduler_install": "NOT_IMPLEMENTED",
+   "deployment_audit": "PARTIAL",
+   "local_exec_policy": "AVAILABLE"
+  },
+  "remediation_mentions": "GB_SUPPORT_DIR"
+ }
+}

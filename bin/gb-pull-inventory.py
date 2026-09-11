@@ -42,18 +42,30 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from gblib import newest_audit as gblib_newest  # noqa: E402
+from gblib import platform_refusal, platform_support  # noqa: E402
 from gbtypes import atomic_write_text  # noqa: E402
 import urllib.error
 import urllib.request
 
 HOST = "api2.cursor.sh"
 SERVICE = "aiserver.v1.GrokBotService"
-SUPPORT = pathlib.Path("~/Library/Application Support/Grok Bot").expanduser()
+EXIT_ENVIRONMENT = 3
+# Resolved once, at import, so every read below and the refusal above them agree on one answer.
+PLATFORM = platform_support()
+SUPPORT = PLATFORM.support_dir
 KEYCHAIN = ("Grok Bot Safe Storage", "Grok Bot Key")
 READ_ONLY_PREFIXES = ("List", "Get")
 
 
 def safestorage_key() -> bytes:
+    """The Electron safeStorage password, hardened into the AES key. macOS only, by nature.
+
+    The platform gate is a PRECONDITION, checked by `main` before anything runs, not here:
+    raising out of a helper is how a "not implemented on this operating system" turns into a
+    traceback the operator has to decode. This function is therefore only ever reached where
+    `security` is the right tool, and it still refuses rather than returning an empty key —
+    an empty credential that decrypts nothing would be reported upstream as an empty account.
+    """
     r = subprocess.run(
         [
             "security",
@@ -89,9 +101,15 @@ def decrypt(value: str, key: bytes) -> str:
     return out[: -out[-1]].decode("utf-8", "replace")
 
 
-def access_token() -> str:
+def access_token(support: pathlib.Path) -> str:
+    """The desktop client's own bearer token, decrypted in memory and never written anywhere.
+
+    `support` is passed rather than read off the module constant so that the one caller that
+    has already cleared the platform gate is the only thing that can reach the keychain — the
+    directory cannot be None here, and the type says so.
+    """
     key = safestorage_key()
-    secrets = json.loads((SUPPORT / "sand-secrets.json").read_text())
+    secrets = json.loads((support / "sand-secrets.json").read_text())
     accounts = json.loads(secrets["cursor-accounts"])
     return decrypt(accounts["accounts"][accounts["active"]]["cursor-access-token"], key)
 
@@ -467,6 +485,20 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
+    # THE PLATFORM GATE. The whole pull hangs off one macOS-only fact: the desktop client's
+    # session is sealed with Electron safeStorage, and only macOS exposes it through a command
+    # this tool can drive. On Windows it is DPAPI; on Linux it is the desktop secret service;
+    # on a phone there is no desktop client at all. Attempting it anyway produced, before this
+    # gate existed, a `security: command not found` traceback on Linux — a stack trace where
+    # the honest answer is one sentence and a workaround. Exit 3 ENVIRONMENT, never 1: the
+    # operator typed the right thing and this machine cannot do it.
+    refusal = platform_refusal("gb-pull-inventory", PLATFORM, "credential_read")
+    if refusal is not None or SUPPORT is None:
+        print(
+            refusal or platform_refusal("gb-pull-inventory", PLATFORM), file=sys.stderr
+        )
+        return EXIT_ENVIRONMENT
+
     reg = json.loads((root / "desktops.json").read_text())
     known = {d["label"]: d for d in reg["desktops"]}
     for label in args.device:
@@ -474,7 +506,7 @@ def main() -> int:
             raise SystemExit(f"device {label!r} is not in desktops.json")
 
     audit = newest_audit_or_die(root)
-    token = access_token()
+    token = access_token(SUPPORT)
 
     st, mcp = rpc(token, "GetGrokBotUserMcpSettings")
     if st != 200:

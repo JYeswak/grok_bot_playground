@@ -2,8 +2,10 @@
 """A CLI whose HANDLERS lost a verb. Parsed by g24, never executed."""
 EXIT_CODES = {0: 'ok', 1: 'findings', 2: 'usage', 3: 'env', 4: 'upstream', 5: 'refused'}
 COMMANDS = {'triage': 1, 'doctor': 1, 'health': 1, 'repair': 1, 'validate': 1,
-            'audit': 1, 'why': 1, 'capabilities': 1, 'robot-docs': 1, 'quickstart': 1,
-            'examples': 1, 'info': 1, 'help': 1, 'completion': 1}
+            'audit': 1, 'why': 1, 'work': 1, 'setup': 1, 'platform': 1,
+            'capabilities': 1, 'robot-docs': 1, 'quickstart': 1, 'examples': 1,
+            'info': 1, 'help': 1, 'completion': 1}
 HANDLERS = {'triage': 1, 'doctor': 1, 'health': 1, 'repair': 1, 'validate': 1,
-            'audit': 1, 'why': 1, 'capabilities': 1, 'robot-docs': 1, 'quickstart': 1,
-            'examples': 1, 'info': 1, 'help': 1}
+            'audit': 1, 'why': 1, 'work': 1, 'setup': 1, 'platform': 1,
+            'capabilities': 1, 'robot-docs': 1, 'quickstart': 1, 'examples': 1,
+            'info': 1, 'help': 1}

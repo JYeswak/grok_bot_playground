@@ -1,0 +1,22 @@
+{
+ "why": "the measured platform: the only one this tool calls SUPPORTED",
+ "sys_platform": "darwin",
+ "plant": [
+  "home/Library/Application Support/Grok Bot"
+ ],
+ "env": {
+  "HOME": "home"
+ },
+ "expect": {
+  "os": "macos",
+  "status": "SUPPORTED",
+  "support_dir": "home/Library/Application Support/Grok Bot",
+  "support_dir_exists": true,
+  "capabilities": {
+   "credential_read": "AVAILABLE",
+   "scheduler_install": "AVAILABLE",
+   "deployment_audit": "AVAILABLE",
+   "local_exec_policy": "AVAILABLE"
+  }
+ }
+}

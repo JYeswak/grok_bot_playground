@@ -23,19 +23,19 @@ import base64
 import datetime as dt
 import hashlib
 import json
-import os
 import pathlib
+import platform as platform_mod
 import plistlib
 import re
 import subprocess
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from gblib import load, unb32  # noqa: E402
+from gblib import load, platform_refusal, platform_support, unb32  # noqa: E402
 from gbtypes import atomic_write_text  # noqa: E402
 
 DEFAULT_APP = "/Applications/Grok Bot.app"
-DEFAULT_SUPPORT = os.path.expanduser("~/Library/Application Support/Grok Bot")
+EXIT_ENVIRONMENT = 3
 PERSIST = "sand-client-persistence"
 ROSTER_SUFFIX = ".roster.last-roster"
 TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_.\-]{4,70}")
@@ -288,8 +288,11 @@ def roster(support: pathlib.Path) -> list[dict]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     root = pathlib.Path(__file__).resolve().parents[1]
+    plat = platform_support()
     ap.add_argument("--app", default=DEFAULT_APP)
-    ap.add_argument("--support", default=DEFAULT_SUPPORT)
+    ap.add_argument(
+        "--support", default=str(plat.support_dir) if plat.support_dir else None
+    )
     ap.add_argument("--out", default=None)
     ap.add_argument(
         "--label",
@@ -301,6 +304,13 @@ def main() -> int:
     )
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
+    # A platform with no desktop client has no support directory, and the macOS path does not
+    # exist there. Auditing it anyway would report every field absent — an absence this tool
+    # manufactured rather than measured, which is the one failure mode the board cannot see
+    # through. `--support` still overrides, so an operator who knows better is never blocked.
+    if args.support is None:
+        print(platform_refusal("gb-deployment-audit", plat), file=sys.stderr)
+        return EXIT_ENVIRONMENT
 
     app = pathlib.Path(args.app)
     support = pathlib.Path(args.support)
@@ -314,9 +324,20 @@ def main() -> int:
 
     audit: dict = {
         "captured_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
-        "host": os.uname().nodename,
+        # `os.uname()` does not exist on Windows; `platform.node()` answers on all five
+        # platforms the vendor ships, and answers identically to uname on this Mac.
+        "host": platform_mod.node(),
         "support_dir": str(support),
         "support_present": support.is_dir(),
+        # Provenance for the path itself. An audit taken through an INFERRED path is a weaker
+        # measurement than one taken through a verified one, and an artifact that does not say
+        # which it was cannot be re-read honestly six months later or on another machine.
+        "platform": {
+            "os": plat.os,
+            "status": plat.status,
+            "path_source": plat.path_source,
+            "forced": plat.forced,
+        },
         "app": app_facts(app),
         "update_marker": load(support / "sand-update-apply-marker.json"),
         "session_marker": load(support / "sand-session-marker.json"),

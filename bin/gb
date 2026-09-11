@@ -39,17 +39,27 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import importlib.util
 import json
 import os
 import pathlib
 import re
 import shutil
+import socket
 import sys
 import time
+import urllib.error
+import urllib.request
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from gbargs import arg, parse_sub  # noqa: E402
+from gblib import (  # noqa: E402
+    SUPPORT_DIR_ENV,
+    Platform,
+    platform_support,
+    unavailable,
+)
 from gbtypes import Severity, atomic_write_json, main, read_json_capped, run  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -131,10 +141,55 @@ TOPICS: Dict[str, str] = {
     "subsystems": "\n".join(f"  {n:<10}{why}" for n, (_a, why, _s) in SUBSYSTEMS.items()),
     "repair": "\n".join(f"  {n:<10}{why}" for n, (_a, why) in REPAIRS.items())
     + "\n\n  Every repair is dry-run by default. --apply is required to write.",
+    "platform": (
+        "  `gb platform` answers the question that comes BEFORE `gb setup`: can this tool do\n"
+        "  anything at all on this operating system, and how much of that answer is measured?\n\n"
+        "    SUPPORTED     macOS. Measured: every path and capability is read off a live\n"
+        "                  install, and this is the platform the weekly tick runs on.\n"
+        "    UNVERIFIED    Windows and Linux. The vendor ships a desktop client for both\n"
+        "                  (docs.x.ai/grok-bot/faq), the client is Electron, and its userData\n"
+        "                  directory is %APPDATA%\\\\Grok Bot / $XDG_CONFIG_HOME/Grok Bot by that\n"
+        "                  framework's own rule. Nobody in this repo has ever run either one,\n"
+        "                  so the path is an INFERENCE and is labelled as one. The credential\n"
+        "                  read and the scheduler install are NOT_IMPLEMENTED there, and say\n"
+        "                  so instead of failing inside a subprocess.\n"
+        "    UNSUPPORTED   iOS and Android. Those are COMPANION apps to a cloud computer, not\n"
+        "                  desktop clients: there is no local session and no support directory\n"
+        "                  here to read, so this tool refuses rather than inventing an absence.\n\n"
+        "  TWO OVERRIDES.\n"
+        "    GB_SUPPORT_DIR=<path>   operator surface. Point the tool at the real userData\n"
+        "                            directory when the inferred one is wrong. It moves the\n"
+        "                            PATH and never the STATUS — pointing at a directory does\n"
+        "                            not verify an operating system.\n"
+        "    GB_PLATFORM=<string>    test surface. Force the platform string so a foreign\n"
+        "                            codepath can be exercised here. Every answer produced\n"
+        "                            under it carries `forced: true`.\n\n"
+        "  `gb platform --selftest` resolves every planted platform under fixtures/platform/.\n"
+        "  It proves the Windows and Linux branches are implemented and refuse honestly. It\n"
+        "  does NOT prove the inferred paths are correct; only a real install can do that."
+    ),
     "tick": (
         "  The weekly tick is `bin/gb-weekly.sh`: snapshot the vendor surface, audit this\n"
         "  account, judge both, and record one product change. `gb triage` is the read-only\n"
         "  version you run any time — it never fetches and never writes."
+    ),
+    "setup": (
+        "  A fresh clone has measured nothing, so `gb triage` routes to `gb setup` instead of\n"
+        "  printing one ERROR per unmeasured check. Setup runs four steps:\n\n"
+        "    preflight    python, this CLI's producers, the Grok Bot desktop app's support dir,\n"
+        "                 whether the client's keychain item EXISTS (presence only — no value is\n"
+        "                 read or printed), `cryptography`, and reachability of docs.x.ai\n"
+        "    device       register THIS machine in desktops.json, keyed on hostname so a\n"
+        "                 re-run cannot duplicate the row\n"
+        "    measure      the producers that need no prior state: the vendor surface snapshot\n"
+        "                 and the local deployment audit, then the account inventory pull\n"
+        "    verify       re-classify the root, and say whether it is CONFIGURED now\n\n"
+        "  Dry-run by default (`actual_actions: []`). `--apply` writes. If nothing can be\n"
+        "  measured here at all, `--apply` REFUSES (exit 5) rather than registering a desktop\n"
+        "  and leaving a root that only LOOKS configured.\n\n"
+        "  What it cannot do for you: install or sign into the Grok Bot desktop app. That is a\n"
+        "  human step, and the first authenticated read also needs you to click Allow on a\n"
+        "  macOS keychain prompt."
     ),
     "porting": (
         "  This CLI is shaped for Asupersync, not Tokio. The subcommand tree is\n"
@@ -145,6 +200,12 @@ TOPICS: Dict[str, str] = {
 }
 
 EXAMPLES = """\
+  gb platform                    what this OS can do here, and how much of that is measured
+  gb platform --json | jq -r .status   SUPPORTED | UNVERIFIED | UNSUPPORTED
+  gb platform --selftest         resolve every planted platform under fixtures/platform/
+  gb setup                       what configuring this machine would do (writes nothing)
+  gb setup --apply               register this desktop and take the first measurements
+  gb setup --apply --device brain    name the machine yourself instead of using the hostname
   gb triage                      what is wrong right now, and the command that fixes it
   gb triage --json | jq .red     the same answer, for a script
   gb work                        what to pick up next, and whether the ranking is trustworthy
@@ -197,6 +258,15 @@ class HealthArgs:
 
 
 @dataclasses.dataclass(frozen=True)
+class SetupArgs:
+    """Take this machine from a fresh clone to a measured instance. Dry-run unless --apply."""
+
+    apply: bool = arg(help="actually register and measure; without this the command only plans")
+    device: Optional[str] = arg(help="label for THIS machine in desktops.json (default: hostname)")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+
+@dataclasses.dataclass(frozen=True)
 class RepairArgs:
     """Idempotently rebuild a derived artifact. Dry-run unless --apply is given."""
 
@@ -209,7 +279,7 @@ class RepairArgs:
 class ValidateArgs:
     """Verify a thing without changing it. Pure read."""
 
-    thing: str = arg(positional=True, help="plugin | mcp | types | fixtures")
+    thing: str = arg(positional=True, help="plugin | mcp | types | platform | fixtures")
     json: bool = arg(help="machine-readable envelope on stdout")
 
 
@@ -255,7 +325,17 @@ class BareArgs:
     """No arguments."""
 
 
+@dataclasses.dataclass(frozen=True)
+class PlatformArgs:
+    """Which OS this is, whether this tool is verified on it, and what works here."""
+
+    json: bool = arg(help="machine-readable envelope on stdout")
+    selftest: bool = arg(help="resolve every planted platform under fixtures/platform/ instead")
+
+
 COMMANDS: Dict[str, type] = {
+    "setup": SetupArgs,
+    "platform": PlatformArgs,
     "triage": TriageArgs,
     "work": WorkArgs,
     "doctor": DoctorArgs,
@@ -343,10 +423,155 @@ def newest(dirname: str) -> Optional[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------------------------
+# Instance state — the difference between "not set up yet" and "set up and red"
+#
+# MEASURED 2026-09-11 on a fresh public clone (`git clone … /tmp/gbfresh`), nothing configured:
+#
+#     gb triage               rc=1  verdict ERROR · 24 checks · 22 not green
+#     gb health               rc=1  ERROR · 22 check(s) not green
+#     gb doctor --scope gate  rc=1  DOWN  gate  VERDICT ERROR (snapshot None, deployment None)
+#     gb work                 rc=1  beads UNREACHABLE · issues EMPTY · 0 actionable
+#
+# 22 ERRORs is not 22 problems. It is ONE state — nothing has been measured on this machine yet
+# — reported 22 times, and a new installer cannot tell it apart from "this tool is broken". The
+# per-check remediations ("run bin/gb-market-snapshot.py") are 22 wrong answers to the one
+# question he actually has, which is "what do I run FIRST". Exit 1 was wrong too: FINDINGS means
+# measured-and-bad, and nothing here was measured.
+#
+# THE RULE. A working root is UNCONFIGURED exactly when BOTH hold:
+#   (1) zero dated artifacts across every producer root — no producer has ever written here; AND
+#   (2) no desktops.json — no desktop has ever been registered.
+# Anything else is CONFIGURED, and a CONFIGURED root behaves exactly as it always has: one
+# snapshot plus 21 gaps IS 21 real findings, and collapsing those into "not set up" would be the
+# same lie pointed the other way. The rule is deliberately the WEAKEST evidence of configuration
+# that exists (one artifact, OR one registered device) because the two mistakes are not
+# symmetric: a false UNCONFIGURED hides real findings behind a setup nag, while a false
+# CONFIGURED only shows the operator the check wall he already knows how to read.
+# ---------------------------------------------------------------------------------------------
+PRODUCER_ROOTS: Tuple[str, ...] = (
+    "deployment", "inventory", "surface", "market", "usecases", "discovery", "mcp",
+    "typecheck", "archive", "utilization", "gaps",
+)
+DEVICE_REGISTRY = "desktops.json"
+# Every producer here stamps its output `%Y-%m-%d…`: `deployment/2026-09-11T0008.json`,
+# `inventory/<stamp>.<label>.json`, `typecheck/2026-09-11.json`, and `surface/2026-09-11/` —
+# which is a DIRECTORY. Matching the dated prefix rather than globbing `*.json` is what lets one
+# rule cover the files and the snapshot directory without a second special case.
+_DATED = re.compile(r"^\d{4}-\d{2}-\d{2}")
+
+
+@dataclasses.dataclass(frozen=True)
+class InstanceState:
+    """One working root's configuration state, and the evidence for it.
+
+    `why` is carried rather than re-derived at each call site so the human block, the JSON
+    envelope and `gb setup`'s verify step all quote the same sentence — a route that explains
+    itself differently depending on which verb printed it is a route nobody trusts.
+    """
+
+    state: str
+    measurements: int
+    measured_roots: Tuple[str, ...]
+    device_registry: bool
+    why: str
+
+    @property
+    def unconfigured(self) -> bool:
+        return self.state == "UNCONFIGURED"
+
+
+def instance_state(root: pathlib.Path = ROOT) -> InstanceState:
+    """Classify `root` as CONFIGURED or UNCONFIGURED. Pure read; see the rule above."""
+    measured: List[str] = []
+    total = 0
+    for name in PRODUCER_ROOTS:
+        d = root / name
+        if not d.is_dir():
+            continue
+        dated = sum(1 for p in d.iterdir() if _DATED.match(p.name))
+        if dated:
+            measured.append(name)
+            total += dated
+    registry = (root / DEVICE_REGISTRY).is_file()
+    if total or registry:
+        parts = [f"{total} dated artifact(s) across {len(measured)} producer root(s)"]
+        parts.append(f"{DEVICE_REGISTRY} {'present' if registry else 'absent'}")
+        return InstanceState("CONFIGURED", total, tuple(measured), registry, "; ".join(parts))
+    return InstanceState(
+        "UNCONFIGURED", 0, (), False,
+        f"no producer has ever written here (0 dated artifacts across {len(PRODUCER_ROOTS)} "
+        f"producer roots) and there is no {DEVICE_REGISTRY}")
+
+
+def route_unconfigured(command: str, as_json: bool, st: InstanceState) -> int:
+    """The ONE block an unconfigured root gets, in place of the per-check wall.
+
+    Exit 3 ENVIRONMENT, never 1 FINDINGS: 1 means it ran and the answer is bad, and nothing here
+    was measured, so there is no answer yet — this machine cannot run the check. And the JSON
+    carries `state`/`next_command` instead of an empty result set, because a consumer handed
+    `checks: []` reads it as green. That is the exact failure `cmd_triage` already refuses for a
+    zero-check board, and EMPTY must not be allowed to collapse into UNCONFIGURED here either.
+
+    THE PLATFORM CAVEAT, added in wave 5. "Run `gb setup --apply`" is the right next command on
+    macOS and a WRONG one on Linux: setup will register the desktop, fail to find a support
+    directory at a path this repo only inferred, and leave the operator exactly where he
+    started with one more artifact. So when the platform is not SUPPORTED the route says that
+    FIRST and points at `gb platform`. His real problem is not that he has not set up yet; it
+    is that nobody has ever verified this tool on his operating system.
+    """
+    plat = platform_support()
+    caveat = plat.status != "SUPPORTED"
+    payload = envelope(
+        command,
+        state=st.state,
+        configured=False,
+        measured=False,
+        verdict=None,
+        why=st.why,
+        platform={"os": plat.os, "status": plat.status, "why": plat.why,
+                  "support_dir": str(plat.support_dir) if plat.support_dir else None,
+                  "support_dir_exists": plat.support_dir_exists},
+        next_command="gb platform" if caveat else "gb setup --apply",
+        commands=(["gb platform"] if caveat else []) + ["gb setup", "gb setup --apply"],
+        evidence={"root": str(ROOT), "producer_roots": list(PRODUCER_ROOTS),
+                  "dated_artifacts": st.measurements, "device_registry": st.device_registry},
+    )
+    human = [
+        "UNCONFIGURED · nothing has been measured in this root yet — not a red deployment, and "
+        "not a broken tool",
+        "",
+        f"  {st.why}.",
+        f"  `gb {command}` judges artifacts on disk. There are none, so there is nothing to",
+        "  judge: the 22 check ERRORs you would otherwise see are one state, not 22 problems.",
+    ]
+    if caveat:
+        human += [
+            "",
+            f"  AND FIRST: this is {plat.os}, which this tool reports {plat.status}.",
+            f"  {plat.why}.",
+            "  `gb setup --apply` would register this desktop and then find nothing to measure",
+            "  at a path nobody here has verified. Read `gb platform` before you run it.",
+        ]
+    human += ["", "next:"]
+    if caveat:
+        human += ["  gb platform               what this operating system can and cannot do here"]
+    human += [
+        "  gb setup                  what configuring this machine would do (writes nothing)",
+        "  gb setup --apply          do it: register this desktop, then take the first",
+        "                            measurements",
+    ]
+    emit(payload, as_json, "\n".join(human))
+    return EXIT_ENVIRONMENT
+
+
+# ---------------------------------------------------------------------------------------------
 # Verbs
 # ---------------------------------------------------------------------------------------------
 def cmd_triage(a: TriageArgs) -> int:
     """The mega-command: one call, four slices, and the commands to act on them."""
+    st = instance_state()
+    if st.unconfigured:
+        return route_unconfigured("triage", a.json, st)
     proc = run([sys.executable, str(BIN / "gb-surface-gate.py"), "--json"], timeout_s=180, cwd=ROOT)
     if not (proc.out or "").strip():
         print("gb: the gate produced no output — run `gb doctor --scope gate`", file=sys.stderr)
@@ -728,6 +953,12 @@ def cmd_work(a: WorkArgs) -> int:
         print(f"gb: unknown --source {a.source!r}. Known: beads, issues (omit for both)\n"
               f"    try: gb work --source beads", file=sys.stderr)
         return EXIT_USAGE
+    # After the usage check (a bad flag is still USAGE on a fresh clone) and before the reads:
+    # an unconfigured root has no ranking to offer, and `beads UNREACHABLE · 0 actionable` is
+    # the wrong sentence for "you have not set up yet".
+    st = instance_state()
+    if st.unconfigured:
+        return route_unconfigured("work", a.json, st)
     wanted: Tuple[str, ...] = (a.source,) if a.source else ("beads", "issues")
     limit = max(1, a.limit)
 
@@ -814,6 +1045,12 @@ def cmd_doctor(a: DoctorArgs) -> int:
         print(f"gb: unknown scope {a.scope!r}. Known: {', '.join(SUBSYSTEMS)}\n"
               f"    try: gb doctor --scope {sorted(SUBSYSTEMS)[0]}", file=sys.stderr)
         return EXIT_USAGE
+    # The apparatus is not the deployment, but on an unconfigured root every subsystem probe
+    # reports on artifacts that do not exist yet — `DOWN gate VERDICT ERROR (snapshot None)` is
+    # a true sentence about a question nobody asked. Route first.
+    st = instance_state()
+    if st.unconfigured:
+        return route_unconfigured("doctor", a.json, st)
     rows = [probe(n, argv, summary=how) for n, (argv, _why, how) in scopes.items()]
     bad = [r for r in rows if r["status"] not in ("PASS",)]
     payload = envelope("doctor", subsystems=rows, failing=len(bad))
@@ -827,6 +1064,11 @@ def cmd_doctor(a: DoctorArgs) -> int:
 
 def cmd_health(a: HealthArgs) -> int:
     def once() -> int:
+        st = instance_state()
+        if st.unconfigured:
+            # Inside `once()`, so `--watch` on a fresh clone keeps printing the route rather
+            # than 22 ERRORs a minute until someone runs setup.
+            return route_unconfigured("health", a.json, st)
         board = newest("deployment")
         gate = run([sys.executable, str(BIN / "gb-surface-gate.py"), "--json"],
                    timeout_s=180, cwd=ROOT)
@@ -855,6 +1097,611 @@ def cmd_health(a: HealthArgs) -> int:
     return rc
 
 
+# ---------------------------------------------------------------------------------------------
+# `gb setup` — the one step a fresh clone is routed to
+#
+# This is the ONLY verb besides `gb repair` that writes, and the same gate applies: dry-run by
+# default, `--apply` to act. Two properties it is built around.
+#
+# IDEMPOTENCE. Device identity is the HOSTNAME, not the label — a label is a nickname an
+# operator may retype differently on the second run, and matching on it would put the same Mac
+# in `desktops.json` twice. A hostname that is already registered under the same label is a
+# no-op, so `--apply` twice leaves one row and re-fetches nothing.
+#
+# NEVER HALF-CONFIGURE. Writing `desktops.json` is by itself enough to flip this root to
+# CONFIGURED (see `instance_state`), which means writing it on a machine that cannot then MEASURE
+# anything would hand the operator the check wall back with a registry on top — the precise
+# failure this wave exists to remove. So when preflight proves no measurement can follow (no
+# network AND no desktop app), `--apply` REFUSES (exit 5) and writes nothing at all.
+# ---------------------------------------------------------------------------------------------
+# Presence is probed, never the value. `bin/gb-pull-inventory.py` is the only thing that reads
+# the password out of this item, and it is a human-gated read (macOS prompts for Allow).
+KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT = "Grok Bot Safe Storage", "Grok Bot Key"
+# The cheapest honest liveness probe for the vendor surface: it is the index
+# `bin/gb-surface-snapshot.py` fetches first, so reaching it is the same fact as "the snapshot
+# can run", not a proxy for it.
+DOCS_PROBE_URL = "https://docs.x.ai/llms.txt"
+# A label becomes a filename component (`inventory/<stamp>.<label>.json`), so it is constrained
+# to what a filename and a JSON key can both hold without quoting.
+LABEL_OK = re.compile(r"^[a-z0-9][a-z0-9._-]{0,31}$")
+SETUP_PRODUCERS: Tuple[str, ...] = (
+    "gb-surface-snapshot.py", "gb-deployment-audit.py", "gb-pull-inventory.py")
+REGISTRY_WHY = (
+    "Auto-review rules and Execution-on-Local-Computer are stored PER DESKTOP and synced only to "
+    "that desktop's Grok Bot computer (https://cursor.com/docs/grok-bot/security). Every desktop "
+    "that can hold those settings must therefore be measured on its own. This registry is what "
+    "makes 'we forgot that laptop' a RED instead of a silence.")
+
+
+def _step(step: str, status: str, detail: str, remediation: Optional[str] = None,
+          **extra: Any) -> Dict[str, Any]:
+    """One setup step's row. `status` is OK | ABSENT | NOT_IMPLEMENTED | PLANNED | SKIPPED |
+    FAILED and nothing else; `remediation` is populated exactly when the row is not OK or
+    PLANNED, because a step that failed without naming its fix is the dead end this verb exists
+    to replace.
+
+    NOT_IMPLEMENTED is not a synonym for ABSENT. ABSENT means the thing could be here and is
+    not — install the app, sign in, and the row turns OK. NOT_IMPLEMENTED means no sequence of
+    actions on THIS operating system makes this tool able to do it, which is a different
+    sentence and a different next step.
+    """
+    return {"step": step, "status": status, "detail": detail, "remediation": remediation, **extra}
+
+
+def _probe_keychain(plat: Platform) -> Dict[str, Any]:
+    """Is the desktop client's safeStorage keychain item PRESENT? Presence only.
+
+    `security find-generic-password` WITHOUT `-w` prints the item's ATTRIBUTES and never its
+    password, so this probe cannot leak the secret even by accident, and it does not trip the
+    per-application ACL prompt that reading the password does (measured 2026-09-11: exit 0, no
+    prompt). Its stdout is discarded regardless — this function returns a code and a sentence.
+
+    `plat` is a parameter, not a module read, for one reason: it is what lets
+    `gb platform --selftest` drive this exact function with a Windows-shaped or Android-shaped
+    platform on this Mac and prove the refusal path answers instead of raising. A gate nothing
+    can exercise is a gate nobody knows the shape of.
+    """
+    cap = unavailable(plat, "credential_read")
+    if cap is not None:
+        # The honest refusal. Not ABSENT — there is no keychain item to be absent, because this
+        # platform does not store the session in a keychain at all. Returning OK here, or an
+        # empty success, would let `setup` go on to run the inventory pull and fail inside a
+        # subprocess with a `command not found`.
+        return _step("keychain", "NOT_IMPLEMENTED", f"{plat.os}: {cap.detail}", cap.remediation,
+                     platform=plat.os, platform_status=plat.status)
+    if shutil.which("security") is None:
+        return _step("keychain", "ABSENT",
+                     "`security` is not on PATH — even on macOS the desktop client's session "
+                     "cannot be read without it",
+                     "this is a stripped macOS environment; run `gb setup --apply` on the "
+                     "desktop that runs the Grok Bot app")
+    proc = run(["security", "find-generic-password", "-s", KEYCHAIN_SERVICE,
+                "-a", KEYCHAIN_ACCOUNT], timeout_s=30, cwd=ROOT)
+    if proc.timed_out:
+        return _step("keychain", "FAILED",
+                     "the keychain probe was stopped on its deadline — presence is UNKNOWN, "
+                     "which is not the same fact as absent",
+                     "security find-generic-password -s 'Grok Bot Safe Storage' -a 'Grok Bot Key'")
+    if proc.code != 0:
+        return _step("keychain", "ABSENT",
+                     f"no keychain item {KEYCHAIN_SERVICE!r}/{KEYCHAIN_ACCOUNT!r} (exit "
+                     f"{proc.code}) — the Grok Bot desktop app has never signed in here",
+                     "open the Grok Bot desktop app, sign in, then re-run `gb setup --apply`")
+    return _step("keychain", "OK",
+                 f"the {KEYCHAIN_SERVICE!r} item exists — presence only: no value was read, and "
+                 f"this probe cannot print one")
+
+
+def _probe_docs() -> Dict[str, Any]:
+    """Can the vendor doc surface be reached? HEAD, so nothing is downloaded to decide it."""
+    req = urllib.request.Request(DOCS_PROBE_URL, method="HEAD",
+                                 headers={"user-agent": f"gb/{VERSION}"})
+    try:
+        with urllib.request.urlopen(req, timeout=15.0) as resp:
+            code = int(getattr(resp, "status", 0) or 0)
+    except urllib.error.HTTPError as exc:
+        # UPSTREAM, not local: the network worked and the vendor said no.
+        return _step("network", "FAILED",
+                     f"{DOCS_PROBE_URL} answered HTTP {exc.code} — the vendor refused, nothing "
+                     f"local is broken", f"curl -sSI {DOCS_PROBE_URL}")
+    except Exception as exc:  # URLError, socket.timeout, ssl errors — all "cannot reach it"
+        return _step("network", "ABSENT",
+                     f"{DOCS_PROBE_URL} is unreachable ({type(exc).__name__}) — the vendor "
+                     f"surface cannot be snapshotted from this machine",
+                     f"check connectivity, then: curl -sSI {DOCS_PROBE_URL}")
+    return _step("network", "OK", f"{DOCS_PROBE_URL} answered HTTP {code}")
+
+
+def _preflight(plat: Platform) -> List[Dict[str, Any]]:
+    """Every prerequisite `gb setup` has, each as its own row with its own remediation.
+
+    Pure read, so it runs identically in dry-run and under `--apply` — the plan is only worth
+    printing if it was measured, and a "plan" that guesses at its own prerequisites is prose.
+
+    `platform` is the FIRST row because it is the first thing that can be wrong. Before this
+    wave the rows below simply reported the macOS paths absent on a Linux box: five ABSENTs for
+    one fact, and the one fact was never stated.
+    """
+    rows: List[Dict[str, Any]] = []
+    rows.append(_step("platform",
+                      "OK" if plat.status == "SUPPORTED" else
+                      ("NOT_IMPLEMENTED" if plat.status == "UNSUPPORTED" else "ABSENT"),
+                      f"{plat.os} ({plat.status}) — {plat.why}", plat.remediation,
+                      platform=plat.os, platform_status=plat.status))
+    v = sys.version_info
+    ok39 = (v.major, v.minor) >= (3, 9)
+    rows.append(_step("python", "OK" if ok39 else "ABSENT",
+                      f"python {v.major}.{v.minor}.{v.micro}"
+                      + ("" if ok39 else " — the producers here need 3.9 or newer"),
+                      None if ok39 else "install python 3.9+ and re-run"))
+
+    gone = [n for n in ("gbtypes.py", "gbargs.py") if not (BIN / n).is_file()]
+    gone += [n for n in SETUP_PRODUCERS if not (BIN / n).is_file()]
+    rows.append(_step(
+        "cli", "OK" if not gone else "ABSENT",
+        (f"gb {VERSION} imported its own typed spine (gbargs, gbtypes) — this process is the "
+         f"proof — and all {len(SETUP_PRODUCERS)} producer(s) setup drives are in bin/")
+        if not gone else f"bin/ is incomplete: {', '.join(gone)} missing",
+        None if not gone else "re-clone the repo; a partial checkout cannot measure anything"))
+
+    app = bool(plat.support_dir and plat.support_dir.is_dir())
+    where = str(plat.support_dir) if plat.support_dir else "(this platform has no such directory)"
+    rows.append(_step("desktop-app", "OK" if app else "ABSENT",
+                      f"{where} exists — the local client's state can be audited"
+                      if app else
+                      f"{where} does not exist — the Grok Bot desktop app has never run "
+                      f"on this machine, so there is no local deployment to audit"
+                      + ("" if plat.status == "SUPPORTED" else
+                         f" (and that path is {plat.path_source})"),
+                      None if app else
+                      ("install and launch the Grok Bot desktop app, then re-run "
+                       "`gb setup --apply`" if plat.status == "SUPPORTED"
+                       else f"see `gb platform`: {plat.remediation or 'this platform is not verified'}")))
+
+    rows.append(_probe_keychain(plat))
+
+    crypto = importlib.util.find_spec("cryptography") is not None
+    rows.append(_step("crypto", "OK" if crypto else "ABSENT",
+                      "the `cryptography` module is importable — the desktop session blob can "
+                      "be decrypted" if crypto else
+                      "`cryptography` is not importable, so bin/gb-pull-inventory.py cannot "
+                      "decrypt the desktop session and the account read is impossible",
+                      None if crypto else "python3 -m pip install cryptography"))
+
+    rows.append(_probe_docs())
+    return rows
+
+
+def _device_label(explicit: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    """(label, usage-error). An explicit label is validated, never silently rewritten; a derived
+    one is sanitized, because the hostname is the tool's guess and it owns the consequences."""
+    if explicit is not None:
+        label = explicit.strip().lower()
+        if not LABEL_OK.match(label):
+            return None, (f"--device {explicit!r} is not a usable label. It becomes part of an "
+                          f"artifact filename (inventory/<stamp>.<label>.json), so it must match "
+                          f"{LABEL_OK.pattern}\n    try: gb setup --device studio")
+        return label, None
+    raw = socket.gethostname().split(".")[0]
+    label = re.sub(r"[^a-z0-9._-]+", "-", raw.lower()).strip("-.")
+    if not LABEL_OK.match(label):
+        return None, (f"cannot derive a device label from hostname {raw!r}\n"
+                      f"    try: gb setup --device studio")
+    return label, None
+
+
+def _plan_device(label: str) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+    """What registering THIS machine would change, and the whole document that would replace
+    `desktops.json`. A `None` document means there is nothing to write — that is the idempotent
+    path, and it is decided on HOSTNAME so a re-typed label cannot duplicate a row."""
+    host = socket.gethostname()
+    path = ROOT / DEVICE_REGISTRY
+    existing_any = read_json_capped(path)
+    if path.is_file() and not isinstance(existing_any, dict):
+        return (_step("device", "FAILED",
+                      f"{DEVICE_REGISTRY} exists but does not read as a JSON object — refusing "
+                      f"to overwrite a file this tool cannot parse",
+                      f"inspect it: jq . {DEVICE_REGISTRY}"), None)
+    existing: Dict[str, Any] = existing_any if isinstance(existing_any, dict) else {}
+    rows = [d for d in (existing.get("desktops") or []) if isinstance(d, dict)]
+    hit = next((d for d in rows if str(d.get("hostname") or "") == host), None)
+    if hit is not None and str(hit.get("label") or "") == label:
+        return (_step("device", "OK",
+                      f"{label} ({host}) is already in {DEVICE_REGISTRY} alongside "
+                      f"{len(rows) - 1} other desktop(s) — nothing to write",
+                      device=label, hostname=host, desktops=len(rows)), None)
+    kept = [d for d in rows if str(d.get("hostname") or "") != host]
+    kept.append({"label": label, "hostname": host, "ssh": None,
+                 "note": f"registered by `gb setup` on "
+                         f"{dt.date.today().isoformat()}; audited locally"})
+    doc = dict(existing)
+    doc.setdefault("_why", REGISTRY_WHY)
+    doc["host_of_record"] = existing.get("host_of_record") or label
+    doc["desktops"] = kept
+    doc.setdefault("not_a_desktop", [])
+    verb = ("refresh the hostname row for" if hit is not None
+            else ("create " + DEVICE_REGISTRY + " with" if not path.is_file() else "add"))
+    return (_step("device", "PLANNED",
+                  f"would {verb} {label} ({host}) — {len(kept)} desktop(s) after, "
+                  f"host_of_record={doc['host_of_record']}",
+                  device=label, hostname=host, desktops=len(kept)), doc)
+
+
+def _run_producer(step: str, argv: List[str], timeout_s: float) -> Dict[str, Any]:
+    """Drive one producer through the typed spine and classify it the way `probe` does."""
+    shown = "python3 bin/" + " ".join(argv)
+    proc = run([sys.executable, str(BIN / argv[0]), *argv[1:]], timeout_s=timeout_s, cwd=ROOT)
+    if proc.timed_out:
+        return _step(step, "FAILED",
+                     f"`{shown}` exceeded {timeout_s:.0f}s — stopped, so whether it wrote "
+                     f"anything is unknown", shown, command=shown, exit=None)
+    channel = (proc.out if proc.code == 0 else (proc.err or proc.out)) or ""
+    line = next((ln.strip() for ln in reversed(channel.splitlines()) if ln.strip()), "(no output)")
+    if proc.code != 0:
+        return _step(step, "FAILED", f"`{shown}` exited {proc.code}: {line[:160]}",
+                     shown, command=shown, exit=proc.code)
+    return _step(step, "OK", f"`{shown}` -> {line[:160]}", command=shown, exit=0,
+                 elapsed_s=proc.elapsed_s)
+
+
+def _already(root: str, pattern: str = "*") -> int:
+    """How many DATED artifacts a producer root already holds. The idempotency predicate: setup
+    takes a FIRST measurement, it is not a tick, so anything already measured is left alone and
+    `bin/gb-weekly.sh` owns refreshing it. Without this, a second `--apply` would re-fetch 35
+    vendor pages to learn nothing."""
+    d = ROOT / root
+    if not d.is_dir():
+        return 0
+    return sum(1 for p in d.glob(pattern) if _DATED.match(p.name))
+
+
+def _measure(label: str, pre: Dict[str, str], apply: bool, plat: Platform) -> List[Dict[str, Any]]:
+    """The first measurements a machine with no prior state can take, in dependency order.
+
+    `gb-surface-snapshot.py` needs only the network. `gb-deployment-audit.py` needs the desktop
+    app's support directory. `gb-pull-inventory.py` needs BOTH a registered desktop and a
+    deployment audit (it calls `gblib.newest_audit` and dies without one) plus the keychain and
+    `cryptography` — so it is reported SKIPPED with the named prerequisite rather than run and
+    allowed to fail for a reason the operator has to decode from a traceback.
+    """
+    rows: List[Dict[str, Any]] = []
+
+    def plan_or_run(step: str, argv: List[str], timeout_s: float, have: int,
+                    where: str, blocker: Optional[str], fix: Optional[str]) -> Dict[str, Any]:
+        shown = "python3 bin/" + " ".join(argv)
+        if have:
+            return _step(step, "OK",
+                         f"already measured: {have} dated artifact(s) under {where} — setup "
+                         f"takes the FIRST measurement and never re-fetches; "
+                         f"bin/gb-weekly.sh refreshes it", command=shown, existing=have)
+        if blocker is not None:
+            return _step(step, "SKIPPED", f"cannot run `{shown}`: {blocker}", fix, command=shown)
+        if not apply:
+            return _step(step, "PLANNED", f"would run `{shown}`", None, command=shown)
+        return _run_producer(step, argv, timeout_s)
+
+    rows.append(plan_or_run(
+        "surface", ["gb-surface-snapshot.py"], 900.0, _already("surface"), "surface/",
+        None if pre.get("network") == "OK"
+        else f"the doc surface is not reachable ({pre.get('network')})",
+        f"curl -sSI {DOCS_PROBE_URL}"))
+    rows.append(plan_or_run(
+        "deployment", ["gb-deployment-audit.py"], 300.0, _already("deployment", "*.json"),
+        "deployment/",
+        None if pre.get("desktop-app") == "OK" else
+        (f"{plat.support_dir} does not exist" if plat.support_dir
+         else f"{plat.os} has no support directory for the audit to read"),
+        ("install and launch the Grok Bot desktop app, then re-run `gb setup --apply`"
+         if plat.status == "SUPPORTED" else "gb platform")))
+
+    audited = any(r["step"] == "deployment" and r["status"] in ("OK", "PLANNED") for r in rows)
+    blocker = next((why for ok, why in (
+        (pre.get("keychain") == "OK",
+         "the desktop client's keychain item is not present"
+         if plat.capability("credential_read").available
+         else f"the credential read is NOT_IMPLEMENTED on {plat.os} — see `gb platform`"),
+        (pre.get("crypto") == "OK", "the `cryptography` module is not importable"),
+        (audited, "there is no deployment audit for it to read (see the `deployment` step)"),
+    ) if not ok), None)
+    rows.append(plan_or_run(
+        "inventory", ["gb-pull-inventory.py", "--device", label], 600.0,
+        _already("inventory", f"*.{label}.json"), f"inventory/*.{label}.json", blocker,
+        ("open the Grok Bot desktop app and sign in, then re-run `gb setup --apply`"
+         if plat.capability("credential_read").available else
+         "run the pull from a signed-in macOS desktop; the inventory artifact it writes is "
+         "platform-neutral and can be committed from anywhere")))
+    return rows
+
+
+def cmd_setup(a: SetupArgs) -> int:
+    """Zero to measured: preflight, register this desktop, take the first measurements, verify."""
+    label, bad = _device_label(a.device)
+    if label is None:
+        print(f"gb: {bad}", file=sys.stderr)
+        return EXIT_USAGE
+
+    before = instance_state()
+    plat = platform_support()
+    pre_rows = _preflight(plat)
+    pre = {r["step"]: r["status"] for r in pre_rows}
+
+    # Fatal, in dry-run as much as under --apply: without the interpreter or the producers there
+    # is no plan to print either. ENVIRONMENT, because the machine is what is missing.
+    fatal = [r for r in pre_rows if r["step"] in ("python", "cli") and r["status"] != "OK"]
+    # The only route out of UNCONFIGURED runs through at least one producer. The surface snapshot
+    # needs the network; the deployment audit needs the app. Neither means nothing can be
+    # measured, and registering a desktop anyway would flip this root to CONFIGURED with zero
+    # measurements behind it — the check wall, restored, with a registry on top.
+    measurable = pre.get("network") == "OK" or pre.get("desktop-app") == "OK"
+
+    dev_doc: Optional[Dict[str, Any]] = None
+    if fatal:
+        dev_row = _step("device", "SKIPPED", "preflight is fatal — nothing was planned",
+                        "fix the preflight rows above")
+    else:
+        dev_row, dev_doc = _plan_device(label)
+
+    refused = bool(a.apply) and not measurable and before.unconfigured and not fatal
+    steps: List[Dict[str, Any]] = list(pre_rows)
+    actual: List[str] = []
+
+    if fatal:
+        steps.append(dev_row)
+        steps.append(_step("measure", "SKIPPED", "preflight is fatal", None))
+    elif refused:
+        steps.append(_step(
+            "device", "SKIPPED",
+            f"refusing to write {DEVICE_REGISTRY}: nothing can be measured from this machine "
+            f"(no network, no desktop app), and registering a desktop is on its own enough to "
+            f"make this root look CONFIGURED — that would hand you the 22-check wall with a "
+            f"registry on top instead of a measured instance. Nothing was written.",
+            "get network access to docs.x.ai, or install the Grok Bot desktop app, then "
+            "re-run `gb setup --apply`"))
+        steps.append(_step("measure", "SKIPPED", "no producer can run here", None))
+    else:
+        if a.apply and dev_doc is not None:
+            atomic_write_json(ROOT / DEVICE_REGISTRY, dev_doc)
+            dev_row = _step("device", "OK", dev_row["detail"].replace("would ", "", 1),
+                            device=label, hostname=dev_row.get("hostname"),
+                            desktops=dev_row.get("desktops"))
+            actual.append(f"wrote {DEVICE_REGISTRY}")
+        steps.append(dev_row)
+        measured = _measure(label, pre, bool(a.apply), plat)
+        steps.extend(measured)
+        # Only steps that actually SPAWNED a child go in `actual_actions`. `_run_producer` is
+        # the only thing that stamps `exit`; an already-measured row is OK without having run,
+        # and reporting its command as an action taken is the lie that would make a second
+        # `--apply` look like a re-fetch it deliberately did not perform.
+        actual += [str(r.get("command")) for r in measured if "exit" in r]
+
+    after = instance_state()
+    # The single sentence that answers "so what do I type now". `--apply` is only the right
+    # answer when applying could actually change something: when preflight is fatal, or when
+    # the run was REFUSED, the next command is the remediation for that, not a re-run that
+    # would take exactly the same decision again.
+    blocked = (fatal[0] if fatal else None)
+    if blocked is not None:
+        nxt = str(blocked.get("remediation") or "gb setup")
+    elif refused:
+        nxt = "curl -sSI " + DOCS_PROBE_URL
+    elif after.unconfigured:
+        nxt = "gb setup --apply"
+    else:
+        nxt = "gb triage"
+    # A plan that wrote nothing is not a FAILURE — it is a plan. Only `--apply` that finished
+    # with the root still unconfigured has actually failed to do its job.
+    verify = _step(
+        "verify",
+        "OK" if not after.unconfigured else ("FAILED" if a.apply else "PLANNED"),
+        f"{after.state} — {after.why}",
+        None if not after.unconfigured else
+        ("nothing here can run setup — see the ABSENT preflight row(s) above" if fatal else
+         "nothing can be measured from this machine, so nothing was written — see the device row"
+         if refused else
+         "nothing was written, so the root is still UNCONFIGURED — that is what a plan means; "
+         "re-run with --apply" if not a.apply else
+         "no step produced an artifact; fix the SKIPPED/FAILED rows above and re-run"),
+        state=after.state, next_command=nxt)
+    steps.append(verify)
+
+    failed = [r for r in steps if r["status"] == "FAILED"]
+    if fatal:
+        rc = EXIT_ENVIRONMENT
+    elif refused:
+        rc = EXIT_REFUSED
+    elif not a.apply:
+        rc = EXIT_OK
+    elif after.unconfigured:
+        rc = EXIT_ENVIRONMENT
+    else:
+        rc = EXIT_FINDINGS if failed else EXIT_OK
+
+    payload = envelope(
+        "setup",
+        dry_run=not a.apply,
+        state=after.state,
+        device=label,
+        hostname=socket.gethostname(),
+        state_before=before.state,
+        state_after=after.state,
+        refused=refused,
+        steps=steps,
+        # Actions only. `verify` is an OBSERVATION, and listing it beside "would run X" makes
+        # the plan look like it intends to do something it merely intends to check.
+        planned=[r["detail"] for r in steps
+                 if r["status"] == "PLANNED" and r["step"] != "verify"],
+        actual_actions=actual,
+        next_command=nxt,
+        commands=[r["remediation"] for r in steps if r.get("remediation")] or [nxt],
+    )
+
+    head = ("gb setup — PLAN (nothing was written; re-run with --apply)" if not a.apply
+            else ("gb setup — REFUSED (nothing was written)" if refused
+                  else "gb setup — APPLIED"))
+    human = [head, ""]
+    for row in steps:
+        # 16, not 9: NOT_IMPLEMENTED is the longest status a row can carry, and a column that
+        # the widest value overflows collides with the next one (`NOT_IMPLEMENTEDkeychain`).
+        human.append(f"  {row['status']:<16}{row['step']:<12}{row['detail'][:110]}")
+        if row.get("remediation"):
+            human.append(f"  {'':<16}{'':<12}fix: {str(row['remediation'])[:110]}")
+    human += ["", f"state: {before.state} -> {after.state}", "", "next:",
+              f"  {payload['next_command']}"]
+    emit(payload, a.json, "\n".join(human))
+    return rc
+
+
+# ---------------------------------------------------------------------------------------------
+# `gb platform` — can this tool work on this machine at all, and how much of that is measured
+#
+# THE PROBLEM IT REMOVES. Measured 2026-09-11, before this verb existed: four files hardcoded
+# the macOS support directory, two shelled out to `security`, one drove `launchctl`, and
+# `grep -rl 'sys.platform\|platform.system' bin/` returned ZERO. A Windows or Linux operator
+# installing the published package therefore got the wave-4 failure again through a new door:
+# the macOS path is absent on his machine, every producer reports its input missing, and the
+# board prints a wall. One state — "this OS is not verified" — reported as twenty problems.
+#
+# WHY IT IS CANONICAL. `gb platform` is named by `route_unconfigured`, by `gb setup`'s platform
+# row, by the deployment audit's refusal and by the inventory pull's refusal. Deleting it
+# leaves four remediations pointing at nothing, which is strictly worse than never having had
+# it — the same argument that put `setup` in CANONICAL_VERBS in wave 4.
+#
+# WHAT IT WILL NOT DO. It will not call Windows or Linux SUPPORTED. Nobody in this repo has run
+# either client; the paths are Electron-shaped inferences, and `--selftest` proves the inference
+# is implemented consistently, not that it is true. That distinction is the whole verb.
+# ---------------------------------------------------------------------------------------------
+PLATFORM_FIXTURES = "fixtures/platform"
+
+
+def _platform_human(plat: Platform) -> List[str]:
+    """The rendered block. Shared by the verb and by nothing else yet — kept separate because
+    the JSON envelope and this text must not drift into disagreeing about the same fields."""
+    lines = [f"{plat.os} · {plat.status}"
+             + ("  (FORCED — this is not a measurement of this machine)" if plat.forced else ""),
+             "",
+             f"  {plat.why}.",
+             "",
+             f"  support dir   {plat.support_dir or '(none on this platform)'}",
+             f"  exists        {'yes' if plat.support_dir_exists else 'no'}",
+             f"  path source   {plat.path_source}",
+             "",
+             "capabilities:"]
+    for cap in plat.capabilities:
+        lines.append(f"  {cap.status:<16}{cap.name:<20}{cap.detail[:88]}")
+        if cap.remediation:
+            lines.append(f"  {'':<16}{'':<20}fix: {cap.remediation[:88]}")
+    lines += ["", "next:"]
+    lines.append(f"  {plat.remediation}" if plat.remediation else
+                 "  gb setup            nothing about this platform is in your way")
+    return lines
+
+
+def _platform_case(root: pathlib.Path, spec: Dict[str, Any]) -> Dict[str, Any]:
+    """Resolve ONE planted platform and compare it with what the fixture says must happen.
+
+    The environment is rebuilt from scratch rather than layered onto `os.environ`: a fixture
+    that inherited this Mac's HOME would resolve half its paths off the machine running the
+    test, and would pass here for reasons that do not exist on a runner.
+    """
+    env: Dict[str, str] = {k: str(root / v) for k, v in (spec.get("env") or {}).items()}
+    env.update({k: str(v) for k, v in (spec.get("env_literal") or {}).items()})
+    want = spec.get("expect") or {}
+    plat = platform_support(sys_platform=spec.get("sys_platform"), env=env)
+
+    bad: List[str] = []
+
+    def cmp(field: str, got: Any, expected: Any) -> None:
+        if got != expected:
+            bad.append(f"{field}: expected {expected!r}, got {got!r}")
+
+    cmp("os", plat.os, want.get("os"))
+    cmp("status", plat.status, want.get("status"))
+    cmp("support_dir_exists", plat.support_dir_exists, want.get("support_dir_exists"))
+    rel = want.get("support_dir")
+    cmp("support_dir", plat.support_dir, None if rel is None else (root / rel))
+    # A resolution reached through an override or a forced platform string MUST say so. This is
+    # the assertion that stops a fixture transcript from being pasted into a bug report as if it
+    # were a reading of someone's machine.
+    cmp("forced", plat.forced, True)
+    for name, status in (want.get("capabilities") or {}).items():
+        cmp(f"capability[{name}]", plat.capability(name).status, status)
+    for field, needle in (("why", want.get("why_mentions")),
+                          ("path_source", want.get("path_source_mentions")),
+                          ("remediation", want.get("remediation_mentions"))):
+        if needle and needle not in (getattr(plat, field) or ""):
+            bad.append(f"{field} does not mention {needle!r}: {getattr(plat, field)!r}")
+
+    probe = want.get("keychain_probe")
+    if probe is not None:
+        # The refusal path, driven through the REAL entry point. If this raises, the fixture
+        # fails loudly rather than the tool failing quietly on someone's laptop.
+        row = _probe_keychain(plat)
+        cmp("keychain_probe.status", row["status"], probe.get("status"))
+        if probe.get("has_remediation") and not row.get("remediation"):
+            bad.append("keychain_probe: refused with no remediation — a dead end")
+    return {"case": spec.get("case"), "why": spec.get("why"), "pass": not bad,
+            "problems": bad, "resolved": plat.to_json()}
+
+
+def _platform_selftest(as_json: bool) -> int:
+    """Every planted platform under `fixtures/platform/`, resolved and checked.
+
+    THE POINT. Nobody here owns a Windows box or a Linux box, so the Windows and Linux paths
+    could only ever be claimed, never demonstrated. Making `platform_support` a pure function of
+    (platform string, environment) turns that claim into something a Mac can execute: the
+    fixtures plant a foreign home, a foreign `%APPDATA%`, a foreign `$XDG_CONFIG_HOME`, and the
+    resolver answers with no knowledge that it is being lied to.
+
+    WHAT IT STILL DOES NOT PROVE. That `%APPDATA%\\Grok Bot` is where the Windows client
+    actually writes. That is an Electron inference, it is reported as UNVERIFIED everywhere it
+    appears, and only a real Windows install can close it. This selftest proves the inference is
+    implemented consistently and refuses honestly — not that it is correct.
+    """
+    fx = ROOT / PLATFORM_FIXTURES
+    specs = sorted(fx.glob("*/expect.json")) if fx.is_dir() else []
+    if not specs:
+        print(f"gb: {PLATFORM_FIXTURES}/ is absent — an installed copy carries no fixtures.\n"
+              f"    run this from a checkout: python3 bin/gb platform --selftest",
+              file=sys.stderr)
+        return EXIT_ENVIRONMENT
+    rows: List[Dict[str, Any]] = []
+    for spec_path in specs:
+        spec = read_json_capped(spec_path) or {}
+        spec["case"] = spec_path.parent.name
+        rows.append(_platform_case(spec_path.parent, spec))
+    ok = all(r["pass"] for r in rows)
+    payload = envelope("platform", selftest=True, cases=rows,
+                       passed=sum(1 for r in rows if r["pass"]), total=len(rows), **{"pass": ok})
+    human = [f"  [{'PASS' if r['pass'] else 'FAIL'}] {r['case']:<34}{(r['why'] or '')[:80]}"
+             + ("" if r["pass"] else "\n         " + "\n         ".join(r["problems"]))
+             for r in rows]
+    human.append(f"SELFTEST {'PASS' if ok else 'FAIL'} — "
+                 f"{sum(1 for r in rows if r['pass'])}/{len(rows)} planted platforms")
+    emit(payload, as_json, "\n".join(human))
+    return EXIT_OK if ok else EXIT_FINDINGS
+
+
+def cmd_platform(a: PlatformArgs) -> int:
+    """Which OS this is, how well this tool knows it, and what can be done here."""
+    if a.selftest:
+        return _platform_selftest(a.json)
+    plat = platform_support()
+    payload = envelope(
+        "platform",
+        **plat.to_json(),
+        overrides={SUPPORT_DIR_ENV: os.environ.get(SUPPORT_DIR_ENV),
+                   "GB_PLATFORM": os.environ.get("GB_PLATFORM")},
+        next_command=plat.remediation or "gb setup",
+        commands=[c.remediation for c in plat.capabilities if c.remediation]
+        or [plat.remediation or "gb setup"],
+    )
+    emit(payload, a.json, "\n".join(_platform_human(plat)))
+    # UNSUPPORTED is ENVIRONMENT: the operator asked a fair question and this machine cannot do
+    # the job. UNVERIFIED is exit 0 — the tool works, it simply says so with a caveat, and
+    # failing a read-only status verb for a caveat would make it unusable in a script.
+    return EXIT_ENVIRONMENT if plat.status == "UNSUPPORTED" else EXIT_OK
+
+
 def cmd_repair(a: RepairArgs) -> int:
     if not a.scope or a.scope not in REPAIRS:
         print(f"gb: repair needs a known --scope. Known: {', '.join(REPAIRS)}\n"
@@ -878,9 +1725,14 @@ def cmd_repair(a: RepairArgs) -> int:
 
 
 def cmd_validate(a: ValidateArgs) -> int:
+    # `platform` re-enters this CLI rather than naming a producer: the planted-platform corpus
+    # is resolved by `gb platform --selftest`, which lives here because the refusal path it
+    # proves lives here (`_probe_keychain`). A separate producer would have to import the verb
+    # to prove it, which is the same coupling with an extra file.
     known = {"plugin": ["gb-plugin-validate.py", "--path", "plugin"],
              "mcp": ["gb-mcp-validate.py"],
              "types": ["gb-typecheck.py", "--dry-run"],
+             "platform": ["gb", "platform", "--selftest"],
              "fixtures": ["gb-surface-gate.py", "--selftest"]}
     if a.thing not in known:
         print(f"gb: cannot validate {a.thing!r}. Known: {', '.join(known)}\n"
@@ -956,6 +1808,28 @@ address it. Do not start by reading bin/; start here.
     gb triage --json | jq '.red[].check'      what is not green
     gb triage --json | jq -r '.commands[]'    what to run next
 
+NOT SET UP YET. On a root where nothing has ever been measured, `triage`, `health`, `work` and
+`doctor` do NOT emit one ERROR per unmeasured check. They emit one route and exit 3:
+
+    gb triage --json | jq -r '.state'         CONFIGURED | UNCONFIGURED
+    gb triage --json | jq -r '.next_command'  `gb setup --apply`
+
+Branch on `.state` BEFORE `.verdict`: on an unconfigured root `verdict` is null on purpose, and
+`state: "UNCONFIGURED"` never collapses into an empty result set.
+
+WHICH MACHINE IS THIS. Before you conclude the deployment is broken, check whether this tool is
+even verified here. `gb platform --json | jq -r .status` is SUPPORTED (macOS — measured),
+UNVERIFIED (Windows/Linux — the vendor ships a desktop client, the support-directory path is an
+Electron-shaped INFERENCE nobody here has confirmed, and the credential read and scheduler
+install are NOT_IMPLEMENTED) or UNSUPPORTED (iOS/Android — companion apps to a cloud computer,
+with no local state to read). On an unconfigured root the route block carries `.platform` and
+points at `gb platform` FIRST when the status is not SUPPORTED, because "run gb setup" is the
+wrong answer to "nobody has verified your operating system".
+
+    gb platform --json | jq -r '.capabilities[] | "\\(.status) \\(.capability)"'
+    GB_SUPPORT_DIR=<path>   move the support-directory path (never the status)
+    GB_PLATFORM=<string>    force the platform; answers carry `forced: true`
+
 CONTRACT. `gb capabilities --json` is the machine-readable version of this page: command list,
 exit-code dictionary, subsystem list, repair scopes. Read it instead of remembering this.
 
@@ -965,8 +1839,9 @@ EXIT CODES. Branch on them; they are a dictionary, not a mood.
 STDOUT IS DATA. Every command takes `--json` and prints the envelope on stdout and nothing else;
 diagnostics are on stderr. `gb <verb> --json | jq` never needs a grep.
 
-MUTATION. Only `gb repair` writes, and only with `--apply`. Without it you get the plan and
-`actual_actions: []`. There is no other mutating verb.
+MUTATION. Only `gb repair` and `gb setup` write, and only with `--apply`. Without it you get the
+plan and `actual_actions: []`. There is no other mutating verb. `gb setup --apply` is idempotent
+and refuses (exit 5) rather than leaving this root half-configured.
 
 CANCELLATION. Every command is safe to SIGINT: artifact writes are atomic, so you get either the
 old artifact or the new one, and the process exits 130.
@@ -981,13 +1856,17 @@ gb — quickstart
 This repo watches one thing: a live Grok Bot deployment (the account, its Bots, its plugins, and
 the vendor surface those depend on). The producers in bin/ measure it; `gb` is how you ask.
 
+  0. gb setup             fresh clone? this registers this machine and takes the first
+                          measurements (dry run unless --apply). Until something has been
+                          measured, every other verb routes here and exits 3.
   1. gb triage            what is wrong right now, and what to run about it
   2. gb doctor            is the measuring apparatus itself healthy (6 subsystems)
   3. gb why <check>       why one check says what it says
   4. gb repair --scope X  rebuild a derived artifact (dry run unless --apply)
 
-The weekly tick (`bin/gb-weekly.sh`) is the only thing that fetches from the vendor. Everything
-`gb` does is read-only against artifacts already on disk, except `repair --apply`.
+The weekly tick (`bin/gb-weekly.sh`) is the only thing that fetches from the vendor on a
+schedule. Everything `gb` does is read-only against artifacts already on disk, except
+`repair --apply` and `setup --apply`.
 
 Run `gb examples` for worked invocations, `gb help <topic>` for a manual page, and
 `gb capabilities --json` if you are a program.
@@ -1036,6 +1915,7 @@ def cmd_completion(a: CompletionArgs) -> int:
 
 
 HANDLERS: Dict[str, Callable[[Any], int]] = {
+    "setup": cmd_setup, "platform": cmd_platform,
     "triage": cmd_triage, "work": cmd_work, "doctor": cmd_doctor, "health": cmd_health,
     "repair": cmd_repair,
     "validate": cmd_validate, "audit": cmd_audit, "why": cmd_why,

@@ -1137,6 +1137,22 @@ CANONICAL_VERBS = {
     "help",
     "completion",
     "triage",  # the mega-command
+    # `setup` is canonical, not a convenience. Measured 2026-09-11: a fresh public clone had no
+    # artifacts, so `gb triage` printed 22 ERROR rows and exited 1 — one state (nothing measured
+    # yet) reported 22 times, indistinguishable from a broken tool, with no route out. `setup` is
+    # that route, and `triage`/`health`/`work`/`doctor` name it by hand when they detect an
+    # unconfigured root. Deleting it restores the wall, which is exactly the class of regression
+    # this check exists to catch.
+    "setup",
+    # `platform` is canonical for the same reason `setup` is, one wave later. Measured
+    # 2026-09-11: four files hardcoded `~/Library/Application Support/Grok Bot`, two shelled out
+    # to `security find-generic-password`, one drove `launchctl`, and
+    # `grep -rl 'sys.platform\|platform.system' bin/` returned ZERO — so a Windows or Linux
+    # installer got the wave-4 check wall back through a new door, with no sentence anywhere in
+    # the tool saying "this operating system is not verified". `gb platform` is that sentence,
+    # and `route_unconfigured`, `gb setup`'s platform row, `gb-deployment-audit` and
+    # `gb-pull-inventory` all name it in their remediations. Deleting it leaves four dead ends.
+    "platform",
 }
 
 

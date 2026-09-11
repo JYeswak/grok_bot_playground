@@ -36,7 +36,13 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from gblib import DEFAULT_SUPPORT, dated_children, load, unb32  # noqa: E402
+from gblib import (  # noqa: E402
+    dated_children,
+    load,
+    platform_refusal,
+    platform_support,
+    unb32,
+)
 from gbtypes import atomic_write_text  # noqa: E402
 
 PERSIST = "sand-client-persistence"
@@ -67,10 +73,18 @@ def replicas(support: pathlib.Path) -> dict[str, dict]:
 
 def main() -> int:
     root = pathlib.Path(__file__).resolve().parents[1]
+    plat = platform_support()
     ap = argparse.ArgumentParser()
     ap.add_argument("--json", action="store_true")
-    ap.add_argument("--support", default=DEFAULT_SUPPORT)
+    ap.add_argument(
+        "--support", default=str(plat.support_dir) if plat.support_dir else None
+    )
     args = ap.parse_args()
+    # No desktop client on this platform means no transcript replicas to count. Reading the
+    # macOS path anyway would report every Bot idle, which is a finding this tool invented.
+    if args.support is None:
+        print(platform_refusal("gb-utilization", plat), file=sys.stderr)
+        return 3
 
     invs = [
         f for f in dated_children(root / "inventory", ".json") if ".studio." in f.name

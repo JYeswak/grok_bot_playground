@@ -1,0 +1,28 @@
+{
+ "why": "a Windows client installed where Electron's userData rule says it should be",
+ "sys_platform": "win32",
+ "plant": [
+  "appdata/Grok Bot"
+ ],
+ "env": {
+  "HOME": "home",
+  "APPDATA": "appdata"
+ },
+ "expect": {
+  "os": "windows",
+  "status": "UNVERIFIED",
+  "support_dir": "appdata/Grok Bot",
+  "support_dir_exists": true,
+  "capabilities": {
+   "credential_read": "NOT_IMPLEMENTED",
+   "scheduler_install": "NOT_IMPLEMENTED",
+   "deployment_audit": "PARTIAL",
+   "local_exec_policy": "AVAILABLE"
+  },
+  "why_mentions": "INFERRED",
+  "keychain_probe": {
+   "status": "NOT_IMPLEMENTED",
+   "has_remediation": true
+  }
+ }
+}

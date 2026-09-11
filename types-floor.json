@@ -5,6 +5,7 @@
   "bin/gb",
   "bin/gb-typecheck.py",
   "bin/gbargs.py",
+  "bin/gblib.py",
   "bin/gbtypes.py"
  ]
 }

@@ -73,17 +73,19 @@ gb capabilities --json # the machine-readable contract
 
 ## The verbs
 
-Fourteen canonical verbs, plus `work`. Every one takes `--json` and prints its envelope on
+Sixteen canonical verbs, plus `work`. Every one takes `--json` and prints its envelope on
 stdout and nothing else; diagnostics always go to stderr, so `gb <verb> --json | jq` never
 needs a `grep`.
 
 | verb | what it answers |
 |---|---|
+| `platform` | is this tool verified on this operating system, and what works here |
+| `setup` | take a fresh clone to a measured instance; **dry-run unless `--apply`** |
 | `triage` | what is wrong right now, and the exact commands that address it |
 | `doctor` | is the measuring apparatus itself healthy — six subsystems, PASS/FAIL each |
 | `health` | one line of deployment state, cheap enough for a `--watch` loop |
 | `repair` | idempotently rebuild a derived artifact; **dry-run unless `--apply`** |
-| `validate` | verify one thing — `plugin`, `mcp`, `types`, `fixtures` — without changing it |
+| `validate` | verify one thing — `plugin`, `mcp`, `types`, `platform`, `fixtures` — without changing it |
 | `audit` | recent mutations to this tree, with provenance |
 | `why` | provenance for one check: what it reads, and what it last said |
 | `capabilities` | the machine-readable contract: commands, exit codes, subsystems, repair scopes |
@@ -91,11 +93,12 @@ needs a `grep`.
 | `quickstart` | the human orientation page |
 | `examples` | worked invocations, copy-pasteable |
 | `info` | version, contract version, runtime sha, producers present, artifact roots |
-| `help` | topic manual — `exit-codes`, `subsystems`, `repair`, `tick`, `porting` |
+| `help` | topic manual — `exit-codes`, `subsystems`, `repair`, `platform`, `setup`, `tick`, `porting` |
 | `completion` | a `bash` or `zsh` completion script |
 | `work` | what to pick up next, and whether that ranking can be trusted |
 
 ```sh
+gb platform --json | jq -r .status          # SUPPORTED | UNVERIFIED | UNSUPPORTED
 gb triage --json | jq -r '.commands[]'      # what to run next
 gb doctor --scope gate                      # one subsystem, not all six
 gb repair --scope fixtures                  # show what regenerating would do
@@ -103,8 +106,8 @@ gb repair --scope fixtures --apply          # actually do it
 gb why g8-desktop-inventory                 # what that check reads, and where it looked
 ```
 
-`repair --apply` is the only verb in the tool that writes. Without the flag you get the plan and
-`actual_actions: []`.
+`repair --apply` and `setup --apply` are the only verbs in the tool that write. Without the
+flag you get the plan and `actual_actions: []`.
 
 ## Exit codes
 
@@ -135,13 +138,35 @@ tools usually lie about themselves.
 - **It does not ship a deployment.** This tree is the INSTRUMENT. It contains no account, no
   inventory, no deployment snapshot and no fleet specification — those are the operator's, and
   they were removed deliberately by an allowlist-driven exporter, not trimmed by hand.
-- **A fresh install has nothing to measure yet.** `gb capabilities`, `gb quickstart`,
-  `gb examples`, `gb help`, `gb robot-docs`, `gb completion` and `gb info` answer immediately.
-  `gb triage`, `gb doctor` and `gb health` read artifact roots that do not exist until you
-  have run the producers. Measured on a fresh install: they answer `verdict ERROR`, name all
-  22 checks that could not be read ("no snapshot directory under `surface/`", "no deployment
-  audit to read"), and exit `1`. ERROR is the gate's word for *could not measure*, kept
-  distinct from RED throughout — an empty board is never reported green.
+- **A fresh install has nothing to measure yet, and says so once.** `gb capabilities`,
+  `gb platform`, `gb quickstart`, `gb examples`, `gb help`, `gb robot-docs`, `gb completion`
+  and `gb info` answer immediately. `gb triage`, `gb doctor`, `gb health` and `gb work` read
+  artifact roots that do not exist until you have run the producers. Measured on a fresh
+  clone: they print ONE route — `state: "UNCONFIGURED"`, `next_command: "gb setup --apply"` —
+  and exit `3`. They deliberately do NOT print one ERROR per unmeasured check: that was 22
+  rows for one fact, indistinguishable from a broken tool. Branch on `.state` before
+  `.verdict`; on an unconfigured root `verdict` is `null` on purpose, and an empty board is
+  never reported green.
+- **It is measured on macOS, and honest about the other four platforms.** The vendor ships a
+  desktop app for macOS, Windows and Linux and a companion app for iOS and Android
+  ([docs](https://docs.x.ai/grok-bot/faq)). `gb platform` reports one of three statuses and
+  never rounds up:
+
+  | status | platforms | what it means |
+  |---|---|---|
+  | `SUPPORTED` | macOS | measured — every path and capability is read off a live install |
+  | `UNVERIFIED` | Windows, Linux | the client exists, but nobody here has run one. The support directory is inferred from Electron's `userData` rule (`%APPDATA%\Grok Bot`, `$XDG_CONFIG_HOME/Grok Bot`), the credential read and the scheduler install are `NOT_IMPLEMENTED`, and all four facts are reported rather than discovered |
+  | `UNSUPPORTED` | iOS, Android | companion clients of a cloud computer: no local session, no support directory, nothing here to audit |
+
+  If the inferred path is wrong on your machine, `GB_SUPPORT_DIR=<path>` moves it — and does
+  not move the status, because pointing this tool at a directory does not verify an operating
+  system. `gb platform --selftest` resolves six planted platforms from `fixtures/platform/`
+  and proves the Windows and Linux branches are implemented and refuse honestly; it does not
+  prove the inferred paths are correct, and only a real install can. The CI matrix
+  (`.github/workflows/ci.yml`) runs the suite on Ubuntu, Windows and macOS × Python 3.9 and
+  3.12, and asserts each runner classifies itself correctly. Windows cancel-correctness is
+  unmeasured: the spine's SIGINT proof has no Windows equivalent, so that step is scoped to
+  POSIX rather than weakened until it passes.
 - **`pip install` installs the CLI and the producers, not the corpus.** The gate's 54-case
   fixture corpus, the plugin manifest, the Bot template library and the hero art ship in this
   repository but are not copied into `site-packages` — they are ~9 MB of material that grades

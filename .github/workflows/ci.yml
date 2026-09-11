@@ -1,0 +1,141 @@
+# ci.yml — the first thing in this project's history that runs on an operating system nobody
+# here owns.
+#
+# WHY IT LIVES UNDER packaging/. This file is authored in the INSTANCE repo, which has no git
+# remote (measured: `git remote -v` is empty), so a workflow committed at its root would never
+# run anywhere. `bin/gb-export-public.py` copies it to `.github/workflows/ci.yml` at the root of
+# the PUBLIC tree, which is a real repository with real runners. Same reason `pyproject.toml`
+# lives here: the instance is not the distributable, and the export is.
+#
+# WHAT THIS ACTUALLY PROVES, and it is the whole point of the file. Until now every claim this
+# repo made about Windows and Linux was an inference checked by fixtures on a Mac. `fixtures/
+# platform/` plants a foreign environment and proves the resolver is IMPLEMENTED; it cannot
+# prove that a real `windows-latest` runner classifies itself as `windows`, that a real Python
+# 3.9 on Ubuntu imports this package, or that the gate's 54-fixture sweep survives a filesystem
+# that is not APFS. Those are measurements, and only a runner can take them.
+#
+# WHAT IT STILL DOES NOT PROVE, stated here rather than discovered later:
+#
+#   1. That `%APPDATA%\Grok Bot` is where the Windows client writes. No runner has the Grok Bot
+#      desktop app installed, and none can: it is a signed-in commercial client. The job below
+#      asserts `status == UNVERIFIED` on Windows and Linux — it asserts the tool SAYS SO, which
+#      is the honest half. Closing the other half needs a real install and a human.
+#   2. That the credential read works anywhere but macOS. It does not, by design; the job
+#      asserts it reports NOT_IMPLEMENTED rather than failing inside a subprocess.
+#   3. Cancel-correctness on Windows. `bin/gbtypes-selftest.py` t5 drives a child with
+#      `Popen.send_signal(signal.SIGINT)` and asserts exit 130. Neither is a Windows concept —
+#      `send_signal(SIGINT)` raises there, and 130 is a POSIX shell convention. The step is
+#      therefore SCOPED to POSIX runners rather than made to pass, because a proof that was
+#      weakened until it went green proves nothing. Windows cancel-correctness is UNMEASURED.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    # Uniform shell everywhere, including Windows (git-bash ships on the runner). Without this,
+    # Windows jobs get PowerShell and every multi-line step needs a second dialect.
+    shell: bash
+
+jobs:
+  suite:
+    name: ${{ matrix.os }} · py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One red cell must not cancel the others: the interesting question is WHICH platform
+      # broke, and fail-fast answers it with a blank row.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.9", "3.12"]
+        exclude:
+          # `macos-latest` is Apple silicon and actions/python-versions publishes no arm64
+          # build of 3.9 — the job fails in `setup-python`, before any of this repo's code
+          # runs. 3.9 is still covered on macOS by the `macos-13` (Intel) entry below, which is
+          # the honest way to keep the floor tested rather than dropping it and not saying so.
+          - os: macos-latest
+            python: "3.9"
+        include:
+          - os: macos-13
+            python: "3.9"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: install the package
+        # No `[inventory]` extra. `dependencies = []` is a claim this repo's exporter already
+        # checks statically; installing bare is what turns it into an executed fact.
+        run: python -m pip install --upgrade pip && python -m pip install .
+
+      - name: the installed console script answers
+        run: |
+          gb --help
+          gb capabilities --json > capabilities.json
+          python -c "
+          import json
+          d = json.load(open('capabilities.json'))
+          assert 'platform' in d['commands'], sorted(d['commands'])
+          assert len(d['exit_codes']) >= 5, d['exit_codes']
+          print('capabilities: %d verbs, %d exit codes' % (len(d['commands']), len(d['exit_codes'])))
+          "
+
+      - name: this runner classifies itself correctly
+        # THE MEASUREMENT THIS FILE EXISTS FOR. Everything else here is regression cover; this
+        # step is the only thing in the project that has ever asked a real Windows or Linux
+        # machine what `gblib.platform_support` says about it.
+        run: |
+          gb platform --json > platform.json
+          python -c "
+          import json, os
+          want = {
+              'Linux':   ('linux',   'UNVERIFIED', 'NOT_IMPLEMENTED'),
+              'Windows': ('windows', 'UNVERIFIED', 'NOT_IMPLEMENTED'),
+              'macOS':   ('macos',   'SUPPORTED',  'AVAILABLE'),
+          }[os.environ['RUNNER_OS']]
+          d = json.load(open('platform.json'))
+          cred = [c for c in d['capabilities'] if c['capability'] == 'credential_read'][0]
+          got = (d['os'], d['status'], cred['status'])
+          assert got == want, 'expected %r, got %r' % (want, got)
+          assert d['forced'] is False, 'a CI reading must never be a forced one'
+          assert d['support_dir'], 'a desktop platform must resolve to some directory'
+          print('platform %s %s; support_dir %s (exists=%s)'
+                % (d['os'], d['status'], d['support_dir'], d['support_dir_exists']))
+          "
+
+      - name: the planted-platform corpus resolves here too
+        # Run from the checkout, not through the console script: an installed copy carries no
+        # fixtures, and `gb platform --selftest` reports that as ENVIRONMENT rather than
+        # pretending to pass. Running it on three operating systems is what proves the
+        # resolver's path handling is not quietly POSIX-only.
+        run: python bin/gb platform --selftest
+
+      - name: the gate's own known-bad corpus
+        run: python bin/gb-surface-gate.py --selftest
+
+      - name: mutation control — a disabled check must FAIL the selftest
+        # A green selftest is only evidence if a broken gate would go red. This is the cheapest
+        # possible proof that the sweep is wired to the checks at all.
+        run: |
+          if python bin/gb-surface-gate.py --selftest --disable g24-cli-contract > /dev/null 2>&1; then
+            echo "selftest passed with a check disabled — the sweep is not wired to the checks" >&2
+            exit 1
+          fi
+          echo "mutation control held: disabling g24 fails the selftest"
+
+      - name: the typed spine's cancel-correctness proofs (POSIX only)
+        # SCOPED, NOT WEAKENED. See the header: t5 sends SIGINT and asserts exit 130, and
+        # neither exists on Windows. Windows cancel-correctness is unmeasured, and this file
+        # says so instead of running a version of the proof that could not fail.
+        if: runner.os != 'Windows'
+        run: python bin/gbtypes-selftest.py
