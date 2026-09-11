@@ -1,11 +1,11 @@
 {
  "schema": "gb-export-public/1",
  "tool": "gb-export-public",
- "exported_at": "2026-09-11T09:41:12-06:00",
+ "exported_at": "2026-09-11T09:43:04-06:00",
  "source_root": "grokbot",
  "file_count": 2449,
  "files": {
-  ".gitattributes": "05fcf9e721bc03b60fba7b6c744b235c6553c1b14ca206ddce9ca0905bd2b046",
+  ".gitattributes": "5c444610c7b71c4c7c67e9901981f6ea484959cef6904d98017c3f42a67f9115",
   ".github/workflows/ci.yml": "223bcb3b0d36a74987a2ef349de2cec41147476c5f3c01d4dc3273325ca278ef",
   ".gitignore": "ee1820e14425bb1811a0d01ea14def431aebb9c511687038db37de36455b1181",
   "LICENSE": "0afa932ebeca3bdc7042b193408eef512ebd03f899fff00faef45d6be53342ce",

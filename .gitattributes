@@ -18,12 +18,17 @@
 # 49/54 is the exact figure both Windows cells produced, which is what makes it the same
 # defect rather than a lookalike.
 
-# The fixture corpus is content-addressed: never translate it, on any platform.
-fixtures/** -text
-
-# Artifacts and manifests are hashed or byte-compared the same way.
-*.json -text
-*.jsonl -text
+# SECOND DEFECT, found by cloning the PUBLISHED repo the way Windows would (2026-09-11):
+# pinning only the data was not enough. `bin/gb` is extensionless and executable, and its
+# shebang was translated too -- a Windows checkout produced
+#     env: python3\r: No such file or directory      (exit 127)
+# so the CLI did not fail a check, it failed to START. That is worse than the fixture bug and
+# it was invisible from my own repo, where nothing is ever re-materialised under autocrlf.
+#
+# So the rule is the whole tree, not a list of extensions. Nothing here benefits from CRLF
+# translation: every file is hashed, executed, or parsed. A denylist of "the types we thought
+# of" is exactly how the shebang got missed the first time.
+* -text
 
 # The hero is binary; say so rather than relying on detection.
 *.jpg binary
