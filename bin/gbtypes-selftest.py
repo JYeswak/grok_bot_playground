@@ -545,7 +545,14 @@ def t8_cli_contract() -> None:
             "bin/gb is missing — the producer family has no entry point",
         )
         return
-    env = {**os.environ, "NO_COLOR": "1", "CI": "true", "TERM": "dumb"}
+    # Clear the re-entry guard explicitly. `gb doctor` exports GB_IN_DOCTOR into every child,
+    # and this proof IS a child when doctor runs its spine subsystem — but t8's whole job is to
+    # drive the CLI on purpose, which is the one case the guard must not block. Opting out here
+    # keeps the guard honest (it still stops ACCIDENTAL re-entry from any other producer) and
+    # keeps this proof meaningful. The verbs t8 drives are all cheap and scoped, so clearing it
+    # cannot resurrect the fan-out recursion the guard exists to prevent.
+    env = {k: v for k, v in os.environ.items() if k != "GB_IN_DOCTOR"}
+    env.update({"NO_COLOR": "1", "CI": "true", "TERM": "dumb"})
 
     def call(args: List[str]) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -593,7 +600,16 @@ def t8_cli_contract() -> None:
             )
             return
 
-    for verb in (["triage"], ["doctor"], ["quickstart"], ["examples"], ["robot-docs"]):
+    # `doctor` is scoped here on purpose: the unscoped fan-out re-enters this very
+    # selftest through its spine subsystem, which measured 8.3s of pure recursion
+    # depth for a check that only looks for escape bytes in the output.
+    for verb in (
+        ["triage"],
+        ["doctor", "--scope", "gate"],
+        ["quickstart"],
+        ["examples"],
+        ["robot-docs"],
+    ):
         r = call(verb)
         if "\x1b[" in r.stdout or "\x1b[" in r.stderr:
             record(

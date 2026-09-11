@@ -333,8 +333,21 @@ class PlatformArgs:
     selftest: bool = arg(help="resolve every planted platform under fixtures/platform/ instead")
 
 
+
+@dataclasses.dataclass(frozen=True)
+class MineArgs:
+    """Mine franken-harvest and the local mirror for capability this deployment could adopt."""
+
+    query: Tuple[str, ...] = arg(help="what to mine for; repeatable (default: this repo's gaps)")
+    limit: int = arg(default=10, help="maximum candidates to emit")
+    mirror: Optional[str] = arg(help="Dicklesworthstone mirror root")
+    dry_run: bool = arg(help="mine and report, but write no artifact")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+
 COMMANDS: Dict[str, type] = {
     "setup": SetupArgs,
+    "mine": MineArgs,
     "platform": PlatformArgs,
     "triage": TriageArgs,
     "work": WorkArgs,
@@ -389,11 +402,6 @@ def probe(name: str, argv: List[str], timeout_s: float = 180.0, summary: str = "
     # and reported spine DOWN, which is a lie — the subsystem was fine, the tool was eating
     # itself. The guard is on the ENV, not on the one call site, so any future producer that
     # shells back into gb degrades to a skip instead of a hang.
-    if os.environ.get(REENTRY_ENV) and name == "spine":
-        return {"subsystem": name, "status": "SKIPPED", "severity": Severity.OK.name,
-                "detail": "already inside gb — the spine proofs drive this CLI, so running them "
-                          "here would recurse; run `gb doctor --scope spine` on its own",
-                "exit": None}
     script = BIN / argv[0]
     if not script.exists():
         return {"subsystem": name, "status": "NOT_CONFIGURED", "severity": Severity.ERR.name,
@@ -1039,6 +1047,20 @@ def cmd_work(a: WorkArgs) -> int:
 
 
 def cmd_doctor(a: DoctorArgs) -> int:
+    # Re-entry is refused at the FAN-OUT, not per subsystem. The first cut keyed the guard on
+    # the name "spine", which bounded the recursion at depth 1 rather than removing it —
+    # measured 2026-09-11: gbtypes-selftest costs 16.9s unguarded vs 8.6s guarded, so ~8.3s of
+    # a `gb doctor` was recursion depth, not proof. Worse, a name-keyed guard protects exactly
+    # one subsystem: adding a `bench` subsystem that shells back into gb would have recursed
+    # with nothing to stop it. Keying on "am I already inside a doctor run" is the property we
+    # actually want, and it holds for subsystems nobody has written yet.
+    if os.environ.get(REENTRY_ENV):
+        print("gb: refusing to run doctor inside a doctor — a producer this run spawned is "
+              "shelling back into the CLI.\n"
+              "    run it on its own:  gb doctor" + (f" --scope {a.scope}" if a.scope else ""),
+              file=sys.stderr)
+        return EXIT_ENVIRONMENT
+
     scopes = {a.scope: SUBSYSTEMS[a.scope]} if a.scope in SUBSYSTEMS else (
         None if a.scope else SUBSYSTEMS)
     if scopes is None:
@@ -1914,8 +1936,42 @@ def cmd_completion(a: CompletionArgs) -> int:
     return EXIT_OK
 
 
+def cmd_mine(a: MineArgs) -> int:
+    """Pass through to `bin/gb-mine.py`.
+
+    Deliberately thin: mining reads two large corpora (the franken-harvest ledger and a
+    222-repo mirror through ripwire) and takes tens of seconds. Reimplementing any of that
+    here would put a slow, network-and-disk-heavy read inside the dispatcher every other verb
+    shares. The producer stays independently runnable; this verb only makes it discoverable.
+
+    The child's stdout is relayed verbatim so `gb mine --json | jq` behaves exactly as
+    `gb-mine.py --json | jq` does, and its exit code is returned unchanged so the contract is
+    the producer's, not a translation of it.
+    """
+    argv: List[str] = [sys.executable, str(BIN / "gb-mine.py")]
+    for q in a.query:
+        argv += ["--query", q]
+    argv += ["--limit", str(a.limit)]
+    if a.mirror:
+        argv += ["--mirror", a.mirror]
+    if a.dry_run:
+        argv.append("--dry-run")
+    if a.json:
+        argv.append("--json")
+    proc = run(argv, timeout_s=900, cwd=ROOT)
+    if proc.timed_out:
+        print("gb: mining exceeded its 900s budget — narrow it with `--query` or `--mirror`",
+              file=sys.stderr)
+        return EXIT_ENVIRONMENT
+    if proc.out:
+        print(proc.out, end="" if proc.out.endswith("\n") else "\n")
+    if proc.err:
+        print(proc.err, end="" if proc.err.endswith("\n") else "\n", file=sys.stderr)
+    return proc.code
+
+
 HANDLERS: Dict[str, Callable[[Any], int]] = {
-    "setup": cmd_setup, "platform": cmd_platform,
+    "setup": cmd_setup, "platform": cmd_platform, "mine": cmd_mine,
     "triage": cmd_triage, "work": cmd_work, "doctor": cmd_doctor, "health": cmd_health,
     "repair": cmd_repair,
     "validate": cmd_validate, "audit": cmd_audit, "why": cmd_why,

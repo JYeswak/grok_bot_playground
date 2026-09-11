@@ -1,17 +1,19 @@
 {
  "schema": "gb-export-public/1",
  "tool": "gb-export-public",
- "exported_at": "2026-09-11T09:29:48-06:00",
+ "exported_at": "2026-09-11T09:41:12-06:00",
  "source_root": "grokbot",
- "file_count": 2446,
+ "file_count": 2449,
  "files": {
+  ".gitattributes": "05fcf9e721bc03b60fba7b6c744b235c6553c1b14ca206ddce9ca0905bd2b046",
   ".github/workflows/ci.yml": "223bcb3b0d36a74987a2ef349de2cec41147476c5f3c01d4dc3273325ca278ef",
   ".gitignore": "ee1820e14425bb1811a0d01ea14def431aebb9c511687038db37de36455b1181",
   "LICENSE": "0afa932ebeca3bdc7042b193408eef512ebd03f899fff00faef45d6be53342ce",
   "README.md": "24fc85004bd76cce8f9f247c6d24c7c3b28e76409d01e8b856211fb873d591a5",
   "bin/__init__.py": "5738b7e5608647f52e2e91246e4b604aceb6428eff90fcf2903d1e6f73ad2d7f",
-  "bin/gb": "21a43c7ff01fd03d1b6cf0a24222957d48c7e30cf87a9c1a4a1720f446550b5c",
+  "bin/gb": "a3c29fbc9e5b394c5650aec247c96b3442abef06ba56660b2fa0173ba18f9310",
   "bin/gb-audit-remote.sh": "99ce2faee8a86dbcedef7b261ca317c7fa6f793793a7dbe63492573f85f0763d",
+  "bin/gb-bench.py": "87961b1f526ea9f2648d2a5ab66051190bdd03f3787844dc49e3934fa5cc0d4c",
   "bin/gb-capabilities.py": "3e1babe61bb4b58047a7cf25dd92e1ffbe98f482f4feae8db587488044d5acb4",
   "bin/gb-context-archive.py": "f83b253145277d225cca7327f58969c1b43f1119d79c65cf3fa4cb2834ac5464",
   "bin/gb-coverage.py": "7c62d62da9b43c03359dfc6100be48b6eccf6d4622263e30b28bf0c6374f8c24",
@@ -25,6 +27,7 @@
   "bin/gb-market-snapshot.py": "ae46734198c54258196055f4ab31168ee2af183f2f4094708e6c5926a56fcade",
   "bin/gb-marketplace-dryrun.sh": "494726f4a8644ef8836b7a2a4a9afca9ef3573b8aafc826b2a75f272dfc7d81f",
   "bin/gb-mcp-validate.py": "299a7e53140536ce2d1821aa1e5def1cdb35fdb08ce478835f4125e7e7a9b4e3",
+  "bin/gb-mine.py": "336733d37efd6b904f952516e17d80c581b6dfc4e438697e9568e62b07acefa9",
   "bin/gb-plugin-validate.py": "c69b3b3bb072316c12955824ae257c6613dd6152006824791b80a4ed7da53bbc",
   "bin/gb-pull-inventory.py": "ac2ccc1d11459e39af3dab0ff3f459e631a30d5d942762c4fcad904a5e0dc866",
   "bin/gb-rebuild-fleet.py": "7672d5fa621f990a77153e6a023b44c39af2c3f03c802ea2b72631240bd77bcd",
@@ -38,7 +41,7 @@
   "bin/gb-whatchanged.py": "422980fae899c7047efd4ed5c4f5d5ddf22f27aed256740dec142c2d3e552499",
   "bin/gbargs.py": "8871a4da9c853fbe9b00fca90adf3c0ebd105272240b19b49eda1120c69db1a4",
   "bin/gblib.py": "ceb00a3f88a204eba545c66bc2e6d33c06bbf0a4ac032873ba4129124baca3b5",
-  "bin/gbtypes-selftest.py": "603a1a677101d6dc4b50d8787380adbcaaa6764a28ac9239dc18eafa09b4fc1b",
+  "bin/gbtypes-selftest.py": "e7cfcfa0ec723012bdf65beb996b47894b171b5c3e6546c5326650ed1ec11c59",
   "bin/gbtypes.py": "4317822a9e1429b9fd5f0a1f2454b8bfa4aa17d44109a9ccd10409fca13a1f70",
   "fixtures/bad-archive-stale/README.md": "ac6d66fad012b667db52c12dea33f04c573d6a138f321823d42a1f833b72ee56",
   "fixtures/bad-archive-stale/archive/2026-08-01T0600.json": "05133b3c694be6310e333d7f1caca09dbc39516644d05e1f3b605499b06345b8",
@@ -2447,7 +2450,7 @@
   "plugin/skills/experiment-readout/SKILL.md": "b4965689cfbb842ac37ed38aa0606850ab09aa709869a9c58216a61b0a743008",
   "plugin/skills/weekly-surface-watch/SKILL.md": "9775f922491f5fde62f7622d486b1537e91962599e41a8021d1dd3dca934eb25",
   "pyproject.toml": "ba3748b65ba9fd5e079a7a48410e966fafc42b9d347a06b76e02f4bc39aa59a9",
-  "types-floor.json": "b37eba4ad2d3ab33b171c04f70f1cbcf8456a68efd27a779f427ede3ac0c4cc8",
+  "types-floor.json": "d230e5442ad2e4a8f46325f533706802b106ce5aeed7207eb2e6cf9b50d267c7",
   "visual/HERO-PROMPT.md": "146dcd5f866f135159a2266b654edcb0f95257cf5b53495b6f174f98d4250275",
   "visual/hero-identity-grade.json": "954fae47598cdd3cab00125a56f205b7cad168c0b4fe75df4f52c50b12f39d78",
   "visual/hero.jpg": "63922edf50b27b53a7770a3daf8476966a3aa628e375f334766ac4d3ae09ff07"
@@ -2457,6 +2460,11 @@
  ],
  "allowlist": {
   "named_files": [
+   {
+    "src": ".gitattributes",
+    "dest": ".gitattributes",
+    "why": "pins fixture bytes against autocrlf translation. Without it a Windows clone rewrites LF to CRLF under a gate that hashes RAW bytes, and the selftest fails 49/54 \u2014 measured on a real windows-latest runner, then reproduced byte-exactly on macOS"
+   },
    {
     "src": "LICENSE",
     "dest": "LICENSE",
@@ -2666,6 +2674,16 @@
     "src": "bin/gb-install-schedule.sh",
     "dest": "bin/gb-install-schedule.sh",
     "why": "installs the weekly tick as a scheduled job"
+   },
+   {
+    "src": "bin/gb-mine.py",
+    "dest": "bin/gb-mine.py",
+    "why": "mines franken-harvest and the local mirror for adoptable capability"
+   },
+   {
+    "src": "bin/gb-bench.py",
+    "dest": "bin/gb-bench.py",
+    "why": "measures the hot-path latency baseline the acceleration wave ratchets"
    }
   ],
   "trees": [
