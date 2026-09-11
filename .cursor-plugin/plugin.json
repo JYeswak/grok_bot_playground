@@ -1,0 +1,21 @@
+{
+ "name": "grok-bot-playground",
+ "version": "0.1.0",
+ "description": "A playground for building Grok Bots: skills for the things the catalog has no plugin for (statistics, document extraction, auditing your own deployment), Bot templates you can deploy in one command, and a CLI that verifies each manual step actually took.",
+ "author": {
+  "name": "Joshua Nowak"
+ },
+ "homepage": "https://github.com/JYeswak/grok_bot_playground",
+ "repository": "https://github.com/JYeswak/grok_bot_playground",
+ "license": "MIT",
+ "keywords": [
+  "grok-bot-templates",
+  "experiment-readout",
+  "document-extraction",
+  "grok-bot-audit"
+ ],
+ "variables": {
+  "type": "object",
+  "properties": {}
+ }
+}

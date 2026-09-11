@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""gbx-selftest — prove the template validator fires on a known-bad template.
+
+A validator nobody has seen fail is a validator nobody should trust. This builds a template that
+breaks every rule in a temp dir, points the real checker at it, and requires every check to fire
+— then re-checks the shipped library and requires it clean.
+"""
+import importlib.util, pathlib, sys, tempfile
+from importlib.machinery import SourceFileLoader
+
+HERE = pathlib.Path(__file__).resolve().parent
+# `gbx` ships without a .py suffix (it is a command, not a module), so spec_from_file_location
+# returns None unless the loader is named explicitly.
+spec = importlib.util.spec_from_loader("gbx", SourceFileLoader("gbx", str(HERE / "gbx")))
+gbx = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gbx)
+
+BAD_BOT = """name: Bad
+title: t
+gap: g
+evidence: e
+connectors: []
+description: |
+  too short, and it names no approval boundary at all
+manual_steps: []
+"""
+BAD_SKILL = """---
+name: nope
+description: Does things sometimes.
+---
+body
+"""
+
+def main() -> int:
+    with tempfile.TemporaryDirectory() as td:
+        root = pathlib.Path(td) / "templates" / "bad"
+        (root / "skills" / "s").mkdir(parents=True)
+        (root / "bot.yaml").write_text(BAD_BOT)
+        (root / "skills" / "s" / "SKILL.md").write_text(BAD_SKILL)
+        gbx.TEMPLATES = root.parent
+        t = gbx.load_template("bad")
+        problems = gbx.validate_one(t)
+        for p in problems:
+            print(f"  [bad fixture] {p}")
+        want = ["under 200 chars", "approval boundary", "does not say WHEN"]
+        missed = [w for w in want if not any(w in p for p in problems)]
+        if missed:
+            print(f"SELFTEST FAIL — checks that did not fire: {missed}", file=sys.stderr)
+            return 1
+    gbx.TEMPLATES = HERE.parent / "templates"
+    real = [b for t in gbx.all_templates() for b in gbx.validate_one(t)]
+    if real:
+        print("SELFTEST FAIL — the shipped library does not validate:", file=sys.stderr)
+        for r in real:
+            print(f"  {r}", file=sys.stderr)
+        return 1
+    print(f"SELFTEST PASS — {len(want)} check(s) fire on a known-bad template, "
+          f"{len(gbx.all_templates())} shipped template(s) clean")
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())
