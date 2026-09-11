@@ -1,0 +1,10 @@
+{
+ "schema": "gb-types-floor/1",
+ "why": "Files proven clean under BOTH mypy --strict and pyright. A ratchet: entries are added the day they first pass and are never removed \u2014 a file that regresses is a RED gate, not a smaller floor.",
+ "files": [
+  "bin/gb",
+  "bin/gb-typecheck.py",
+  "bin/gbargs.py",
+  "bin/gbtypes.py"
+ ]
+}

@@ -1,0 +1,45 @@
+{
+ "schema": "gb-market/1",
+ "captured_at": "2026-09-11T06:00:00+00:00",
+ "plugins": {
+  "total": 2,
+  "rows": [
+   {
+    "name": "supabase",
+    "git_ref": "def456",
+    "status": "PLUGIN_STATUS_APPROVED",
+    "updated_at": "1789000000000"
+   },
+   {
+    "name": "vercel",
+    "git_ref": "abc123",
+    "status": "PLUGIN_STATUS_APPROVED",
+    "updated_at": "1789000000000"
+   }
+  ]
+ },
+ "bot_marketplace": {
+  "total": 2,
+  "categories": [
+   "Sales"
+  ],
+  "rows": [
+   {
+    "slug": "a",
+    "name": "A",
+    "category": "Sales",
+    "creator": "x",
+    "updated_at_ms": "1789000000000"
+   }
+  ]
+ },
+ "my_templates": [],
+ "installed": [
+  {
+   "name": "vercel",
+   "enabled": true,
+   "catalog_git_ref": "abc123",
+   "catalog_status": "PLUGIN_STATUS_APPROVED"
+  }
+ ]
+}

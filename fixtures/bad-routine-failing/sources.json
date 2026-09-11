@@ -1,0 +1,10 @@
+{
+ "schema": "gb-sources/1",
+ "repos": [
+  {
+   "repo": "xai-org/plugin-marketplace",
+   "tier": "official",
+   "means": "fixture"
+  }
+ ]
+}

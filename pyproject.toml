@@ -1,0 +1,64 @@
+# pyproject.toml — the PUBLIC tree's packaging metadata.
+#
+# WHY THIS LIVES IN `packaging/` AND NOT AT THE REPO ROOT. This repo is an INSTANCE: it holds a
+# live account's inventory, deployment snapshots, findings and fleet spec, none of which is
+# publishable and none of which is part of the tool. A root `pyproject.toml` would declare the
+# instance to be the distributable, and `pip install -e .` run here would install a package whose
+# tree is full of a specific account's artifacts. `bin/gb-export-public.py` copies this file to
+# the root OF THE EXPORT, where the root genuinely is the package — the tool, and nothing else.
+#
+# NO REQUIRED RUNTIME DEPENDENCIES. `dependencies = []` is a claim, so the exporter checks it:
+# it resolves every top-level import across the exported Python against this interpreter's
+# stdlib. There is exactly one declared exception, the `inventory` extra below, and the
+# exporter additionally refuses to publish a tree where that import is not deferred into the
+# single function that needs it.
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "grok-bot-ops"
+version = "1.0.0"
+description = "gb — an operator CLI for a Grok Bot deployment: triage, doctor, health, repair, and a 24-check surface gate."
+readme = "README.md"
+# 3.9 is the floor because it is the interpreter this tool is measured on, not an aspiration.
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+keywords = ["grok", "cli", "operations", "agent-tooling", "gate"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Topic :: Software Development :: Quality Assurance",
+  "Topic :: System :: Systems Administration",
+]
+dependencies = []
+
+[project.optional-dependencies]
+# `bin/gb-pull-inventory.py` decrypts the desktop's own safeStorage v10 blob (AES-CBC, which
+# the standard library does not provide) to read the local inventory replica. The import lives
+# inside `decrypt()`, so nothing else in the tool notices its absence — including `gb` itself.
+inventory = ["cryptography"]
+
+[project.scripts]
+# `bin/gb` is extensionless and therefore unnameable here; `grok_bot_ops.cli` is a five-line
+# shim that runs it. See packaging/grok_bot_ops/cli.py for why that is the shape.
+gb = "grok_bot_ops.cli:main"
+
+[tool.setuptools]
+packages = ["grok_bot_ops", "grok_bot_ops.bin"]
+include-package-data = false
+
+[tool.setuptools.package-dir]
+# The top-level `bin/` IS the payload. Mapping it in place keeps one copy of every producer:
+# the file a contributor edits after `git clone` is the file pip installs.
+"grok_bot_ops.bin" = "bin"
+
+[tool.setuptools.package-data]
+# `*.py` producers come along because `grok_bot_ops.bin` is a package. `gb` itself is
+# extensionless and `gb-weekly.sh` is shell, so both need naming explicitly.
+"grok_bot_ops.bin" = ["gb", "*.sh"]

@@ -1,0 +1,23 @@
+{
+ "schema": "gb-mcp/1",
+ "captured_at": "2026-09-11T06:00:00+00:00",
+ "servers": [
+  {
+   "name": "xai-docs",
+   "ok": true,
+   "state": "healthy",
+   "credential": "no-credential-declared",
+   "tool_count": 4,
+   "tools": [
+    "t0",
+    "t1",
+    "t2",
+    "t3"
+   ],
+   "error": null
+  }
+ ],
+ "probed": 1,
+ "ok": 1,
+ "failed": []
+}

@@ -1,121 +1,191 @@
-# grok_bot_playground
+<p align="center">
+  <img src="visual/hero.jpg" alt="gb — an operator CLI for a Grok Bot deployment" width="820">
+</p>
 
-A place to build Grok Bots properly: **skills for the things the catalog has no plugin for**,
-**Bot templates you can deploy in one command**, and a CLI that verifies the manual steps
-actually took instead of trusting a tick-box.
+<h1 align="center">gb</h1>
 
-Install it as a Cursor/Grok Bot plugin, or clone it and deploy templates with `gbx`. Both work;
-they solve different halves.
+<p align="center">
+  <em>One entry point for operating a Grok Bot deployment: what is wrong right now, is the
+  measuring apparatus itself healthy, and what command fixes it.</em>
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-black"></a>
+  <img alt="Python 3.9+" src="https://img.shields.io/badge/python-3.9%2B-black">
+  <img alt="zero required runtime dependencies" src="https://img.shields.io/badge/required%20deps-0-black">
+</p>
+
+```sh
+pipx install git+https://github.com/JYeswak/grok_bot_playground
+```
+
+```console
+$ gb triage
+verdict GREEN · 24 checks · 0 not green
+
+next:
+  gb health --json
+```
 
 ---
 
-## Why these things and not others
+## What this is
 
-Measured 2026-09-11 against the live plugin catalog (322 entries), a corpus of 645 attributed
-community Bot definitions (294 distinct integrations), and the curated Bot marketplace (71
-listings):
+A Grok Bot deployment is a moving target: the vendor changes the surface, the account changes
+its entitlements, and the Bots, plugins and MCP servers you attached last month may or may not
+still be reachable. This repository is the instrument that watches it — twenty-odd producers
+that each measure one facet and write a dated artifact, a 24-check gate that judges the result,
+and `gb`, which is the surface that makes the family legible without reading `bin/`.
 
-| gap | measurement | what is here |
-|---|---|---|
-| math / statistics | **0** of 322 plugins | `experiment-readout` skill |
-| OCR / document extraction | **0** of 322 plugins | `doc-extract` skill |
-| auditing your own deployment | **0** of 322 plugins | `weekly-surface-watch`, `capability-delta-review` |
-| Productivity templates | 146 Bots built by the community, **0** curated listings | `daily-brief` template |
+`gb` is deliberately thin. It does not reimplement a producer; it dispatches to them through a
+typed spine with a mandatory deadline and a bounded capture, and composes their JSON. Every
+producer stays independently runnable.
 
-**263 of the 322 catalog plugins are SaaS connectors.** The catalog sells *access*. Almost
-nothing sells *ability* — and ability is the half that needs no hosted service, because every
-Bot already has a Linux computer that almost nobody uses for compute.
+## Install
 
-## Install as a plugin
-
-**Settings → Plugins → Add**, pointed at this repo. Then run the setup command, which checks
-rather than assumes:
-
-```
-/gap-kit-setup
-```
-
-It confirms the skills loaded, proves the Bot's computer can actually run `python3` before you
-trust any number it produces, and ends by asking the Bot to *refuse* something — because a skill
-that is installed but not in context will happily answer anyway.
-
-## Deploy a Bot from a template
-
-```bash
-git clone https://github.com/JYeswak/grok_bot_playground && cd grok_bot_playground
-./bin/gbx list                       # what is here, and which gap each fills
-./bin/gbx show experiment-readout    # the charter and the manual steps, before you commit
-export GBX_SEED_SHARE_ID=<your own template's share id>
-./bin/gbx new experiment-readout --deploy
-./bin/gbx doctor                     # did it actually land
-```
-
-`GBX_SEED_SHARE_ID` is a template **you** own — any Bot → *Share as template* → copy the id.
-Seeding from your own template matters: a Bot created from someone else's marketplace template
-inherits that author's terms and lineage.
-
-## What "one command" actually covers
-
-Measured against the API, not assumed:
-
-| step | automated |
+| | |
 |---|---|
-| create a Bot with a durable identity | **yes** — `CreateGrokBotAgentFromTemplate` |
-| set its name, title, charter | **yes** — `UpdateGrokBotAgent` |
-| attach skills | **yes** — they travel with the template |
-| install a connector | **no RPC exists** — printed, then verified by `doctor` |
-| create a routine | automations are read-only over the API — same |
-| store a key | deliberately manual (see below) |
+| **pipx (recommended)** | `pipx install git+https://github.com/JYeswak/grok_bot_playground` |
+| **pip** | `pip install git+https://github.com/JYeswak/grok_bot_playground` |
+| **from a clone** | `git clone https://github.com/JYeswak/grok_bot_playground && cd grok_bot_playground && ./bin/gb quickstart` |
 
-`gbx doctor` re-reads your roster, plugin installs and routines, and reports which manual steps
-landed. "I did that" is a claim about your own account, and a claim about your own account is
-checkable.
+Python 3.9 or newer. **No required runtime dependencies** — the tool is stdlib only, and the
+exporter that builds this tree resolves every import in it against the interpreter's standard
+library and refuses to publish a tree that reaches outside it.
 
-## Keys
+There is exactly one declared exception. `bin/gb-pull-inventory.py` decrypts the desktop's own
+safeStorage v10 blob, which needs AES-CBC, which the standard library does not provide. The
+import is deferred into the one function that decrypts — verified, not asserted: the exporter
+also refuses a tree where an optional dependency is imported at module level.
 
-This repo never stores, prints or transmits a key.
-
-- **For a plugin**, use the platform's own mechanism: declare the *name* under `variables` in
-  the manifest, set the value in the dashboard, and reference it as `${VAR}`. The Cursor plugin
-  reference is explicit that secret values do not belong in a plugin repo.
-- **For a Bot**, use the secret card in Settings. Never paste a key into a chat message — it
-  survives in the transcript, the local replica, and any share link made from that Bot.
-- `gbx secret set NAME` prints the two commands to keep a value in your OS keychain instead.
-
-`gbx` reads your Grok Bot desktop session rather than asking for a token: macOS will show a
-keychain prompt the first time, which is exactly the consent step it should be.
-
-## Templates
-
-| template | job | connectors |
-|---|---|---|
-| `experiment-readout` | turns a result into effect / interval / assumptions / verdict, computed on the Bot's machine and shown as code | none |
-| `pdf-extract` | pulls tables, totals and dates out of documents with page-level provenance, and emits `null` rather than a plausible guess | none |
-| `daily-brief` | one short morning brief from calendar and inbox: today, waiting on you, slipped, most likely to go wrong | Gmail, Google Calendar |
-
-Every template states its approval boundary in its charter. Two of the three touch nothing
-outside the Bot's own computer.
-
-## Contributing a template
-
-```
-templates/<name>/
-  bot.yaml                  identity, job, approval boundary, gap evidence, manual steps
-  skills/<skill>/SKILL.md   frontmatter with `name` and a description that says WHEN to use it
+```sh
+pipx install "grok-bot-ops[inventory] @ git+https://github.com/JYeswak/grok_bot_playground"
 ```
 
-```bash
-./bin/gbx validate      # schema + routing checks
-./bin/gbx-selftest      # proves those checks fire on a deliberately broken template
+Two forms, one implementation: the console script runs the very same `bin/gb` the clone does.
+The difference is what is on disk around it — see [what it does not do](#what-it-does-not-do).
+
+```sh
+gb quickstart          # the orientation page
+gb robot-docs          # the same thing for an agent
+gb capabilities --json # the machine-readable contract
 ```
 
-Two rules the validator enforces, because both were learned the hard way:
+## The verbs
 
-1. **A charter under 200 characters, or one with no stated approval boundary, is rejected.** A
-   Bot's description is not documentation — it is the behaviour.
-2. **A skill description must say when to use it.** A skill nobody can route to is a skill
-   nobody runs.
+Fourteen canonical verbs, plus `work`. Every one takes `--json` and prints its envelope on
+stdout and nothing else; diagnostics always go to stderr, so `gb <verb> --json | jq` never
+needs a `grep`.
+
+| verb | what it answers |
+|---|---|
+| `triage` | what is wrong right now, and the exact commands that address it |
+| `doctor` | is the measuring apparatus itself healthy — six subsystems, PASS/FAIL each |
+| `health` | one line of deployment state, cheap enough for a `--watch` loop |
+| `repair` | idempotently rebuild a derived artifact; **dry-run unless `--apply`** |
+| `validate` | verify one thing — `plugin`, `mcp`, `types`, `fixtures` — without changing it |
+| `audit` | recent mutations to this tree, with provenance |
+| `why` | provenance for one check: what it reads, and what it last said |
+| `capabilities` | the machine-readable contract: commands, exit codes, subsystems, repair scopes |
+| `robot-docs` | the agent handbook: read this instead of `bin/` |
+| `quickstart` | the human orientation page |
+| `examples` | worked invocations, copy-pasteable |
+| `info` | version, contract version, runtime sha, producers present, artifact roots |
+| `help` | topic manual — `exit-codes`, `subsystems`, `repair`, `tick`, `porting` |
+| `completion` | a `bash` or `zsh` completion script |
+| `work` | what to pick up next, and whether that ranking can be trusted |
+
+```sh
+gb triage --json | jq -r '.commands[]'      # what to run next
+gb doctor --scope gate                      # one subsystem, not all six
+gb repair --scope fixtures                  # show what regenerating would do
+gb repair --scope fixtures --apply          # actually do it
+gb why g8-desktop-inventory                 # what that check reads, and where it looked
+```
+
+`repair --apply` is the only verb in the tool that writes. Without the flag you get the plan and
+`actual_actions: []`.
+
+## Exit codes
+
+Branch on them. They are a dictionary, not a mood.
+
+| code | name | means |
+|---:|---|---|
+| `0` | OK | it ran, and the findings are clean |
+| `1` | FINDINGS | it ran correctly, and the answer is bad (doctor FAIL, health RED) |
+| `2` | USAGE | bad flag, unknown command, or no command |
+| `3` | ENVIRONMENT | this machine cannot run the check — missing producer or toolchain |
+| `4` | UPSTREAM | the vendor or network failed; nothing local is broken |
+| `5` | REFUSED | a mutation was requested without the gate that permits it |
+| `130` | CANCELLED | SIGINT arrived; no partial artifact was written |
+
+`1` is not `3` and neither is `4`. "Your deployment is red", "this laptop cannot measure it" and
+"the vendor is down" are three different mornings, and an agent that cannot tell them apart
+retries the wrong one.
+
+Cancellation is safe everywhere: artifact writes are atomic, so a SIGINT leaves either the old
+artifact or the new one, never half of either, and the process exits `130`.
+
+## What it does not do
+
+Stated rather than implied, because the gap between a tool and a running instance is where
+tools usually lie about themselves.
+
+- **It does not ship a deployment.** This tree is the INSTRUMENT. It contains no account, no
+  inventory, no deployment snapshot and no fleet specification — those are the operator's, and
+  they were removed deliberately by an allowlist-driven exporter, not trimmed by hand.
+- **A fresh install has nothing to measure yet.** `gb capabilities`, `gb quickstart`,
+  `gb examples`, `gb help`, `gb robot-docs`, `gb completion` and `gb info` answer immediately.
+  `gb triage`, `gb doctor` and `gb health` read artifact roots that do not exist until you
+  have run the producers. Measured on a fresh install: they answer `verdict ERROR`, name all
+  22 checks that could not be read ("no snapshot directory under `surface/`", "no deployment
+  audit to read"), and exit `1`. ERROR is the gate's word for *could not measure*, kept
+  distinct from RED throughout — an empty board is never reported green.
+- **`pip install` installs the CLI and the producers, not the corpus.** The gate's 54-case
+  fixture corpus, the plugin manifest, the Bot template library and the hero art ship in this
+  repository but are not copied into `site-packages` — they are ~9 MB of material that grades
+  repository content, not a running deployment. `gb validate fixtures` and `gb validate
+  plugin` therefore want a clone; `gb doctor` reports those two subsystems DOWN/DEGRADED on a
+  bare install and says why.
+- **Producers write beside the tool.** Every producer writes its artifact relative to the
+  tool root, so on a `pip install` that root is inside `site-packages`. If you intend to keep
+  measurements, run from a clone.
+- **It does not fetch from the vendor on its own.** `bin/gb-weekly.sh` is the only thing that
+  reaches the network, and it is a scheduled tick you install deliberately. Everything `gb`
+  does is a read of artifacts already on disk, except `repair --apply`.
+- **It is not a secret store.** It reads no credentials and writes none; `gb validate mcp`
+  reports whether a server *would* be reachable, from configuration, without holding a key.
+- **It does not decide whether an answer is acceptable.** The gate raises the floor and makes
+  the residue visible. The human remains the trust root.
+
+## Layout
+
+```
+bin/                    the CLI (`gb`), the typed spine (`gbtypes`, `gbargs`), the producers
+fixtures/               the gate's known-good and known-bad corpus — synthetic, 54 cases
+library/                Bot templates plus `gbx`, the template CLI
+plugin/                 the publishable Cursor/Grok plugin and its skills
+visual/                 the hero art and the prompt that produced it
+types-floor.json        the strict-typing ratchet: files held to mypy --strict AND pyright
+export-manifest.json    what was published, by sha256, and what was checked before it was
+```
+
+`export-manifest.json` is worth a minute. This repository is produced from a private one by an
+allowlist-driven exporter, and the manifest is its receipt: every published file with its
+digest, the allowlist that admitted it, the named exclusions and why, and the five refusal
+classes the tree was scanned against before any of it was written.
+
+Two selftests run here with no configuration and no network:
+
+```sh
+python3 bin/gb-surface-gate.py --selftest   # 54/54 fixtures — each known-bad must go RED
+python3 bin/gbtypes-selftest.py             # 8/8 proofs — each has a known-bad leg that fires
+```
+
+The interesting reading is `bin/gbtypes.py` — the severity lattice, the deadline-bearing child
+process, and the atomic write that everything else in the tree is required to go through.
 
 ## License
 
-MIT. No telemetry. The only network calls are to the Grok Bot API you are already signed in to.
+MIT. See [LICENSE](LICENSE).

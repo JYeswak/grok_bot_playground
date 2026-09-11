@@ -1,0 +1,22 @@
+{
+ "captured_at": "2026-09-11T06:00:00+00:00",
+ "index_url": "https://docs.x.ai/llms.txt",
+ "index_status": 200,
+ "index_bytes": 16540,
+ "index_sha256": "2c983205795bbf038b585fa925adeb03a8d47c4d2729ea7a4a6fdba32d9ef752",
+ "index_error": "",
+ "llms_total_pages": 168,
+ "grok_bot_pages_listed": 16,
+ "pages": [],
+ "extras": [
+  {
+   "label": "practitioner-index",
+   "url": "https://example.invalid/README.md",
+   "status": 200,
+   "bytes": 211120,
+   "min_bytes": 100000,
+   "sha256": "2826175969166cfd3d8918948ed385def3ac100b927559885e005166d9f0b371",
+   "error": ""
+  }
+ ]
+}

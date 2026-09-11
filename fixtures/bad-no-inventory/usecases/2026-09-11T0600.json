@@ -1,0 +1,53 @@
+{
+ "schema": "gb-usecases/1",
+ "captured_at": "2026-09-11T06:00:00+00:00",
+ "corpus_repo": "fixture/corpus",
+ "bots": 2,
+ "curated_links": 10,
+ "categories": [
+  [
+   "Ops",
+   2
+  ]
+ ],
+ "integrations": [
+  [
+   "Gmail",
+   2
+  ],
+  [
+   "Slack",
+   1
+  ]
+ ],
+ "integration_gap": [
+  {
+   "integration": "Gmail",
+   "bots": 2,
+   "installed": false
+  },
+  {
+   "integration": "Slack",
+   "bots": 1,
+   "installed": false
+  }
+ ],
+ "approval_share": 0.3,
+ "rows": [
+  {
+   "name": "Bot 0",
+   "category": "Ops",
+   "integrations": [
+    "Gmail"
+   ]
+  },
+  {
+   "name": "Bot 1",
+   "category": "Ops",
+   "integrations": [
+    "Gmail"
+   ]
+  }
+ ],
+ "links": []
+}

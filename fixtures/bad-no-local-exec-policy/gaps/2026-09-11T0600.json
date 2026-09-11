@@ -1,0 +1,35 @@
+{
+ "schema": "gb-gaps/1",
+ "catalog_plugins": 2,
+ "corpus_bots": 2,
+ "catalog_by_kind": {
+  "connector": 2
+ },
+ "distinct_integrations": 2,
+ "demand_gap": [
+  {
+   "integration": "Notion",
+   "bots": 3
+  }
+ ],
+ "domain_gap": [
+  {
+   "domain": "math / statistics",
+   "plugins": 0,
+   "examples": [],
+   "mirror_candidates": [
+    "fast_cmaes"
+   ]
+  }
+ ],
+ "shelf": [
+  [
+   "Sales",
+   1
+  ]
+ ],
+ "built": {
+  "Ops": 2
+ },
+ "mirror_candidates": []
+}

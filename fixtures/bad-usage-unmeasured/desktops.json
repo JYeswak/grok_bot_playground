@@ -1,0 +1,15 @@
+{
+ "host_of_record": "studio",
+ "desktops": [
+  {
+   "label": "studio",
+   "hostname": "fixture.local",
+   "ssh": null
+  },
+  {
+   "label": "brain",
+   "hostname": "fixture-brain.local",
+   "ssh": "fixture-brain"
+  }
+ ]
+}

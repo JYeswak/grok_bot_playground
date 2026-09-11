@@ -1,0 +1,1061 @@
+#!/usr/bin/env python3
+"""gb — the one entry point for operating a Grok Bot deployment.
+
+WHY THIS EXISTS (measured 2026-09-11). There were 22 producers in `bin/` and no CLI. Every one
+of them answered `--help` cleanly, so each SCRIPT was fine; what did not exist was a TOOL. An
+agent had to already know that the thing that reads the account is `gb-pull-inventory.py`, that
+the thing that judges it is `gb-surface-gate.py`, and that neither is discoverable from the
+other. Nothing answered "what is wrong right now", because nothing was allowed to speak for the
+whole system. 22 scripts is not a CLI; it is a directory.
+
+`gb` is deliberately THIN. It does not reimplement a single producer — it dispatches to them
+through `gbtypes.run` (bounded capture, enforced deadline, four-valued classification) and
+composes their JSON. A producer stays independently runnable; `gb` is the surface that makes the
+family legible without reading `bin/`.
+
+EXIT CODES (the dictionary; `gb help exit-codes` prints it, `gb capabilities --json` ships it):
+
+    0   OK           the command did what it says, findings are clean
+    1   FINDINGS     it ran correctly and the answer is bad (doctor FAIL, health RED)
+    2   USAGE        the invocation was wrong — bad flag, unknown command, no command
+    3   ENVIRONMENT  this machine cannot run the check (missing producer, missing toolchain)
+    4   UPSTREAM     the vendor or network failed; nothing here is broken
+    5   REFUSED      a mutation was requested without the explicit gate that permits it
+    130 CANCELLED    SIGINT arrived; no partial artifact was written
+
+1 is not 3 and neither is 4: "your deployment is red", "this laptop cannot measure it", and
+"x.ai is down" are three different days, and an agent that cannot tell them apart retries the
+wrong one. The severity lattice behind it is `gbtypes.Severity` (Ok < Err < Cancelled <
+Panicked), transliterated from Asupersync's `types::outcome`.
+
+RUST TARGET: ASUPERSYNC. The subcommand tree is `#[derive(Subcommand)]` over an enum whose
+variants carry their own args struct — that is exactly what `gbargs.parse_sub` builds, so the
+port is a match, not a rewrite. Each subcommand body becomes `async fn(cx: &Cx) -> Outcome<_, _>`
+with the deadline supplied by the enclosing region (`with_deadline`) rather than by a per-call
+timeout, and the fan-out in `doctor` becomes `Cx::race_drained`/`Scope` children instead of a
+sequential loop.
+"""
+from __future__ import annotations
+
+import dataclasses
+import datetime as dt
+import json
+import os
+import pathlib
+import re
+import shutil
+import sys
+import time
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from gbargs import arg, parse_sub  # noqa: E402
+from gbtypes import Severity, atomic_write_json, main, read_json_capped, run  # noqa: E402
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+BIN = ROOT / "bin"
+VERSION = "1.0.0"
+CONTRACT_VERSION = 1
+
+EXIT_OK, EXIT_FINDINGS, EXIT_USAGE = 0, 1, 2
+EXIT_ENVIRONMENT, EXIT_UPSTREAM, EXIT_REFUSED = 3, 4, 5
+
+EXIT_CODES: Dict[int, str] = {
+    0: "OK — ran, and the findings are clean",
+    1: "FINDINGS — ran correctly, and the answer is bad (doctor FAIL / health RED)",
+    2: "USAGE — bad flag, unknown command, or no command",
+    3: "ENVIRONMENT — this machine cannot run the check (missing producer or toolchain)",
+    4: "UPSTREAM — the vendor or network failed; nothing local is broken",
+    5: "REFUSED — a mutation was requested without the gate that permits it",
+    130: "CANCELLED — SIGINT arrived; no partial artifact was written",
+}
+
+# subsystem -> (producer argv, what it answers). The single registry every verb reads, so a new
+# producer is discoverable from `doctor`, `health`, `capabilities` and `repair` by adding it here
+# once rather than in four places.
+# subsystem -> (argv, what it answers, which line of its output IS the summary). The third
+# field is explicit because producers disagree: most end with their verdict, but `gb-coverage`
+# leads with the headline and then prints the ledger, and `gb-mcp-validate` ends inside a table.
+# Guessing which line matters produced rows that showed a table cell next to the word PASS.
+SUBSYSTEMS: Dict[str, Tuple[List[str], str, str]] = {
+    "gate": (["gb-surface-gate.py"], "the 24-check board over the live deployment", "last"),
+    "coverage": (["gb-coverage.py"], "which facets are measured vs unread", "first"),
+    "types": (["gb-typecheck.py", "--dry-run"], "the strict-typing floor under two checkers", "last"),
+    "mcp": (["gb-mcp-validate.py"], "every MCP server a Bot can reach", "first"),
+    "plugin": (["gb-plugin-validate.py", "--path", "plugin"], "the publishable plugin manifest", "last"),
+    "spine": (["gbtypes-selftest.py"], "the typed spine's own cancel-correctness proofs", "last"),
+}
+
+REPAIRS: Dict[str, Tuple[List[str], str]] = {
+    "fixtures": (["gb-make-fixtures.py"], "regenerate the gate's fixture corpus from source"),
+    "coverage": (["gb-coverage.py"], "rewrite COVERAGE.md from the artifacts on disk"),
+    "types": (["gb-typecheck.py"], "re-measure the type floor and write the artifact"),
+}
+
+# ---------------------------------------------------------------------------------------------
+# `gb work` — the two work-tracking substrates this repo actually keeps, and the constants that
+# say how to read them. Measured 2026-09-11.
+# ---------------------------------------------------------------------------------------------
+BEADS_TOOL = "br"
+# `br` mutates on read unless told not to: `list` auto-exports the JSONL and auto-imports it
+# back. `gb work` is a pure read, so both are off — otherwise asking "what should I do next"
+# dirties the git worktree, and the operator's next `git status` blames him for it.
+BR_READONLY: Tuple[str, ...] = ("--no-auto-flush", "--no-auto-import")
+
+# The issue tracker is NOT this repo. Measured: `git remote -v` here is empty, so `gh issue
+# list` without `--repo` dies with "no git remotes found" — the public tool's issues live on
+# this slug. Hardcoding it is the fix for an inference that cannot work, not a shortcut.
+ISSUES_REPO = "JYeswak/grok_bot_playground"
+ISSUE_FIELDS = "number,title,state,labels,updatedAt"
+
+# Untouched for two weekly ticks. `bin/gb-weekly.sh` runs once a week and g3 already allows an
+# 8-day snapshot gap, so one missed tick is normal and two is the first number that means
+# nobody looked. Named here so the threshold is arguable instead of magic.
+STALE_DAYS = 14.0
+
+# GitHub issues carry labels, not priorities. br carries a real 0..4 priority, so beads need no
+# table; issues do. This map is a DECLARED CONVENTION, not a measurement — as of 2026-09-11 the
+# public repo has zero issues, so there is nothing to fit it to. Unmatched labels rank neutral
+# rather than being guessed at.
+ISSUE_LABEL_PRIORITY: Dict[str, int] = {
+    "security": 0, "critical": 0, "p0": 0,
+    "bug": 1, "regression": 1, "p1": 1,
+    "enhancement": 3, "documentation": 3, "docs": 3,
+    "question": 4, "wontfix": 4, "backlog": 4,
+}
+NOT_READY_LABELS = frozenset({"blocked", "on-hold", "waiting", "needs-info"})
+NEUTRAL_PRIORITY = 2
+
+TOPICS: Dict[str, str] = {
+    "exit-codes": "\n".join(f"  {c:<4}{why}" for c, why in sorted(EXIT_CODES.items())),
+    "subsystems": "\n".join(f"  {n:<10}{why}" for n, (_a, why, _s) in SUBSYSTEMS.items()),
+    "repair": "\n".join(f"  {n:<10}{why}" for n, (_a, why) in REPAIRS.items())
+    + "\n\n  Every repair is dry-run by default. --apply is required to write.",
+    "tick": (
+        "  The weekly tick is `bin/gb-weekly.sh`: snapshot the vendor surface, audit this\n"
+        "  account, judge both, and record one product change. `gb triage` is the read-only\n"
+        "  version you run any time — it never fetches and never writes."
+    ),
+    "porting": (
+        "  This CLI is shaped for Asupersync, not Tokio. The subcommand tree is\n"
+        "  #[derive(Subcommand)]; each verb becomes async fn(cx: &Cx) -> Outcome<_, _>; the\n"
+        "  deadline is region-scoped via with_deadline, not a per-call timeout; artifact writes\n"
+        "  are fs::write_atomic. See bin/gbtypes.py's header for the file:line mapping table."
+    ),
+}
+
+EXAMPLES = """\
+  gb triage                      what is wrong right now, and the command that fixes it
+  gb triage --json | jq .red     the same answer, for a script
+  gb work                        what to pick up next, and whether the ranking is trustworthy
+  gb work --source beads --limit 5       one substrate, five rows
+  gb work --json | jq -r '.sources[].status'   OK / EMPTY / UNREACHABLE, never conflated
+  gb doctor --scope gate         one subsystem, not all six
+  gb health --json               one line of state, cheap enough for a loop
+  gb repair --scope fixtures     show what regenerating would do (dry run)
+  gb repair --scope fixtures --apply     actually do it
+  gb capabilities --json         the machine-readable contract for this tool
+  gb why g8-desktop-inventory    what that check reads, and where it looked
+  gb validate plugin             is the plugin submittable, without submitting it
+"""
+
+
+# ---------------------------------------------------------------------------------------------
+# Typed argument surface — one frozen dataclass per verb (clap `#[derive(Args)]`)
+# ---------------------------------------------------------------------------------------------
+@dataclasses.dataclass(frozen=True)
+class TriageArgs:
+    """What is wrong right now, and the exact command that addresses it."""
+
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+
+@dataclasses.dataclass(frozen=True)
+class WorkArgs:
+    """What to pick up next here, and whether that ranking can be trusted."""
+
+    limit: int = arg(default=10, help="how many ranked items to show")
+    source: Optional[str] = arg(help="beads | issues; omit for both")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+
+@dataclasses.dataclass(frozen=True)
+class DoctorArgs:
+    """Diagnose every subsystem (or one), report PASS/FAIL per subsystem."""
+
+    scope: Optional[str] = arg(help="one subsystem; omit for all (see `gb help subsystems`)")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+
+@dataclasses.dataclass(frozen=True)
+class HealthArgs:
+    """Single-shot state of the deployment — lighter than doctor, safe in a loop."""
+
+    json: bool = arg(help="machine-readable envelope on stdout")
+    watch: bool = arg(help="re-run until interrupted")
+    interval: int = arg(default=60, help="seconds between --watch runs")
+
+
+@dataclasses.dataclass(frozen=True)
+class RepairArgs:
+    """Idempotently rebuild a derived artifact. Dry-run unless --apply is given."""
+
+    scope: Optional[str] = arg(help="what to rebuild (see `gb help repair`)")
+    apply: bool = arg(help="actually write; without this the command only plans")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+
+@dataclasses.dataclass(frozen=True)
+class ValidateArgs:
+    """Verify a thing without changing it. Pure read."""
+
+    thing: str = arg(positional=True, help="plugin | mcp | types | fixtures")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+
+@dataclasses.dataclass(frozen=True)
+class AuditArgs:
+    """Recent mutations to this repo's artifacts, with provenance."""
+
+    limit: int = arg(default=15, help="how many to show")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+
+@dataclasses.dataclass(frozen=True)
+class WhyArgs:
+    """Provenance for one check or facet: what it reads, and what it last said."""
+
+    id: str = arg(positional=True, help="a check id (g8-desktop-inventory) or facet name")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+
+@dataclasses.dataclass(frozen=True)
+class CapabilitiesArgs:
+    """The machine-readable contract: version, commands, exit codes, subsystems."""
+
+    json: bool = arg(help="machine-readable envelope on stdout (the default shape)")
+
+
+@dataclasses.dataclass(frozen=True)
+class HelpArgs:
+    """Topic-based manual. `gb help` lists the topics."""
+
+    topic: Optional[str] = arg(positional=True, help="exit-codes | subsystems | repair | tick | porting")
+
+
+@dataclasses.dataclass(frozen=True)
+class CompletionArgs:
+    """Print a shell completion script."""
+
+    shell: str = arg(positional=True, choices=("bash", "zsh"), help="bash | zsh")
+
+
+@dataclasses.dataclass(frozen=True)
+class BareArgs:
+    """No arguments."""
+
+
+COMMANDS: Dict[str, type] = {
+    "triage": TriageArgs,
+    "work": WorkArgs,
+    "doctor": DoctorArgs,
+    "health": HealthArgs,
+    "repair": RepairArgs,
+    "validate": ValidateArgs,
+    "audit": AuditArgs,
+    "why": WhyArgs,
+    "capabilities": CapabilitiesArgs,
+    "robot-docs": BareArgs,
+    "quickstart": BareArgs,
+    "examples": BareArgs,
+    "info": BareArgs,
+    "help": HelpArgs,
+    "completion": CompletionArgs,
+}
+
+
+# ---------------------------------------------------------------------------------------------
+# Shared plumbing
+# ---------------------------------------------------------------------------------------------
+def emit(payload: Dict[str, Any], as_json: bool, human: str) -> None:
+    """Stdout is data. `--json` prints the envelope; otherwise the rendered text. Never both,
+    and never a log line — diagnostics go to stderr everywhere in this file."""
+    print(json.dumps(payload, indent=1) if as_json else human.rstrip())
+
+
+def envelope(command: str, **fields: Any) -> Dict[str, Any]:
+    """Every JSON answer carries the same outer shape, so a consumer can branch on `status`
+    before it knows anything else about the command it called."""
+    return {
+        "schema": f"gb-{command}/{CONTRACT_VERSION}",
+        "tool": "gb",
+        "version": VERSION,
+        "command": command,
+        "measured_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+        **fields,
+    }
+
+
+REENTRY_ENV = "GB_IN_DOCTOR"
+
+
+def probe(name: str, argv: List[str], timeout_s: float = 180.0, summary: str = "last") -> Dict[str, Any]:
+    """Run one producer and classify it. A producer that is absent is ENVIRONMENT, not FAIL —
+    a missing tool is not a red deployment, and conflating them sends the operator to the wrong
+    problem. This is the doctor anti-pattern the standard names: never crash on a dead probe."""
+    # Re-entry guard. `spine` runs the typed-spine proofs, and one of those proofs (t8) drives
+    # this very CLI. Without a guard the chain is doctor -> spine -> selftest -> t8 -> doctor ->
+    # spine -> ... bounded only by timeouts: measured 2026-09-11, a full `gb doctor` took 183s
+    # and reported spine DOWN, which is a lie — the subsystem was fine, the tool was eating
+    # itself. The guard is on the ENV, not on the one call site, so any future producer that
+    # shells back into gb degrades to a skip instead of a hang.
+    if os.environ.get(REENTRY_ENV) and name == "spine":
+        return {"subsystem": name, "status": "SKIPPED", "severity": Severity.OK.name,
+                "detail": "already inside gb — the spine proofs drive this CLI, so running them "
+                          "here would recurse; run `gb doctor --scope spine` on its own",
+                "exit": None}
+    script = BIN / argv[0]
+    if not script.exists():
+        return {"subsystem": name, "status": "NOT_CONFIGURED", "severity": Severity.ERR.name,
+                "detail": f"{argv[0]} is not in bin/ — nothing here can measure it", "exit": None}
+    proc = run([sys.executable, str(script), *argv[1:]], timeout_s=timeout_s, cwd=ROOT,
+               env={**os.environ, REENTRY_ENV: "1"})
+    # Read the channel that carries the ANSWER. On success that is stdout: a producer's stderr
+    # can legitimately contain expected-failure noise — `spine` runs proofs whose known-bad legs
+    # print argparse errors on purpose, and surfacing one of those beside a PASS reads as a
+    # contradiction. On failure, stderr is where the reason lives, so prefer it there.
+    channel = (proc.out if proc.code == 0 else (proc.err or proc.out)) or ""
+    tail = [ln for ln in channel.strip().splitlines() if ln.strip()]
+    detail = ((tail[0] if summary == "first" else tail[-1]).strip()[:160]) if tail else "(no output)"
+    if proc.timed_out:
+        return {"subsystem": name, "status": "DOWN", "severity": Severity.CANCELLED.name,
+                "detail": f"exceeded {timeout_s:.0f}s — stopped, so the answer is unknown",
+                "exit": None}
+    status = "PASS" if proc.code == 0 else ("DEGRADED" if proc.code == 1 else "DOWN")
+    return {"subsystem": name, "status": status, "severity": proc.severity.name,
+            "detail": detail, "exit": proc.code, "elapsed_s": proc.elapsed_s}
+
+
+def newest(dirname: str) -> Optional[Dict[str, Any]]:
+    d = ROOT / dirname
+    rows = sorted(p for p in d.glob("*.json")) if d.is_dir() else []
+    return read_json_capped(rows[-1]) if rows else None
+
+
+# ---------------------------------------------------------------------------------------------
+# Verbs
+# ---------------------------------------------------------------------------------------------
+def cmd_triage(a: TriageArgs) -> int:
+    """The mega-command: one call, four slices, and the commands to act on them."""
+    proc = run([sys.executable, str(BIN / "gb-surface-gate.py"), "--json"], timeout_s=180, cwd=ROOT)
+    if not (proc.out or "").strip():
+        print("gb: the gate produced no output — run `gb doctor --scope gate`", file=sys.stderr)
+        return EXIT_ENVIRONMENT
+    try:
+        board = json.loads(proc.out)
+    except ValueError:
+        print("gb: the gate's --json did not parse; run `gb doctor --scope gate`", file=sys.stderr)
+        return EXIT_ENVIRONMENT
+
+    results = board.get("checks") or []
+    if not results:
+        # Positive control. An empty check list is a BROKEN READ, never a clean board — this
+        # exact bug shipped in the first cut of this file (it read `results`, the gate emits
+        # `checks`) and reported verdict-clean against a board with two REDs on it.
+        print("gb: the gate returned zero checks — that is a broken read, not a green board.\n"
+              "    run: python3 bin/gb-surface-gate.py --json | jq '.checks | length'",
+              file=sys.stderr)
+        return EXIT_ENVIRONMENT
+    red = [r for r in results if r.get("verdict") in ("RED", "ERROR")]
+    cov = read_json_capped(ROOT / "coverage-floor.json") or {}
+    commands = [f"gb why {r['check']}" for r in red[:5]] or ["gb health --json"]
+    payload = envelope(
+        "triage",
+        verdict=board.get("verdict"),
+        quick_ref={
+            "checks": len(results),
+            "red": len(red),
+            "coverage_floor": cov.get("covered"),
+            "snapshot": board.get("snapshot"),
+        },
+        red=[{"check": r["check"], "verdict": r["verdict"], "detail": r.get("detail", "")[:200]}
+             for r in red],
+        recommendations=[f"{r['check']}: {r.get('detail', '')[:120]}" for r in red],
+        commands=commands,
+    )
+    human = [f"verdict {board.get('verdict')} · {len(results)} checks · {len(red)} not green"]
+    human += [f"  {r['verdict']:<6}{r['check']:<32}{r.get('detail','')[:80]}" for r in red]
+    human += ["", "next:"] + [f"  {c}" for c in commands]
+    emit(payload, a.json, "\n".join(human))
+    return EXIT_FINDINGS if red else EXIT_OK
+
+
+# ---------------------------------------------------------------------------------------------
+# `gb work` — the work-tracking read
+#
+# THE RULE THIS VERB EXISTS TO KEEP. A substrate that could not be read is UNREACHABLE; a
+# substrate that was read and holds nothing is EMPTY. Collapsing those two into "0 items" is the
+# failure this repo was built around (`gbtypes.Cell` keeps EMPTY apart from UNMEASURED for the
+# coverage ledger for the same reason, and `cmd_triage` refuses to call a zero-check board
+# green). An operator who is told "no work" when the truth is "I could not look" stops looking.
+# ---------------------------------------------------------------------------------------------
+@dataclasses.dataclass(frozen=True)
+class Substrate:
+    """One work-tracking substrate's read: the three-valued status, plus what it yielded.
+
+    `status` is OK | EMPTY | UNREACHABLE and nothing else. `remediation` is populated exactly
+    when UNREACHABLE, because an unreachable substrate whose fix is unstated is a dead end.
+    `notes` carries degradations that are NOT unreachability — the listing was read but a
+    secondary probe (readiness, orphans) was not, so the ranking is weaker than it looks.
+    """
+
+    name: str
+    status: str
+    detail: str
+    items: Tuple[Dict[str, Any], ...] = ()
+    remediation: Optional[str] = None
+    notes: Tuple[str, ...] = ()
+
+
+def _as_int(value: Any, default: int) -> int:
+    """Coerce a JSON number-or-string to int without letting a surprise shape raise. A producer
+    that changes `priority: 1` to `priority: "1"` must not crash the triage read."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _age_days(stamp: Optional[str]) -> Optional[float]:
+    """Days since an ISO-8601 instant, or None when it cannot be read.
+
+    None is the answer for absent AND unparseable on purpose: in both cases the age is unknown,
+    and an unknown age must not be silently rendered as 0 (fresh) by a staleness check.
+    `br` and `gh` both emit a trailing `Z`, which `fromisoformat` rejects before 3.11.
+    """
+    if not stamp:
+        return None
+    try:
+        when = dt.datetime.fromisoformat(stamp.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=dt.timezone.utc)
+    return round((dt.datetime.now(dt.timezone.utc) - when).total_seconds() / 86400.0, 1)
+
+
+def _rows(text: str) -> Optional[List[Dict[str, Any]]]:
+    """Rows out of a producer's JSON, accepting both envelope shapes in use.
+
+    `br list` answers `{"issues": [...]}`; `br ready`, `br blocked`, `br orphans` and
+    `gh issue list` answer a bare array. None means it did not parse or was not either shape —
+    which is a BROKEN READ, distinct from the empty array this returns as `[]`.
+    """
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        return None
+    if isinstance(doc, dict):
+        inner = doc.get("issues")
+        return [r for r in inner if isinstance(r, dict)] if isinstance(inner, list) else None
+    if isinstance(doc, list):
+        return [r for r in doc if isinstance(r, dict)]
+    return None
+
+
+def _br_ids(exe: str, sub: str) -> Optional[Set[str]]:
+    """The id set of one `br` triage view, or None when that view could not be read. None is
+    load-bearing: it degrades the ranking to 'readiness unknown' instead of 'not ready'."""
+    proc = run([exe, *BR_READONLY, sub, "--json"], timeout_s=60, cwd=ROOT)
+    if proc.timed_out or proc.code != 0:
+        return None
+    rows = _rows(proc.out)
+    return None if rows is None else {str(r["id"]) for r in rows if r.get("id")}
+
+
+def _unreachable(name: str, detail: str, remediation: str) -> Substrate:
+    return Substrate(name=name, status="UNREACHABLE", detail=detail, remediation=remediation)
+
+
+def _tool_failure(proc: Any, what: str, remediation: str, name: str) -> Optional[Substrate]:
+    """Map a finished child onto UNREACHABLE, or None when it succeeded. Timed-out is its own
+    sentence because a killed probe did not answer — `Severity.CANCELLED`, not ERR."""
+    if proc.timed_out:
+        return _unreachable(name, f"`{what}` was stopped on its deadline — the substrate's "
+                                  f"contents are unknown, not empty", remediation)
+    if proc.code != 0:
+        why = next((ln.strip() for ln in (proc.err or proc.out).splitlines() if ln.strip()),
+                   "(no output)")
+        return _unreachable(name, f"`{what}` exited {proc.code}: {why[:130]}", remediation)
+    return None
+
+
+def _read_beads() -> Substrate:
+    """The bead ledger, plus the three secondary views the reliability checks need.
+
+    Closed beads are kept in `items`: the `status_contradiction` check needs them, because a
+    bead that `br list` calls closed while `br ready` still offers it is precisely the kind of
+    ledger drift that makes a triage list untrustworthy.
+    """
+    exe = shutil.which(BEADS_TOOL)
+    if exe is None:
+        return _unreachable(
+            "beads",
+            f"`{BEADS_TOOL}` is not on PATH, so the bead ledger could not be read — that is "
+            f"not the same fact as an empty ledger",
+            'export PATH="$HOME/.local/bin:$PATH"   # br is installed there on this machine')
+    listing = run([exe, *BR_READONLY, "list", "--status", "all", "--json"], timeout_s=60, cwd=ROOT)
+    failed = _tool_failure(listing, f"{BEADS_TOOL} list", f"{BEADS_TOOL} doctor", "beads")
+    if failed is not None:
+        return failed
+    rows = _rows(listing.out)
+    if rows is None:
+        return _unreachable("beads", f"`{BEADS_TOOL} list --json` did not parse as an issue "
+                                     f"listing — the ledger is unreadable, not empty",
+                            f"{BEADS_TOOL} list --status all --json | jq .")
+
+    ready, blocked, orphans = (_br_ids(exe, v) for v in ("ready", "blocked", "orphans"))
+    notes = tuple(
+        f"`{BEADS_TOOL} {view}` could not be read, so {what} is unknown for every bead"
+        for view, missing, what in (("ready", ready is None, "readiness"),
+                                    ("blocked", blocked is None, "blockedness"),
+                                    ("orphans", orphans is None, "commit-orphan state"))
+        if missing)
+
+    items: List[Dict[str, Any]] = []
+    for row in rows:
+        ident = str(row.get("id") or "")
+        if not ident:
+            continue
+        labels = [str(x) for x in (row.get("labels") or []) if isinstance(x, (str, int))]
+        items.append({
+            "source": "beads",
+            "id": ident,
+            "title": str(row.get("title") or "")[:120],
+            "status": str(row.get("status") or "unknown"),
+            "priority": _as_int(row.get("priority"), NEUTRAL_PRIORITY),
+            "ready": None if ready is None else ident in ready,
+            "blocked": None if blocked is None else ident in blocked,
+            "orphan": None if orphans is None else ident in orphans,
+            "deferred": bool(row.get("defer_until")),
+            "dependents": _as_int(row.get("dependent_count"), 0),
+            "external_ref": (str(row["external_ref"]) if row.get("external_ref") else None),
+            "labels": labels,
+            "updated_at": row.get("updated_at"),
+            "age_days": _age_days(row.get("updated_at")),
+            "command": f"{BEADS_TOOL} show {ident}",
+        })
+    live = [i for i in items if i["status"] == "open"]
+    closed = len(items) - len(live)
+    if not live:
+        return Substrate("beads", "EMPTY",
+                         f"read the ledger: {len(items)} bead(s), none open ({closed} closed)",
+                         tuple(items), notes=notes)
+    return Substrate("beads", "OK",
+                     f"read the ledger: {len(live)} open, {closed} closed",
+                     tuple(items), notes=notes)
+
+
+def _read_issues(fetch: int) -> Substrate:
+    """The public repo's issues, via `gh`.
+
+    Three separate UNREACHABLE causes, each with its own remediation, because "install it",
+    "log in" and "the API said no" are three different mornings. `shutil.which` first is not
+    belt-and-braces: `gbtypes.run` does not catch `FileNotFoundError`, so probing a missing
+    binary would traceback — and `probe`'s doctrine here is that a dead probe never crashes.
+    """
+    exe = shutil.which("gh")
+    if exe is None:
+        return _unreachable(
+            "issues",
+            "`gh` is not on PATH, so the issue tracker could not be read — this is NOT a report "
+            "of zero issues",
+            "brew install gh && gh auth login")
+    auth = run([exe, "auth", "status"], timeout_s=30, cwd=ROOT)
+    failed = _tool_failure(auth, "gh auth status", "gh auth login", "issues")
+    if failed is not None:
+        return failed
+    listing = run([exe, "issue", "list", "--repo", ISSUES_REPO, "--json", ISSUE_FIELDS,
+                   "--limit", str(max(1, fetch))], timeout_s=60, cwd=ROOT)
+    # Remediation is the NEXT probe, not the command that just failed: `gh repo view` separates
+    # "the slug is wrong or private to you" from "the API said no", which is the fork here.
+    failed = _tool_failure(listing, f"gh issue list --repo {ISSUES_REPO}",
+                           f"gh repo view {ISSUES_REPO}", "issues")
+    if failed is not None:
+        return failed
+    rows = _rows(listing.out)
+    if rows is None:
+        return _unreachable("issues", "`gh issue list --json` did not parse as an array — the "
+                                      "tracker is unreadable, not empty",
+                            f"gh issue list --repo {ISSUES_REPO} --json {ISSUE_FIELDS}")
+
+    items: List[Dict[str, Any]] = []
+    for row in rows:
+        number = _as_int(row.get("number"), 0)
+        if not number:
+            continue
+        labels = [str(lb.get("name")) for lb in (row.get("labels") or [])
+                  if isinstance(lb, dict) and lb.get("name")]
+        folded = {lb.lower() for lb in labels}
+        items.append({
+            "source": "issues",
+            "id": f"#{number}",
+            "number": number,
+            "title": str(row.get("title") or "")[:120],
+            "status": str(row.get("state") or "unknown").lower(),
+            "priority": min((ISSUE_LABEL_PRIORITY[lb] for lb in folded
+                             if lb in ISSUE_LABEL_PRIORITY), default=NEUTRAL_PRIORITY),
+            "ready": not (folded & NOT_READY_LABELS),
+            "blocked": bool(folded & NOT_READY_LABELS),
+            "orphan": None,
+            "deferred": False,
+            "dependents": 0,
+            "external_ref": None,
+            "labels": labels,
+            "updated_at": row.get("updatedAt"),
+            "age_days": _age_days(row.get("updatedAt")),
+            "command": f"gh issue view {number} --repo {ISSUES_REPO}",
+        })
+    live = [i for i in items if i["status"] == "open"]
+    if not live:
+        return Substrate("issues", "EMPTY",
+                         f"read {ISSUES_REPO}: {len(items)} issue(s), none open", tuple(items))
+    return Substrate("issues", "OK", f"read {ISSUES_REPO}: {len(live)} open", tuple(items))
+
+
+def _rank_key(item: Dict[str, Any]) -> Tuple[int, int, int, str]:
+    """The ranking. LEXICOGRAPHIC, deliberately — not a weighted score.
+
+    There is no measurement in this repo that would justify weights, and a made-up 0.4/0.3/0.2
+    is a number an operator cannot argue with. A sort key he can: each field is a fact one of
+    the two substrates already publishes, in the order that decides a pick-up.
+
+      1. actionable-first — `br ready` membership (or, for an issue, the absence of a
+         blocked/waiting label). An item you cannot start does not belong at the top of a list
+         of what to start. Readiness that could NOT be verified ranks with the unready, because
+         an unverified claim is not a green light.
+      2. priority — `br`'s own 0..4 field, taken at face value; the author's declared urgency is
+         better evidence than anything this verb could re-derive. Issues use the declared label
+         table above and fall to neutral when no label matches.
+      3. dependents, descending — `dependent_count` from `br`: work that unblocks other work is
+         worth more than leaf work. Issues have no such field and score 0.
+      4. oldest-updated first — pure tiebreak. Staleness deliberately does NOT boost rank: a
+         forgotten item is not more urgent, it is more forgotten, and it is reported as a
+         reliability finding instead of being smuggled into the ordering.
+    """
+    return (
+        0 if item.get("ready") is True else 1,
+        _as_int(item.get("priority"), NEUTRAL_PRIORITY),
+        -_as_int(item.get("dependents"), 0),
+        str(item.get("updated_at") or "9999"),
+    )
+
+
+_ISSUE_REF = re.compile(r"(?:#|/issues/)(\d+)\s*$")
+
+
+def _finding(cls: str, severity: Severity, detail: str, command: str, **extra: Any) -> Dict[str, Any]:
+    return {"class": cls, "severity": severity.name, "detail": detail, "command": command, **extra}
+
+
+def _reliability(subs: Sequence[Substrate]) -> List[Dict[str, Any]]:
+    """Reasons this ranking might be lying, as first-class findings.
+
+    Five classes, every one computed from a field `br` or `gh` actually returns. What is NOT
+    here is documented by its absence: there is no "closed here, open there" check that does not
+    go through `external_ref`, because neither substrate carries any other cross-link.
+    """
+    findings: List[Dict[str, Any]] = []
+    for sub in subs:
+        if sub.status == "UNREACHABLE":
+            findings.append(_finding(
+                "substrate_unreachable", Severity.ERR,
+                f"{sub.name}: {sub.detail}", sub.remediation or "", substrate=sub.name))
+        for note in sub.notes:
+            findings.append(_finding(
+                "unverified_readiness", Severity.CANCELLED, f"{sub.name}: {note}",
+                f"{BEADS_TOOL} doctor", substrate=sub.name))
+
+    items = [i for sub in subs for i in sub.items]
+    issue_state = {i["id"]: i["status"] for i in items if i["source"] == "issues"}
+    for item in items:
+        ident, status = item["id"], item["status"]
+        # (a) drift inside br: the ledger calls it closed, the ready view still offers it.
+        if item["source"] == "beads" and status != "open" and item.get("ready") is True:
+            findings.append(_finding(
+                "status_contradiction", Severity.ERR,
+                f"{ident} is {status} in `{BEADS_TOOL} list` but `{BEADS_TOOL} ready` still "
+                f"offers it — one of the two views is wrong",
+                f"{BEADS_TOOL} show {ident}", id=ident))
+        # (a') drift across substrates, via the only cross-link either side publishes.
+        ref = item.get("external_ref")
+        if item["source"] == "beads" and isinstance(ref, str):
+            hit = _ISSUE_REF.search(ref)
+            linked = issue_state.get(f"#{hit.group(1)}") if hit else None
+            if linked is not None and (linked == "open") != (status == "open"):
+                findings.append(_finding(
+                    "status_contradiction", Severity.ERR,
+                    f"{ident} is {status} but its linked issue #{hit.group(1) if hit else '?'} "
+                    f"is {linked} — the two ledgers disagree about the same work",
+                    f"{BEADS_TOOL} show {ident}", id=ident))
+        # Open, but offered by neither triage view. Deferral is the legitimate reason and is
+        # excluded by `defer_until`; what is left is invisible to every way of asking for work.
+        if (status == "open" and not item.get("deferred")
+                and item.get("ready") is False and item.get("blocked") is False):
+            findings.append(_finding(
+                "ledger_limbo", Severity.ERR,
+                f"{ident} is open but appears in neither `{BEADS_TOOL} ready` nor "
+                f"`{BEADS_TOOL} blocked` and is not deferred — no triage view will ever show it",
+                f"{BEADS_TOOL} show {ident}", id=ident))
+        if item.get("orphan") is True:
+            findings.append(_finding(
+                "orphan_reference", Severity.ERR,
+                f"{ident} is referenced by a commit but is still open — the work may be done "
+                f"and the ledger not updated",
+                f"{BEADS_TOOL} show {ident}", id=ident))
+        age = item.get("age_days")
+        if status == "open" and isinstance(age, float) and age > STALE_DAYS:
+            findings.append(_finding(
+                "stale_item", Severity.ERR,
+                f"{ident} has not been touched in {age:.0f}d (threshold {STALE_DAYS:.0f}d, "
+                f"two weekly ticks)", item["command"], id=ident, age_days=age))
+    return findings
+
+
+def cmd_work(a: WorkArgs) -> int:
+    """What to pick up next across both work-tracking substrates, and whether to trust it."""
+    if a.source is not None and a.source not in ("beads", "issues"):
+        print(f"gb: unknown --source {a.source!r}. Known: beads, issues (omit for both)\n"
+              f"    try: gb work --source beads", file=sys.stderr)
+        return EXIT_USAGE
+    wanted: Tuple[str, ...] = (a.source,) if a.source else ("beads", "issues")
+    limit = max(1, a.limit)
+
+    subs = [_read_beads() if name == "beads" else _read_issues(max(limit, 50))
+            for name in wanted]
+    readable = [s for s in subs if s.status != "UNREACHABLE"]
+    if not readable:
+        # Nothing could be read at all. This is the case that MUST NOT render as "no work":
+        # exit 3 says "this machine cannot answer the question", which is what happened. The
+        # human channel says the same thing in words, because "0 items" on stdout is the lie.
+        for sub in subs:
+            print(f"gb: {sub.name} UNREACHABLE — {sub.detail}\n"
+                  f"    fix: {sub.remediation}", file=sys.stderr)
+        findings = _reliability(subs)
+        human = [f"UNKNOWN · {len(subs)} substrate(s), none readable — this is NOT zero work", ""]
+        human += [f"  {s.name:<8}UNREACHABLE  {s.detail}" for s in subs]
+        human += ["", "next:"] + [f"  {s.remediation}" for s in subs if s.remediation]
+        emit(envelope("work",
+                      sources={s.name: {"status": s.status, "detail": s.detail,
+                                        "remediation": s.remediation, "items": 0,
+                                        "notes": list(s.notes)} for s in subs},
+                      ranking=None, totals={"actionable": None, "shown": 0,
+                                            "reliability_findings": len(findings)},
+                      items=[], reliability=findings,
+                      commands=[s.remediation for s in subs if s.remediation]),
+             a.json, "\n".join(human))
+        return EXIT_ENVIRONMENT
+
+    actionable = sorted((i for s in subs for i in s.items if i["status"] == "open"),
+                        key=_rank_key)
+    shown = actionable[:limit]
+    findings = _reliability(subs)
+    commands = [i["command"] for i in shown[:3]] + [
+        f["command"] for f in findings if f["command"]][:3] or ["gb triage"]
+
+    payload = envelope(
+        "work",
+        sources={s.name: {"status": s.status, "detail": s.detail, "remediation": s.remediation,
+                          "items": len([i for i in s.items if i["status"] == "open"]),
+                          "notes": list(s.notes)} for s in subs},
+        ranking={"method": "lexicographic",
+                 "keys": ["actionable_first", "priority_asc", "dependents_desc",
+                          "updated_at_asc"],
+                 "note": "no weighted score: every key is a field br or gh publishes. Issue "
+                         "priority comes from a declared label table, not a measurement.",
+                 "stale_days": STALE_DAYS},
+        totals={"actionable": len(actionable), "shown": len(shown),
+                "reliability_findings": len(findings)},
+        items=shown,
+        reliability=findings,
+        commands=commands,
+    )
+
+    head = " · ".join(f"{s.name} {s.status}" for s in subs)
+    human = [f"{head} · {len(actionable)} actionable · {len(findings)} reliability finding(s)", ""]
+    for rank, item in enumerate(shown, 1):
+        # Truncate the id INTO its column: a 40-char bead id that overflows collides with the
+        # title and the table stops being one. The untruncated id is in --json and in `command`.
+        flag = "" if item.get("ready") is True else ("BLOCK " if item.get("blocked") else "?rdy  ")
+        age = item.get("age_days")
+        age_txt = f"{age:.0f}d" if isinstance(age, float) else "?"
+        human.append(f"  {rank:>2}. p{item['priority']} {item['source']:<7}"
+                     f"{item['id'][:34]:<35}{age_txt:>5}  {flag}{item['title'][:42]}")
+    if not shown:
+        human.append("  (nothing actionable in the substrates that could be read)")
+    if findings:
+        human += ["", "reliability:"]
+        human += [f"  {f['class']:<22}{f['detail'][:96]}" for f in findings[:10]]
+        if len(findings) > 10:
+            human.append(f"  ... and {len(findings) - 10} more (use --json)")
+    for sub in subs:
+        if sub.status == "UNREACHABLE":
+            human += ["", f"  {sub.name} could NOT be read — this is not a count of zero.",
+                      f"  fix: {sub.remediation}"]
+    human += ["", "next:"] + [f"  {c}" for c in commands]
+    emit(payload, a.json, "\n".join(human))
+    return EXIT_FINDINGS if (shown or findings) else EXIT_OK
+
+
+def cmd_doctor(a: DoctorArgs) -> int:
+    scopes = {a.scope: SUBSYSTEMS[a.scope]} if a.scope in SUBSYSTEMS else (
+        None if a.scope else SUBSYSTEMS)
+    if scopes is None:
+        print(f"gb: unknown scope {a.scope!r}. Known: {', '.join(SUBSYSTEMS)}\n"
+              f"    try: gb doctor --scope {sorted(SUBSYSTEMS)[0]}", file=sys.stderr)
+        return EXIT_USAGE
+    rows = [probe(n, argv, summary=how) for n, (argv, _why, how) in scopes.items()]
+    bad = [r for r in rows if r["status"] not in ("PASS",)]
+    payload = envelope("doctor", subsystems=rows, failing=len(bad))
+    human = [f"  {r['status']:<15}{r['subsystem']:<10}{r['detail'][:90]}" for r in rows]
+    human.append("")
+    human.append(f"{len(rows) - len(bad)}/{len(rows)} subsystem(s) pass"
+                 + ("" if not bad else f" — `gb repair --scope <x>` or `gb why <check>`"))
+    emit(payload, a.json, "\n".join(human))
+    return EXIT_FINDINGS if bad else EXIT_OK
+
+
+def cmd_health(a: HealthArgs) -> int:
+    def once() -> int:
+        board = newest("deployment")
+        gate = run([sys.executable, str(BIN / "gb-surface-gate.py"), "--json"],
+                   timeout_s=180, cwd=ROOT)
+        verdict = "UNKNOWN"
+        red = 0
+        if (gate.out or "").strip():
+            try:
+                doc = json.loads(gate.out)
+                verdict = doc.get("verdict", "UNKNOWN")
+                checks = doc.get("checks") or []
+                if not checks:
+                    verdict = "UNREADABLE"
+                red = sum(1 for r in checks if r.get("verdict") != "GREEN")
+            except ValueError:
+                verdict = "UNPARSEABLE"
+        payload = envelope("health", verdict=verdict, not_green=red,
+                           deployment_measured_at=(board or {}).get("measured_at"))
+        emit(payload, a.json, f"{verdict} · {red} check(s) not green")
+        return EXIT_OK if verdict == "GREEN" else EXIT_FINDINGS
+
+    if not a.watch:
+        return once()
+    while True:  # cancel-correct: SIGINT unwinds through gbtypes.main -> exit 130
+        rc = once()
+        time.sleep(max(1, a.interval))
+    return rc
+
+
+def cmd_repair(a: RepairArgs) -> int:
+    if not a.scope or a.scope not in REPAIRS:
+        print(f"gb: repair needs a known --scope. Known: {', '.join(REPAIRS)}\n"
+              f"    try: gb repair --scope {sorted(REPAIRS)[0]}", file=sys.stderr)
+        return EXIT_USAGE
+    argv, why = REPAIRS[a.scope]
+    if not a.apply:
+        payload = envelope("repair", scope=a.scope, dry_run=True, planned=[why],
+                           actual_actions=[], would_run=f"python3 bin/{' '.join(argv)}")
+        emit(payload, a.json,
+             f"PLANNED  {a.scope}: {why}\n         would run: python3 bin/{' '.join(argv)}\n"
+             f"         nothing was written — re-run with --apply")
+        return EXIT_OK
+    proc = run([sys.executable, str(BIN / argv[0]), *argv[1:]], timeout_s=600, cwd=ROOT)
+    ok = proc.code == 0
+    payload = envelope("repair", scope=a.scope, dry_run=False, planned=[why],
+                       actual_actions=[f"python3 bin/{' '.join(argv)}"],
+                       exit=proc.code, detail=(proc.out or proc.err).strip().splitlines()[-1:])
+    emit(payload, a.json, f"{'APPLIED ' if ok else 'FAILED  '} {a.scope}: {why}")
+    return EXIT_OK if ok else EXIT_FINDINGS
+
+
+def cmd_validate(a: ValidateArgs) -> int:
+    known = {"plugin": ["gb-plugin-validate.py", "--path", "plugin"],
+             "mcp": ["gb-mcp-validate.py"],
+             "types": ["gb-typecheck.py", "--dry-run"],
+             "fixtures": ["gb-surface-gate.py", "--selftest"]}
+    if a.thing not in known:
+        print(f"gb: cannot validate {a.thing!r}. Known: {', '.join(known)}\n"
+              f"    try: gb validate plugin", file=sys.stderr)
+        return EXIT_USAGE
+    r = probe(a.thing, known[a.thing], timeout_s=300)
+    emit(envelope("validate", thing=a.thing, **r), a.json, f"  {r['status']:<12}{r['detail'][:110]}")
+    return EXIT_OK if r["status"] == "PASS" else EXIT_FINDINGS
+
+
+def cmd_audit(a: AuditArgs) -> int:
+    proc = run(["git", "log", f"-{max(1, a.limit)}", "--format=%h\t%ad\t%s", "--date=short"],
+               timeout_s=60, cwd=ROOT)
+    rows = [dict(zip(("sha", "date", "subject"), ln.split("\t", 2)))
+            for ln in proc.out.splitlines() if "\t" in ln]
+    emit(envelope("audit", mutations=rows), a.json,
+         "\n".join(f"  {r['sha']}  {r['date']}  {r['subject'][:90]}" for r in rows))
+    return EXIT_OK
+
+
+def cmd_why(a: WhyArgs) -> int:
+    """Provenance for one check: what produced it, what it last said, where that is on disk."""
+    gate = run([sys.executable, str(BIN / "gb-surface-gate.py"), "--json"], timeout_s=180, cwd=ROOT)
+    hit = None
+    if (gate.out or "").strip():
+        try:
+            for r in json.loads(gate.out).get("checks") or []:
+                if r.get("check") == a.id:
+                    hit = r
+                    break
+        except ValueError:
+            pass
+    if hit is None:
+        cov = read_json_capped(ROOT / "coverage-floor.json") or {}
+        print(f"gb: no check named {a.id!r}.\n"
+              f"    list them: gb triage --json | jq -r '.red[].check'\n"
+              f"    coverage floor currently {cov.get('covered')}", file=sys.stderr)
+        return EXIT_USAGE
+    payload = envelope("why", check=a.id, verdict=hit.get("verdict"), detail=hit.get("detail"),
+                       produced_by="bin/gb-surface-gate.py",
+                       reads=[str(p.relative_to(ROOT)) for p in
+                              (ROOT / "deployment", ROOT / "surface", ROOT / "inventory")
+                              if p.exists()])
+    emit(payload, a.json,
+         f"  {a.id}\n  verdict   {hit.get('verdict')}\n  detail    {hit.get('detail','')[:160]}\n"
+         f"  producer  bin/gb-surface-gate.py")
+    return EXIT_OK
+
+
+def cmd_capabilities(a: CapabilitiesArgs) -> int:
+    payload = envelope(
+        "capabilities",
+        contract_version=CONTRACT_VERSION,
+        commands={n: (c.__doc__ or "").strip().splitlines()[0] for n, c in COMMANDS.items()},
+        exit_codes={str(k): v for k, v in EXIT_CODES.items()},
+        subsystems={n: why for n, (_a, why, _s) in SUBSYSTEMS.items()},
+        repair_scopes={n: why for n, (_a, why) in REPAIRS.items()},
+        help_topics=sorted(TOPICS),
+        json_everywhere=True,
+        rust_target="asupersync",
+    )
+    emit(payload, True, "")
+    return EXIT_OK
+
+
+def cmd_robot_docs(_a: BareArgs) -> int:
+    print(f"""\
+gb — agent handbook (v{VERSION}, contract {CONTRACT_VERSION})
+
+ONE CALL FIRST. `gb triage --json` answers "what is wrong" and hands back the commands that
+address it. Do not start by reading bin/; start here.
+
+    gb triage --json | jq '.red[].check'      what is not green
+    gb triage --json | jq -r '.commands[]'    what to run next
+
+CONTRACT. `gb capabilities --json` is the machine-readable version of this page: command list,
+exit-code dictionary, subsystem list, repair scopes. Read it instead of remembering this.
+
+EXIT CODES. Branch on them; they are a dictionary, not a mood.
+{TOPICS['exit-codes']}
+
+STDOUT IS DATA. Every command takes `--json` and prints the envelope on stdout and nothing else;
+diagnostics are on stderr. `gb <verb> --json | jq` never needs a grep.
+
+MUTATION. Only `gb repair` writes, and only with `--apply`. Without it you get the plan and
+`actual_actions: []`. There is no other mutating verb.
+
+CANCELLATION. Every command is safe to SIGINT: artifact writes are atomic, so you get either the
+old artifact or the new one, and the process exits 130.
+""")
+    return EXIT_OK
+
+
+def cmd_quickstart(_a: BareArgs) -> int:
+    print(f"""\
+gb — quickstart
+
+This repo watches one thing: a live Grok Bot deployment (the account, its Bots, its plugins, and
+the vendor surface those depend on). The producers in bin/ measure it; `gb` is how you ask.
+
+  1. gb triage            what is wrong right now, and what to run about it
+  2. gb doctor            is the measuring apparatus itself healthy (6 subsystems)
+  3. gb why <check>       why one check says what it says
+  4. gb repair --scope X  rebuild a derived artifact (dry run unless --apply)
+
+The weekly tick (`bin/gb-weekly.sh`) is the only thing that fetches from the vendor. Everything
+`gb` does is read-only against artifacts already on disk, except `repair --apply`.
+
+Run `gb examples` for worked invocations, `gb help <topic>` for a manual page, and
+`gb capabilities --json` if you are a program.
+""")
+    return EXIT_OK
+
+
+def cmd_examples(_a: BareArgs) -> int:
+    print(EXAMPLES.rstrip())
+    return EXIT_OK
+
+
+def cmd_info(_a: BareArgs) -> int:
+    sha = run(["git", "rev-parse", "--short", "HEAD"], timeout_s=30, cwd=ROOT).out.strip()
+    payload = envelope(
+        "info", contract_version=CONTRACT_VERSION, repo=str(ROOT), runtime_sha=sha,
+        python=sys.version.split()[0],
+        producers=sorted(p.name for p in BIN.glob("gb-*.py")),
+        artifact_roots=sorted(d.name for d in ROOT.iterdir()
+                              if d.is_dir() and not d.name.startswith(".")),
+    )
+    emit(payload, True, "")
+    return EXIT_OK
+
+
+def cmd_help(a: HelpArgs) -> int:
+    if not a.topic:
+        print("topics: " + ", ".join(sorted(TOPICS)) + "\n\n  gb help exit-codes")
+        return EXIT_OK
+    if a.topic not in TOPICS:
+        print(f"gb: no topic {a.topic!r}. Known: {', '.join(sorted(TOPICS))}\n"
+              f"    try: gb help exit-codes", file=sys.stderr)
+        return EXIT_USAGE
+    print(f"{a.topic}\n\n{TOPICS[a.topic]}")
+    return EXIT_OK
+
+
+def cmd_completion(a: CompletionArgs) -> int:
+    verbs = " ".join(COMMANDS)
+    if a.shell == "bash":
+        print(f'_gb() {{ COMPREPLY=($(compgen -W "{verbs}" -- "${{COMP_WORDS[1]}}")); }}\n'
+              f'complete -F _gb gb')
+    else:
+        print(f"#compdef gb\n_arguments '1:command:({verbs})'")
+    return EXIT_OK
+
+
+HANDLERS: Dict[str, Callable[[Any], int]] = {
+    "triage": cmd_triage, "work": cmd_work, "doctor": cmd_doctor, "health": cmd_health,
+    "repair": cmd_repair,
+    "validate": cmd_validate, "audit": cmd_audit, "why": cmd_why,
+    "capabilities": cmd_capabilities, "robot-docs": cmd_robot_docs, "quickstart": cmd_quickstart,
+    "examples": cmd_examples, "info": cmd_info, "help": cmd_help, "completion": cmd_completion,
+}
+
+
+def body() -> int:
+    name, args = parse_sub(
+        COMMANDS,
+        prog="gb",
+        description=(
+            "gb — operate a live Grok Bot deployment: measure the vendor surface and your own "
+            "account, judge both, and act on what is wrong."
+        ),
+        epilog="start with:  gb triage\nagent?        gb robot-docs\nmachine?      gb capabilities --json",
+    )
+    return HANDLERS[name](args)
+
+
+if __name__ == "__main__":
+    main(body)

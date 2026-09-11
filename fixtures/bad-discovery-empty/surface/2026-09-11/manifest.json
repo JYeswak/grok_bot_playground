@@ -1,0 +1,199 @@
+{
+ "captured_at": "2026-09-11T06:00:00+00:00",
+ "index_url": "https://docs.x.ai/llms.txt",
+ "index_status": 200,
+ "index_bytes": 16540,
+ "index_sha256": "2c983205795bbf038b585fa925adeb03a8d47c4d2729ea7a4a6fdba32d9ef752",
+ "index_error": "",
+ "llms_total_pages": 168,
+ "grok_bot_pages_listed": 16,
+ "pages": [
+  {
+   "section": "Grok Bot",
+   "title": "Fixture 1",
+   "url": "https://docs.x.ai/grok-bot/fixture-01.md",
+   "slug": "grok-bot__fixture-01",
+   "status": 200,
+   "bytes": 837,
+   "sha256": "606f97fb76c15badd60dee8d15ab47535ccb1085fc4be7b1d3953f8074324183",
+   "marker_ok": true,
+   "error": ""
+  },
+  {
+   "section": "Grok Bot",
+   "title": "Fixture 2",
+   "url": "https://docs.x.ai/grok-bot/fixture-02.md",
+   "slug": "grok-bot__fixture-02",
+   "status": 200,
+   "bytes": 837,
+   "sha256": "0b6a2db24f0812ea36b66a1f49c6059dc5e23b60f2608ff0d08211277809696b",
+   "marker_ok": true,
+   "error": ""
+  },
+  {
+   "section": "Grok Bot",
+   "title": "Fixture 3",
+   "url": "https://docs.x.ai/grok-bot/fixture-03.md",
+   "slug": "grok-bot__fixture-03",
+   "status": 200,
+   "bytes": 837,
+   "sha256": "d3aebcccf5a2f215d3ffc5ae59f54cb9923b70129d8fe5fb258f6238c4270ece",
+   "marker_ok": true,
+   "error": ""
+  },
+  {
+   "section": "Grok Bot",
+   "title": "Fixture 4",
+   "url": "https://docs.x.ai/grok-bot/fixture-04.md",
+   "slug": "grok-bot__fixture-04",
+   "status": 200,
+   "bytes": 837,
+   "sha256": "f272dcef1bab0ac22449da38d3c09e7864da48dd24ccc2ee8f950ddadadacbf7",
+   "marker_ok": true,
+   "error": ""
+  },
+  {
+   "section": "Grok Bot",
+   "title": "Fixture 5",
+   "url": "https://docs.x.ai/grok-bot/fixture-05.md",
+   "slug": "grok-bot__fixture-05",
+   "status": 200,
+   "bytes": 837,
+   "sha256": "950d6defe13f1813745e097553c2b9b0c44fbb2f73bee3837d0395e9c6d58054",
+   "marker_ok": true,
+   "error": ""
+  },
+  {
+   "section": "Grok Bot",
+   "title": "Fixture 6",
+   "url": "https://docs.x.ai/grok-bot/fixture-06.md",
+   "slug": "grok-bot__fixture-06",
+   "status": 200,
+   "bytes": 837,
+   "sha256": "707a9d0c9e95e906f4fec239fc4f5c77e414c2adf88f3724925d550d0782e1a2",
+   "marker_ok": true,
+   "error": ""
+  },
+  {
+   "section": "Grok Bot",
+   "title": "Fixture 7",
+   "url": "https://docs.x.ai/grok-bot/fixture-07.md",
+   "slug": "grok-bot__fixture-07",
+   "status": 200,
+   "bytes": 837,
+   "sha256": "039016a71d2f29f9ec26fd9c6f39dc136b6f40d197d42299569748c3c5b69cf2",
+   "marker_ok": true,
+   "error": ""
+  },
+  {
+   "section": "Grok Bot",
+   "title": "Fixture 8",
+   "url": "https://docs.x.ai/grok-bot/fixture-08.md",
+   "slug": "grok-bot__fixture-08",
+   "status": 200,
+   "bytes": 837,
+   "sha256": "889509727f44c332c9bc9323aa9419a31732b4ea4038df7a671265cf9099b873",
+   "marker_ok": true,
+   "error": ""
+  },
+  {
+   "section": "Grok Bot",
+   "title": "Fixture 9",
+   "url": "https://docs.x.ai/grok-bot/fixture-09.md",
+   "slug": "grok-bot__fixture-09",
+   "status": 200,
+   "bytes": 837,
+   "sha256": "ca3a6740e9107dd89f8985b147fe1a79b5ed4f6921a6573642ea596945c9f90f",
+   "marker_ok": true,
+   "error": ""
+  },
+  {
+   "section": "Grok Bot",
+   "title": "Fixture 10",
+   "url": "https://docs.x.ai/grok-bot/fixture-10.md",
+   "slug": "grok-bot__fixture-10",
+   "status": 200,
+   "bytes": 838,
+   "sha256": "48c23f21d36a568af6bed12cc5595c5da7629fefe12bb1d4f53451fd0462dc2f",
+   "marker_ok": true,
+   "error": ""
+  },
+  {
+   "section": "Grok Bot",
+   "title": "Fixture 11",
+   "url": "https://docs.x.ai/grok-bot/fixture-11.md",
+   "slug": "grok-bot__fixture-11",
+   "status": 200,
+   "bytes": 838,
+   "sha256": "ba78d0fe5664bb6e9bbedc12e8a154f2728a73c672cdd9ee8a7f33edb41ce793",
+   "marker_ok": true,
+   "error": ""
+  },
+  {
+   "section": "Grok Bot",
+   "title": "Fixture 12",
+   "url": "https://docs.x.ai/grok-bot/fixture-12.md",
+   "slug": "grok-bot__fixture-12",
+   "status": 200,
+   "bytes": 838,
+   "sha256": "93256d911e861449e516571d3f8f4d2a44cdf112f28d4e835e457e63e1bc7e81",
+   "marker_ok": true,
+   "error": ""
+  },
+  {
+   "section": "Grok Bot",
+   "title": "Fixture 13",
+   "url": "https://docs.x.ai/grok-bot/fixture-13.md",
+   "slug": "grok-bot__fixture-13",
+   "status": 200,
+   "bytes": 838,
+   "sha256": "947bf15f0bc87120a377483a18427d44a6ccb3238715e7e54da295684fa22df1",
+   "marker_ok": true,
+   "error": ""
+  },
+  {
+   "section": "Grok Bot",
+   "title": "Fixture 14",
+   "url": "https://docs.x.ai/grok-bot/fixture-14.md",
+   "slug": "grok-bot__fixture-14",
+   "status": 200,
+   "bytes": 838,
+   "sha256": "57ff62fb314092e2a6266df9b19a0b6feb66264a376d2ad9c8e892a36701b697",
+   "marker_ok": true,
+   "error": ""
+  },
+  {
+   "section": "Grok Bot",
+   "title": "Fixture 15",
+   "url": "https://docs.x.ai/grok-bot/fixture-15.md",
+   "slug": "grok-bot__fixture-15",
+   "status": 200,
+   "bytes": 838,
+   "sha256": "8e50170ef3c3d593add650a084f3aeeeb69800b4cce1ce346e9f1157fec931a7",
+   "marker_ok": true,
+   "error": ""
+  },
+  {
+   "section": "Grok Bot",
+   "title": "Fixture 16",
+   "url": "https://docs.x.ai/grok-bot/fixture-16.md",
+   "slug": "grok-bot__fixture-16",
+   "status": 200,
+   "bytes": 838,
+   "sha256": "274f8c2ba05a8f96bbd16cf3a9059002440a18eba83f7465c1de4dafc7936707",
+   "marker_ok": true,
+   "error": ""
+  }
+ ],
+ "extras": [
+  {
+   "label": "practitioner-index",
+   "url": "https://example.invalid/README.md",
+   "status": 200,
+   "bytes": 211120,
+   "min_bytes": 100000,
+   "sha256": "2826175969166cfd3d8918948ed385def3ac100b927559885e005166d9f0b371",
+   "error": ""
+  }
+ ]
+}

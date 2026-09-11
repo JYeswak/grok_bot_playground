@@ -1,0 +1,6 @@
+{
+ "covered": 41,
+ "of": 46,
+ "recorded_at": "2026-09-11",
+ "why": "fixture: floor above what the artifacts carry. Bumped 38 -> 41 when the typed-spine facets landed: the fixture gained real coverage, so the old planted floor no longer sat above it and the RED leg stopped firing."
+}
