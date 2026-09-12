@@ -177,7 +177,25 @@ _MACHINE = r"machine[_-]?id\\?[\"']?\s*[:=]\s*\\?[\"'][A-Za-z0-9._-]{8,}"
 # Synced to the exporter 2026-09-12: the trailing `/` was a HOLE — it could not see a home
 # path at the end of a sentence or before a comma. The drift leg in this file caught the
 # change the moment the exporter widened, which is the guard working rather than failing.
-_HOME_SCAN = r"/(?:Users|home)/[a-z][a-z0-9_-]+\b"
+#
+# Synced again the same day for the one exemption the exporter now carries: the VENDOR's
+# cloud-computer home directory (the `box` segment in the regex below). That literal is
+# identical for every Grok Bot user and names a machine none of our operators own, so it leaks
+# neither this layout nor anyone's username — and a skill had to state it, because "put your
+# MCP wrappers somewhere bot-independent" without the path is unusable advice. This fragment
+# must track the exporter's text or the drift leg fails, and the drift leg is the only thing
+# that notices when the two stop agreeing.
+#
+# NOTE ON THIS COMMENT: it does not spell the path out, and that is the fixture rule at work,
+# not squeamishness. THIS producer ships, its own source may not match a shipped class, and its
+# REDACTOR below is deliberately wider than the scanner — so the first draft of this very
+# comment wrote the path twice and turned the file into its own known-bad. Leg 16 caught it.
+#
+# The redactor at `_HOME_PATH` keeps NO exemption and stays wider on purpose: it rewrites
+# third-party corpus prose, where that path in somebody else's Bot description is not
+# load-bearing and redacting it costs nothing. A redactor narrower than the scanner downstream
+# of it is the failure this block exists to prevent, so the asymmetry runs the safe direction.
+_HOME_SCAN = r"/(?:Users|home)/(?!box(?![\w-]))[a-z][a-z0-9_-]+\b"
 
 
 @dataclasses.dataclass(frozen=True)

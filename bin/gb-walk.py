@@ -938,6 +938,8 @@ def render_bots(doc: Dict[str, Any], ink: Ink, *, step: bool, interactive: bool)
     emit()
     emit(f"  templates  {doc['templates_dir']}")
     emit(f"  proposed   {doc['count']} Bot(s), walked in tier order")
+    if doc.get("filter"):
+        emit(f"  filtered   {doc['filter']}")
     emit()
     total = doc["count"]
     for i, t in enumerate(doc["templates"], 1):
@@ -1762,11 +1764,7 @@ def body(argv: Optional[Sequence[str]] = None) -> int:
             print(json.dumps(doc, indent=1, default=str))
             return 0 if doc["count"] else 3
         if seat_row is not None:
-            first = next(
-                t for t in doc["templates"]
-                if str(t.get("id")) == seat_row.get("first_paste")
-            )
-            render_seat(seat_row, doc["templates"], first, ink)
+            render_seat(seat_row, doc["templates"], doc["first"], ink)
             return 0
         return render_bots(doc, ink, step=args.step, interactive=interactive)
 

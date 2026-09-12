@@ -2486,8 +2486,16 @@ def cmd_robot_docs(_a: BareArgs) -> int:
     print(f"""\
 gb — agent handbook (v{VERSION}, contract {CONTRACT_VERSION})
 
-ONE CALL FIRST. `gb triage --json` answers "what is wrong" and hands back the commands that
-address it. Do not start by reading bin/; start here.
+ONE CALL FIRST. `gb capabilities --json` is the contract: every command, its exit codes, what it
+needs. Route from it. Do not start by reading bin/, and do not start with `gb triage` — it
+judges a CONFIGURED deployment, and on a clone with no artifacts a live sweep measured it
+taking seconds or not returning. It is the second stop, after `gb setup --apply`.
+
+    gb capabilities --json | jq -r '.commands | keys[]'   every verb, from the contract
+    gb platform --json     | jq -r .status                is this OS even measured here
+    gb mirror                                             your own fleet, off disk, no token
+
+ONCE CONFIGURED, triage is the loop.
 
     gb triage --json | jq '.red[].check'      what is not green
     gb triage --json | jq -r '.commands[]'    what to run next
@@ -2523,16 +2531,29 @@ EXIT CODES. Branch on them; they are a dictionary, not a mood.
 STDOUT IS DATA. Every command takes `--json` and prints the envelope on stdout and nothing else;
 diagnostics are on stderr. `gb <verb> --json | jq` never needs a grep.
 
-MUTATION. Only `gb repair` and `gb setup` write, and only with `--apply`. Without it you get the
-plan and `actual_actions: []`. There is no other mutating verb. `gb setup --apply` is idempotent
-and refuses (exit 5) rather than leaving this root half-configured.
+MUTATION, IN TWO KINDS — this page claimed one until 2026-09-12 and was wrong.
+
+1. ACCOUNT + CONFIG writes: only `gb repair` and `gb setup`, and only with `--apply`. Without it
+   you get the plan and `actual_actions: []`. `gb setup --apply` is idempotent and refuses
+   (exit 5) rather than leaving this root half-configured.
+2. ARTIFACT writes: MANY verbs drop a dated JSON file under their own directory as a side
+   effect of reading. `monitor`, `mcp`, `mine`, `advise`, `findings`, `rebuild`, `market`,
+   `gaps`, `roadmap`, `typecheck`, `deployment`, `inventory` and `skill-coverage` all do it, and
+   bare `gb doctor` reaches the NETWORK before it writes. Measured: thirteen such directories
+   hold artifacts on this tree, none of them written by setup or repair. `gb findings` is the
+   sharpest trap — it writes unless you pass `--no-write`, an inverted flag.
+
+So "read-only" here means "does not touch your account", NOT "leaves no files". If you need a
+guaranteed no-write call, use `gb capabilities --json`, `gb platform`, `gb mirror`, `gb
+templates` or `gb walk` — and if it matters, diff the tree afterwards rather than trusting a
+sentence on this page.
 
 CANCELLATION. Every command is safe to SIGINT: artifact writes are atomic, so you get either the
 old artifact or the new one, and the process exits 130.
 
-AGENT DROP FILES. A fresh clone carries CLAUDE.md and .cursor/rules/grok-bot.mdc: the 40-line
-contract (six commands, human-only steps, the four-product split). If you are an agent and you
-found this page first, read CLAUDE.md next — it is shorter and points back here.
+AGENT DROP FILES. A fresh clone carries AGENTS.md — read that first, it is the contract agents
+grep for — plus CLAUDE.md and .cursor/rules/grok-bot.mdc, which are pointers to it rather than
+copies. If you found this page first, read AGENTS.md next; it is shorter and points back here.
 """)
     return EXIT_OK
 
@@ -2553,8 +2574,10 @@ the vendor surface those depend on). The producers in bin/ measure it; `gb` is h
   4. gb repair --scope X  rebuild a derived artifact (dry run unless --apply)
 
 The weekly tick (`bin/gb-weekly.sh`) is the only thing that fetches from the vendor on a
-schedule. Everything `gb` does is read-only against artifacts already on disk, except
-`repair --apply` and `setup --apply`.
+schedule. Nothing `gb` does touches your ACCOUNT except `repair --apply` and `setup --apply`.
+That is not the same as leaving no files: many read verbs drop a dated artifact under their own
+directory as a side effect, and `gb findings` writes unless you pass `--no-write`. See
+`gb robot-docs` for the list — this page said "read-only" for both and only one was true.
 
 Run `gb examples` for worked invocations, `gb help <topic>` for a manual page, and
 `gb capabilities --json` if you are a program.

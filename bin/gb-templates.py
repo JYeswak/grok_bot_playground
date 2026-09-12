@@ -106,6 +106,16 @@ ACTS_OUTSIDE_CHAT = {
     "Stripe",
     "Google Docs",
     "Google Drive",
+    # Google Sheets added 2026-09-12. Measured contradiction, not a wishlist entry: six persona
+    # Bots across the 12 packs name `sheets-mcp`, and no template could declare it because the
+    # name was absent here — so a pack told an operator to use Sheets while the template layer
+    # was structurally forbidden from saying so. Docs, Drive and Calendar were already
+    # classified; Sheets is the same first-party family with the same power (it writes a
+    # document outside the chat), so its absence was an oversight rather than a decision.
+    # Still UNCLASSIFIED and still refused: Linear, Reddit and Transcript, each promised by a
+    # pack. Those are genuinely new powers and need a decision, not a quiet addition — they are
+    # roadmap row `packs-promise-tools-templates-cannot-name`.
+    "Google Sheets",
 }
 READ_ONLY_OK = {
     "Grok"
