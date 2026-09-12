@@ -7,7 +7,7 @@ Page to Grok Bot turns the current page into paste-ready Grok Bot text. It stays
 1. Open `chrome://extensions`.
 2. Enable **Developer mode**.
 3. Click **Load unpacked**.
-4. Choose `/home/runner/work/grok_bot_playground/grok_bot_playground/extension`.
+4. Choose the repository's `extension/` directory.
 5. Open a public page, click the extension action, or use the page context menu item.
 
 ## Validate and pack
@@ -53,4 +53,4 @@ The extension does **not**:
 - **P2**: improve mission presets and first-message guidance
 - **P3**: prepare Chrome Web Store listing and release flow
 
-See `/home/runner/work/grok_bot_playground/grok_bot_playground/docs/CHROME_WEB_STORE.md` and `PRIVACY.md` for release and privacy details.
+See `docs/CHROME_WEB_STORE.md` and `extension/PRIVACY.md` for release and privacy details.
