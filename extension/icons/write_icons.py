@@ -37,24 +37,24 @@ def make_icon(size: int) -> bytes:
     bubble_bottom = size - max(2, size // 5)
 
     for y in range(size):
-      row = bytearray([0])
-      for x in range(size):
-          rgba = bg
-          in_page = page_left <= x <= page_right and page_top <= y <= page_bottom
-          if in_page:
-              rgba = panel
-              if x > page_right - fold and y < page_top + fold and (x - (page_right - fold)) + (y - page_top) < fold:
-                  rgba = accent
-          if bubble_left <= x <= bubble_right and bubble_top <= y <= bubble_bottom:
-              rgba = white
-              if y > bubble_bottom - radius and x < bubble_left + radius and (bubble_left + radius - x) + (y - (bubble_bottom - radius)) > radius:
-                  rgba = panel
-          if y == bubble_bottom + 1 and x == bubble_left + radius:
-              rgba = white
-          if y == bubble_bottom + 2 and bubble_left + radius - 1 <= x <= bubble_left + radius + 1:
-              rgba = white
-          row.extend(rgba)
-      pixels.extend(row)
+        row = bytearray([0])
+        for x in range(size):
+            rgba = bg
+            in_page = page_left <= x <= page_right and page_top <= y <= page_bottom
+            if in_page:
+                rgba = panel
+                if x > page_right - fold and y < page_top + fold and (x - (page_right - fold)) + (y - page_top) < fold:
+                    rgba = accent
+            if bubble_left <= x <= bubble_right and bubble_top <= y <= bubble_bottom:
+                rgba = white
+                if y > bubble_bottom - radius and x < bubble_left + radius and (bubble_left + radius - x) + (y - (bubble_bottom - radius)) > radius:
+                    rgba = panel
+            if y == bubble_bottom + 1 and x == bubble_left + radius:
+                rgba = white
+            if y == bubble_bottom + 2 and bubble_left + radius - 1 <= x <= bubble_left + radius + 1:
+                rgba = white
+            row.extend(rgba)
+        pixels.extend(row)
     header = png_chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0))
     data = png_chunk(b"IDAT", zlib.compress(bytes(pixels), level=9))
     end = png_chunk(b"IEND", b"")

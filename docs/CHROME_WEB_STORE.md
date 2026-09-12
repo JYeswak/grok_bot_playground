@@ -12,7 +12,7 @@ Use the official Google documentation for the actual release flow:
 - <https://developer.chrome.com/docs/webstore/update>
 - <https://chrome.google.com/webstore/devconsole>
 - <https://developer.chrome.com/docs/webstore/using-api>
-- <https://developer.chrome.com/blog/cws-review-updates-2026>
+- <https://developer.chrome.com/blog/cws-review-updates-2026> (treat the stable review-process page as authoritative if this post moves or is unavailable)
 
 ## Recommended process
 
@@ -27,6 +27,6 @@ Use the official Google documentation for the actual release flow:
 
 ## Notes
 
-- The 2026 review update notes that new publishers default to two extension slots: <https://developer.chrome.com/blog/cws-review-updates-2026>.
+- Use the stable review-process documentation as the authority for review requirements: <https://developer.chrome.com/docs/webstore/review-process>. If the 2026 review updates post is available, use it as supplemental context for current publisher slot defaults: <https://developer.chrome.com/blog/cws-review-updates-2026>.
 - The listing, privacy, distribution, and review-process docs are the authoritative sources for what Google asks at submission time.
 - Do not claim Google will approve the item. Review is always Google's decision.

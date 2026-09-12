@@ -122,7 +122,7 @@ export function extractPageFingerprint() {
         }
       }
     }
-    const bodyText = textOf(document.body?.innerText || "");
+    const bodyText = textOf(document.body?.textContent || "");
     const matches =
       bodyText.match(
         /(?:[$€£]\s?\d[\d,]*(?:\.\d{2})?|\bUSD\s?\d[\d,]*(?:\.\d{2})?\b|\bEUR\s?\d[\d,]*(?:\.\d{2})?\b|\bper month\b|\bper year\b)/gi,
