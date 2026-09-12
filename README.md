@@ -22,6 +22,8 @@ A person or an agent can go from clone to a paste-ready Bot without opening AGEN
 ```sh
 gb bootstrap --for-agent
 gb walk bots --paste hello-computer | pbcopy   # Linux: | xclip -sel c
+gb walk bots --paste research-desk | pbcopy
+gb walk bots --paste vendor-watch | pbcopy
 gb setup --persona first-hour
 ```
 
