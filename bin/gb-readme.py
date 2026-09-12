@@ -187,7 +187,12 @@ def _exported_trees() -> List[Tuple[str, str]]:
         if "/" in src_name or src_name.endswith((".md", ".json", ".sh", ".jpg")):
             continue
         why = next(
-            (a.value for a in reversed(args) if isinstance(a.value, str) and " " in a.value), ""
+            (
+                a.value
+                for a in reversed(args)
+                if isinstance(a.value, str) and " " in a.value
+            ),
+            "",
         )
         out.append((src_name, why))
     return sorted(set(out))
@@ -202,7 +207,9 @@ def measure() -> Facts:
     if not isinstance(codes, dict) or not codes:
         raise MeasureError("capabilities carried no exit_codes map")
     gate = _json([sys.executable, str(BIN / "gb-surface-gate.py"), "--json"], 600)
-    checks = [str(c.get("check")) for c in gate.get("checks", []) if isinstance(c, dict)]
+    checks = [
+        str(c.get("check")) for c in gate.get("checks", []) if isinstance(c, dict)
+    ]
     if not checks:
         raise MeasureError("the gate reported no checks")
     return Facts(
@@ -229,7 +236,7 @@ def render(f: Facts) -> str:
     a(BEGIN)
     a(WARN)
     a("")
-    a(f"## The verbs — {len(f.verbs)}")
+    a(f"## Command reference: the verbs ({len(f.verbs)})")
     a("")
     a(
         "Derived from `gb capabilities --json`. Each line is the verb's own docstring, so this "
@@ -245,7 +252,9 @@ def render(f: Facts) -> str:
 
     a("## Exit codes")
     a("")
-    a("Read from the CLI's own table. Every verb obeys it; the gate asserts agreement per fixture.")
+    a(
+        "Read from the CLI's own table. Every verb obeys it; the gate asserts agreement per fixture."
+    )
     a("")
     a("| code | meaning |")
     a("|---:|---|")
@@ -253,12 +262,12 @@ def render(f: Facts) -> str:
         a(f"| {k} | {f.exit_codes[k]} |")
     a("")
 
-    a(f"## The gate — {len(f.checks)} checks, {f.fixtures} fixtures")
+    a(f"## The gate: {len(f.checks)} checks, {f.fixtures} fixtures")
     a("")
     a(
         "`bin/gb-surface-gate.py` judges artifacts already on disk: pure stdlib, no network. "
         "Every check ships a known-bad fixture proven to make it RED, and "
-        "`--selftest --disable <check>` must FAIL for each one — a check with no exclusive "
+        "`--selftest --disable <check>` must FAIL for each one. A check with no exclusive "
         "known-bad is carried by the suite, not proven by it."
     )
     a("")
@@ -268,7 +277,7 @@ def render(f: Facts) -> str:
     a("```")
     a("")
 
-    a(f"## Producers that prove themselves — {len(f.selftests)}")
+    a(f"## Producers that prove themselves ({len(f.selftests)})")
     a("")
     a(
         "Each row was RUN to produce this table. A count here is the producer's own report, not "
@@ -286,7 +295,7 @@ def render(f: Facts) -> str:
     a(
         "The public tree ships the TOOLING, not the corpus. Directories below are inputs the "
         "verbs operate on. Measurements of one live account — and the scraped corpus, the "
-        "teaching-form analysis, and the claim set — are withheld, so the corpus-dependent "
+        "teaching-form analysis, and the claim set are withheld, so the corpus-dependent "
         "verbs refuse here by naming the command that fetches their input. "
         "`bin/gb-usecases.py` pulls its upstream without auth: build your own."
     )
@@ -314,13 +323,15 @@ def render(f: Facts) -> str:
     a(
         "The stamp exists because nothing else could catch a stale publish. `version` is a "
         "hand-edited constant that three files merely agree on, so a months-old export and "
-        "today's export produce identical metadata and `pip install -U` sees no upgrade — "
+        "today's export produce identical metadata and `pip install -U` sees no upgrade, "
         "and nothing could catch it. Two exports of different trees cannot agree on the "
         "derived stamp: a published mirror previously sat at 18 verbs, and it used to be "
         "undetectable."
     )
     a("")
-    a(f"<!-- generated {dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%d')} by `gb readme --write` -->")
+    a(
+        f"<!-- generated {dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%d')} by `gb readme --write` -->"
+    )
     a(END)
     return "\n".join(L)
 
@@ -361,12 +372,18 @@ def cmd_write(a: argparse.Namespace) -> int:
         print(f"  {TARGET.relative_to(ROOT)} already current")
         return 0
     gbtypes.atomic_write_text(TARGET, new)
-    outside_before = cur.replace(_derived_of(cur) or "", "") if _derived_of(cur) else cur
+    outside_before = (
+        cur.replace(_derived_of(cur) or "", "") if _derived_of(cur) else cur
+    )
     outside_after = new.replace(_derived_of(new) or "", "")
-    print(f"  wrote {TARGET.relative_to(ROOT)} — {len(facts.verbs)} verbs, "
-          f"{len(facts.checks)} checks, {facts.fixtures} fixtures, "
-          f"{len(facts.selftests)} selftests, {len(facts.trees)} trees")
-    print(f"  handwritten prose {'PRESERVED' if outside_before == outside_after else 'CHANGED — INSPECT'}")
+    print(
+        f"  wrote {TARGET.relative_to(ROOT)} — {len(facts.verbs)} verbs, "
+        f"{len(facts.checks)} checks, {facts.fixtures} fixtures, "
+        f"{len(facts.selftests)} selftests, {len(facts.trees)} trees"
+    )
+    print(
+        f"  handwritten prose {'PRESERVED' if outside_before == outside_after else 'CHANGED — INSPECT'}"
+    )
     return 0
 
 
@@ -388,13 +405,19 @@ def cmd_check(a: argparse.Namespace) -> int:
         return 0
     hl = _strip_generated_date(have).strip().splitlines()
     wl = _strip_generated_date(want).strip().splitlines()
-    print("gb-readme: STALE — the derived block disagrees with the running tool", file=sys.stderr)
+    print(
+        "gb-readme: STALE — the derived block disagrees with the running tool",
+        file=sys.stderr,
+    )
     shown = 0
     for i in range(max(len(hl), len(wl))):
         h = hl[i] if i < len(hl) else "(absent)"
         w = wl[i] if i < len(wl) else "(absent)"
         if h != w:
-            print(f"  line {i + 1}\n    file: {h[:100]}\n    live: {w[:100]}", file=sys.stderr)
+            print(
+                f"  line {i + 1}\n    file: {h[:100]}\n    live: {w[:100]}",
+                file=sys.stderr,
+            )
             shown += 1
             if shown >= 5:
                 print("  ... run `gb readme --write`", file=sys.stderr)
@@ -456,52 +479,81 @@ def selftest() -> int:
         if not ok:
             fails.append(label)
 
-    HAND = "# gb\n\nHandwritten hero.\n\n## What this is\n\nJudgement, voice, promises.\n"
+    HAND = (
+        "# gb\n\nHandwritten hero.\n\n## What this is\n\nJudgement, voice, promises.\n"
+    )
 
     # --- the property that matters most: handwritten prose survives ---
     first = splice(HAND, render(_facts()))
-    check(HAND.rstrip() in first, "the first splice did not preserve the handwritten head")
+    check(
+        HAND.rstrip() in first, "the first splice did not preserve the handwritten head"
+    )
     second = splice(first, render(_facts(verbs={"mirror": "Changed."})))
     outside = second[: second.index(BEGIN)] + second[second.index(END) + len(END) :]
     check(HAND.rstrip() in outside, "a re-splice ate handwritten prose")
-    check(second.count(BEGIN) == 1 and second.count(END) == 1, "splice duplicated the markers")
-    check("Changed." in second and "Read YOUR deployment." not in second,
-          "the re-splice did not replace the derived content")
+    check(
+        second.count(BEGIN) == 1 and second.count(END) == 1,
+        "splice duplicated the markers",
+    )
+    check(
+        "Changed." in second and "Read YOUR deployment." not in second,
+        "the re-splice did not replace the derived content",
+    )
 
     # --- prose BELOW the block survives too: a generator that only protects the head is half a
     #     guarantee, and "What it does not do" sits at the bottom of the real file
-    below = HAND + "\n" + render(_facts()) + "\n## What it does not do\n\nNot a clone.\n"
+    below = (
+        HAND + "\n" + render(_facts()) + "\n## What it does not do\n\nNot a clone.\n"
+    )
     again = splice(below, render(_facts(verbs={"x": "y"})))
-    check("## What it does not do" in again, "a re-splice ate the prose BELOW the block")
+    check(
+        "## What it does not do" in again, "a re-splice ate the prose BELOW the block"
+    )
     check("Not a clone." in again, "a re-splice ate trailing handwritten prose")
 
     # --- every derived number appears, and comes from the facts rather than a literal ---
     body = render(_facts())
-    check("## The verbs — 2" in body, "the verb count is not derived")
+    check("## Command reference: the verbs (2)" in body, "the verb count is not derived")
     check("55 fixtures" in body, "the fixture count is not derived")
     check("2 checks" in body, "the check count is not derived")
-    check("`gb mirror`" in body and "`gb triage`" in body, "a verb is missing from the table")
+    check(
+        "`gb mirror`" in body and "`gb triage`" in body,
+        "a verb is missing from the table",
+    )
     check("g1-a" in body and "g2-b" in body, "a check id is missing")
     check("69/69" in body, "a selftest count is missing")
     check("`templates/`" in body, "an exported tree is missing")
-    check("9p.abc123" not in body,
-          "the volatile build stamp must NOT be rendered — it would make the doc stale daily")
-    check("gb --version" in body, "the README must point at the command instead of the value")
+    check(
+        "9p.abc123" not in body,
+        "the volatile build stamp must NOT be rendered — it would make the doc stale daily",
+    )
+    check(
+        "gb --version" in body,
+        "the README must point at the command instead of the value",
+    )
     check("57 producers" in body, "the producer count is missing")
 
     # --- a multi-line docstring collapses to its first line, or the table breaks ---
     multi = render(_facts(verbs={"a": "First line.\n\nSecond paragraph."}))
-    check("| `gb a` | First line. |" in multi, "a multi-line docstring was not collapsed")
+    check(
+        "| `gb a` | First line. |" in multi, "a multi-line docstring was not collapsed"
+    )
     check("Second paragraph" not in multi, "a docstring body leaked into the table")
 
     # --- staleness detection, and the date must NOT count as drift ---
     b1 = render(_facts())
     b2 = b1.replace("generated 2026-01-01", "generated 2099-12-31")
-    check(_strip_generated_date(b1) == _strip_generated_date(b1), "date stripper is unstable")
+    check(
+        _strip_generated_date(b1) == _strip_generated_date(b1),
+        "date stripper is unstable",
+    )
     d1 = _strip_generated_date(render(_facts()))
     d2 = _strip_generated_date(render(_facts(fixtures=99)))
     check(d1 != d2, "a changed fixture count did NOT register as drift")
-    check(_derived_of(first) is not None, "the derived block is not locatable after a splice")
+    check(
+        _derived_of(first) is not None,
+        "the derived block is not locatable after a splice",
+    )
     check(_derived_of(HAND) is None, "a file with no markers reported a derived block")
 
     # --- measurement refuses rather than guessing ---
@@ -539,9 +591,15 @@ def build_parser() -> argparse.ArgumentParser:
         description="derive the public README's factual half from the running tool",
     )
     p.add_argument("--write", action="store_true", help="regenerate the derived block")
-    p.add_argument("--check", action="store_true", help="exit 1 if the derived block is stale")
-    p.add_argument("--json", action="store_true", help="the measured facts as an envelope")
-    p.add_argument("--selftest", action="store_true", help="inline fixtures, no network")
+    p.add_argument(
+        "--check", action="store_true", help="exit 1 if the derived block is stale"
+    )
+    p.add_argument(
+        "--json", action="store_true", help="the measured facts as an envelope"
+    )
+    p.add_argument(
+        "--selftest", action="store_true", help="inline fixtures, no network"
+    )
     return p
 
 

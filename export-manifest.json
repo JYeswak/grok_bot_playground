@@ -1,7 +1,7 @@
 {
  "schema": "gb-export-public/1",
  "tool": "gb-export-public",
- "exported_at": "2026-09-11T22:48:13-06:00",
+ "exported_at": "2026-09-11T23:19:29-06:00",
  "source_root": "grokbot",
  "file_count": 2668,
  "files": {
@@ -11,7 +11,7 @@
   "GATES.md": "5f9fc442a8766e2f3300dc3bb680c55b125a230826f52dd5e354d37edd54168a",
   "LICENSE": "0afa932ebeca3bdc7042b193408eef512ebd03f899fff00faef45d6be53342ce",
   "QUICKSTART.md": "cb9bbfc3a5b1150b6c717deec1f33a05471287f99bb12731406fab98b0e2b64b",
-  "README.md": "f351c8ba861542e22c3f2de88fa7043fa085cd16b7a1d4e15e83acae5205f3ac",
+  "README.md": "85d28fa8d434b14bf8cf88b4e8f11a80cf85025b091f1ad78e8b6d1091e41673",
   "bin/__init__.py": "5738b7e5608647f52e2e91246e4b604aceb6428eff90fcf2903d1e6f73ad2d7f",
   "bin/gb": "8b027d345514a8f9bfdca3a3eab28c8a96f4a2dafab81987ccd65498b5681aeb",
   "bin/gb-advise.py": "7323a3e4cd28eb266e81a03b70592190db8a65636d7762b10eb4a1486f431747",
@@ -54,7 +54,7 @@
   "bin/gb-plugin-validate.py": "c69b3b3bb072316c12955824ae257c6613dd6152006824791b80a4ed7da53bbc",
   "bin/gb-post.py": "800daea322e0a679099cb0bf45f8eab5baf79677faaf95d00c3ff5f838765289",
   "bin/gb-pull-inventory.py": "92dde0f751ae978862e3225f8c75a83f8ce3bf10f105e9819351a41a64ef1236",
-  "bin/gb-readme.py": "ed6fa3eae4fd95956290b1ab00d854944eedf3eb73487bd716e2ad09c401653d",
+  "bin/gb-readme.py": "7df83e8e63919de8a5779f67f64c1e9892a91e50b6d7559cd054ae85b27665dc",
   "bin/gb-rebuild-fleet.py": "f93fc3baacf40c92de5dff02c73146d26fa240565e22ad6eb9761ee83e3e722f",
   "bin/gb-record-inventory.py": "a727fbdf04adc99f2fc98ddfe70c689de4bf6ae398bd6b7f54e3a89990a242c7",
   "bin/gb-setup-persona.py": "c1e6e572d7828a3634ace0dddb90ada5040f8fcb40746f003c2e647b0ae8714a",
@@ -2670,9 +2670,9 @@
   "templates/workforce-check.json": "02c94f3d8d2f4ec35e82fa1b7e1d7dfa34d0f192509fc67409586c7dc37db6af",
   "templates/youtube-brief.json": "0e812be6eccdcfd5d89f006117a4ede8c5d62bac1c7607a82b85218f097e6620",
   "types-floor.json": "4119a4707f6cc54c8b6264967406dcfcc0b364cc422894f33205408646450e66",
-  "visual/HERO-PROMPT.md": "e4a5ec78106b140d67c2abd46e70a7081220c71d9c8e09cd3c9f97dc9aed1862",
-  "visual/hero-identity-grade.json": "954fae47598cdd3cab00125a56f205b7cad168c0b4fe75df4f52c50b12f39d78",
-  "visual/hero.jpg": "63922edf50b27b53a7770a3daf8476966a3aa628e375f334766ac4d3ae09ff07"
+  "visual/HERO-PROMPT.md": "031f23a2c37c165b7ea0674541455e919a18715186d29507b758ab3348a9f49f",
+  "visual/hero-identity-grade.json": "2be92b0e40a54e87372901ff2f55063769daef1a47978266c5ee700fbaf98b34",
+  "visual/hero.jpg": "288c271fd5275807cd24f84ff646b597fb13684ea5188d9e09f66ba93cb09d37"
  },
  "binary_not_text_scanned": [
   "visual/hero.jpg"
@@ -3154,9 +3154,7 @@
   ],
   "source_of_truth": "named files resolve from disk; allowlisted trees resolve from `git ls-files` only, so an unnamed working-tree file can never be exported"
  },
- "named_files_not_yet_tracked": [
-  "bin/gb-readme.py"
- ],
+ "named_files_not_yet_tracked": [],
  "skipped_in_allowlisted_trees": [],
  "named_exclusions": [
   {

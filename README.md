@@ -1,12 +1,12 @@
+# gb
+
 <p align="center">
   <img src="visual/hero.jpg" alt="gb — an operator CLI for a Grok Bot deployment" width="820">
 </p>
 
-<h1 align="center">gb</h1>
-
 <p align="center">
-  <em>One entry point for operating a Grok Bot deployment: what is wrong right now, is the
-  measuring apparatus itself healthy, and what command fixes it.</em>
+  <em>Set up, run and grow a Grok Bot deployment from one command, driven by a
+  person or by an agent, and never to claim anything it has not measured.</em>
 </p>
 
 <p align="center">
@@ -20,29 +20,45 @@ curl -fsSL https://raw.githubusercontent.com/JYeswak/grok_bot_playground/main/in
 ```
 
 ```console
-$ gb triage
-verdict GREEN · 25 checks · 0 not green
+$ gb mirror              # start here: reads YOUR fleet off this machine. No token, no network.
+  1  Bots                 13 in this machine's cache
+  3  Unschedulable        8 of 13 over 900 chars
+  5  Can interrupt you    0 of 13 have notifications on
 
-next:
-  gb health --json
-
-$ gb-walk cli            # a guided tour of the tool, running the read-only verbs live
-$ gb-walk bots           # the 12 Bots this repo proposes, and the charter to paste
+$ gb walk cli            # a guided tour, running the read-only verbs live
+$ gb walk bots           # the Bots this repo proposes, and the charter to paste
 ```
 
 ---
 
 ## What this is
 
-A Grok Bot deployment is a moving target: the vendor changes the surface, the account changes
-its entitlements, and the Bots, plugins and MCP servers you attached last month may or may not
-still be reachable. This repository is the instrument that watches it — twenty-odd producers
-that each measure one facet and write a dated artifact, a 25-check gate that judges the result,
-and `gb`, which is the surface that makes the family legible without reading `bin/`.
+Grok Bot gives you agents that keep working when you close the laptop. What it does not give
+you is a way to see the fleet as one thing: which Bots can act unattended, which charters have
+no approval boundary, which routines have never fired, and what the vendor changed under you
+last week. `gb` is that view, and the actions that follow from it.
 
-`gb` is deliberately thin. It does not reimplement a producer; it dispatches to them through a
-typed spine with a mandatory deadline and a bounded capture, and composes their JSON. Every
-producer stays independently runnable.
+It does three jobs:
+
+- **Set up.** Deploy a Bot from a reviewed charter, then send the one message that puts it on
+  a schedule, then confirm the routine by reading it back from the server rather than trusting
+  the reply. Every run writes a rollback manifest naming the Bots it created. Measured caveat:
+  deleting a Bot does **not** delete its routine record, so the manifest reverses the Bot and
+  not the schedule.
+- **Operate.** Read the account and the vendor surface, judge both against 25 checks, and say
+  which command fixes what is wrong.
+- **Grow.** Rank your fleet against a public corpus of real Bots, show what the strongest
+  builders do differently, and name the next thing worth adding.
+
+**Built for an agent as much as for a person.** Every verb takes `--json` and returns a
+schema-stamped envelope; exit codes are semantic, not cosmetic; `gb robot-docs` is a handbook
+written for a model rather than a human; and `gb capabilities --json` describes the whole
+surface so an agent can plan without reading `bin/`.
+
+**It refuses rather than guesses.** An unmeasured check is an error, never a pass. A verb with
+no data says which command produces it. Numbers ship with their denominators, and a claim whose
+command stops reproducing it is withdrawn rather than reworded. The tooling that enforces that
+is in this tree, not a promise in this file.
 
 ## Install
 
@@ -63,13 +79,13 @@ prints the exact plan and touches nothing.
 New here? **[QUICKSTART.md](QUICKSTART.md)** is the five-minute path: install, walk the CLI, walk
 the proposed Bots, paste one charter into your own Grok Bot, verify it fired.
 
-Python 3.9 or newer. **No required runtime dependencies** — the tool is stdlib only, and the
+Python 3.9 or newer. **No required runtime dependencies**: the tool is stdlib only, and the
 exporter that builds this tree resolves every import in it against the interpreter's standard
 library and refuses to publish a tree that reaches outside it.
 
 There is exactly one declared exception. `bin/gb-pull-inventory.py` decrypts the desktop's own
 safeStorage v10 blob, which needs AES-CBC, which the standard library does not provide. The
-import is deferred into the one function that decrypts — verified, not asserted: the exporter
+import is deferred into the one function that decrypts. Verified, not asserted: the exporter
 also refuses a tree where an optional dependency is imported at module level.
 
 ```sh
@@ -77,7 +93,7 @@ pipx install "grok-bot-ops[inventory] @ git+https://github.com/JYeswak/grok_bot_
 ```
 
 Two forms, one implementation: the console script runs the very same `bin/gb` the clone does.
-The difference is what is on disk around it — see [what it does not do](#what-it-does-not-do).
+The difference is what is on disk around it. See [what it does not do](#limitations-what-this-does-not-do).
 
 ```sh
 gb quickstart          # the orientation page
@@ -87,28 +103,28 @@ gb capabilities --json # the machine-readable contract
 
 ## Walk it
 
-`gb-walk` is a guided tour with two tracks, and it is the fastest way to understand either half
+`gb walk` is a guided tour with two tracks, and it is the fastest way to understand either half
 of this repository.
 
 ```sh
-gb-walk cli      # the tool: 11 stops covering every verb, in the order a new operator needs them
-gb-walk bots     # the 12 Bots this repo proposes, each with a charter you can paste
-gb-walk bots --paste routine-proof | pbcopy    # just the charter, clean
+gb walk cli      # the tool: 11 stops covering every verb, in the order a new operator needs them
+gb walk bots     # the 12 Bots this repo proposes, each with a charter you can paste
+gb walk bots --paste routine-proof | pbcopy    # just the charter, clean
 ```
 
 The `cli` track **runs the read-only verbs live** and shows their real output inline. It runs
-nothing that writes an artifact, mutates the account, or reaches the network — those print as
+nothing that writes an artifact, mutates the account, or reaches the network; those print as
 `[would run]` with the measured reason. Three verbs are in that second group despite descriptions
 that do not warn you, all measured 2026-09-11 by manifesting the tree before and after a tour:
 `gb setup` GETs `docs.x.ai`, `gb doctor` with no `--scope` probes your MCP servers and writes
 `mcp/<stamp>.json`, and `gb monitor` writes `monitor/<stamp>.json`. With those classified, a full
-`gb-walk cli` adds, removes and modifies zero files.
+`gb walk cli` adds, removes and modifies zero files.
 
-The `bots` track reads `templates/*.json` off disk — it carries no copies, so an empty or absent
+The `bots` track reads `templates/*.json` off disk and carries no copies, so an empty or absent
 `templates/` is reported as a failure with the fix rather than rendered as a tour of nothing.
 Both tracks take `--json`, `--step` (which never blocks in a pipe) and respect `NO_COLOR`.
 
-`templates/` travels with the repository and not inside the wheel, so `gb-walk bots` wants a
+`templates/` travels with the repository and not inside the wheel, so `gb walk bots` wants a
 clone. Run `install.sh` from one and the `gb-walk` launcher is pointed at it automatically.
 
 ## The Bots this repo proposes
@@ -121,7 +137,7 @@ The tiers are the argument. The deployment this was built against runs **ten dep
 with a median charter of **1,029 characters**, of which **2 have a routine and 0 have ever run**,
 and **0 memory shards carry content**. The 645 attributed Bots built by other people have a median
 charter of **625 characters** and **1.9 integrations** each. A narrow job can be scheduled because
-"run this job" is a sentence; a department cannot — which is exactly why no routine ever fired.
+"run this job" is a sentence; a department cannot, which is exactly why no routine ever fired.
 Tier A closes those two zeros, tier B narrows a department, tier C is corpus-proven.
 
 ```sh
@@ -139,7 +155,7 @@ still unverified.
      `gb readme --check` exits 1 when it drifts, and `gb-gatesdoc.py` fails on a stale count.
      Prose outside the markers is handwritten and this generator never touches it. -->
 
-## The verbs — 58
+## Command reference: the verbs (58)
 
 Derived from `gb capabilities --json`. Each line is the verb's own docstring, so this table cannot describe a verb the tool does not have, or miss one it does.
 
@@ -218,9 +234,9 @@ Read from the CLI's own table. Every verb obeys it; the gate asserts agreement p
 | 5 | REFUSED — a mutation was requested without the gate that permits it |
 | 130 | CANCELLED — SIGINT arrived; no partial artifact was written |
 
-## The gate — 25 checks, 55 fixtures
+## The gate: 25 checks, 55 fixtures
 
-`bin/gb-surface-gate.py` judges artifacts already on disk: pure stdlib, no network. Every check ships a known-bad fixture proven to make it RED, and `--selftest --disable <check>` must FAIL for each one — a check with no exclusive known-bad is carried by the suite, not proven by it.
+`bin/gb-surface-gate.py` judges artifacts already on disk: pure stdlib, no network. Every check ships a known-bad fixture proven to make it RED, and `--selftest --disable <check>` must FAIL for each one. A check with no exclusive known-bad is carried by the suite, not proven by it.
 
 ```
   g1-surface-fetch-integrity    g2-surface-canary             g3-snapshot-freshness
@@ -234,7 +250,7 @@ Read from the CLI's own table. Every verb obeys it; the gate asserts agreement p
   g25-routine-liveness
 ```
 
-## Producers that prove themselves — 28
+## Producers that prove themselves (29)
 
 Each row was RUN to produce this table. A count here is the producer's own report, not a promise made on its behalf.
 
@@ -260,6 +276,7 @@ Each row was RUN to produce this table. A count here is the producer's own repor
 | `bin/gb-post.py` | 45/45 |
 | `bin/gb-readme.py` | 25/25 |
 | `bin/gb-sources.py` | 13/13 |
+| `bin/gb-surface-gate.py` | 55/55 |
 | `bin/gb-teach.py` | 28/28 |
 | `bin/gb-templates.py` | 56/56 |
 | `bin/gb-triage-check.py` | 9/9 |
@@ -271,7 +288,7 @@ Each row was RUN to produce this table. A count here is the producer's own repor
 
 ## What travels in this tree
 
-The public tree ships the TOOLING, not the corpus. Directories below are inputs the verbs operate on. Measurements of one live account — and the scraped corpus, the teaching-form analysis, and the claim set — are withheld, so the corpus-dependent verbs refuse here by naming the command that fetches their input. `bin/gb-usecases.py` pulls its upstream without auth: build your own.
+The public tree ships the TOOLING, not the corpus. Directories below are inputs the verbs operate on. Measurements of one live account — and the scraped corpus, the teaching-form analysis, and the claim set are withheld, so the corpus-dependent verbs refuse here by naming the command that fetches their input. `bin/gb-usecases.py` pulls its upstream without auth: build your own.
 
 | directory | why it travels |
 |---|---|
@@ -287,26 +304,26 @@ The public tree ships the TOOLING, not the corpus. Directories below are inputs 
 gb --version      # version, a DERIVED build stamp, and the verb count
 ```
 
-This tree is **gb 1.0.0**, 58 verbs over 58 producers. The build STAMP is deliberately not printed here: it is a hash over every producer on disk, so it changes on any edit, and a generated document that carries a value which rots on every commit is a document that reports itself stale every day until everyone learns to ignore the alarm. The command is the current answer; this file is not.
+This tree is **gb 1.0.0**, 58 verbs over 60 producers. The build STAMP is deliberately not printed here: it is a hash over every producer on disk, so it changes on any edit, and a generated document that carries a value which rots on every commit is a document that reports itself stale every day until everyone learns to ignore the alarm. The command is the current answer; this file is not.
 
-The stamp exists because nothing else could catch a stale publish. `version` is a hand-edited constant that three files merely agree on, so a months-old export and today's export produce identical metadata and `pip install -U` sees no upgrade — and nothing could catch it. Two exports of different trees cannot agree on the derived stamp: a published mirror previously sat at 18 verbs, and it used to be undetectable.
+The stamp exists because nothing else could catch a stale publish. `version` is a hand-edited constant that three files merely agree on, so a months-old export and today's export produce identical metadata and `pip install -U` sees no upgrade, and nothing could catch it. Two exports of different trees cannot agree on the derived stamp: a published mirror previously sat at 18 verbs, and it used to be undetectable.
 
 <!-- generated 2026-09-12 by `gb readme --write` -->
 <!-- gb:derived:end -->
 
-## What it does not do
+## Limitations: what this does not do
 
 Stated rather than implied, because the gap between a tool and a running instance is where
 tools usually lie about themselves.
 
 - **It does not ship a deployment.** This tree is the INSTRUMENT. It contains no account, no
-  inventory, no deployment snapshot and no fleet specification — those are the operator's, and
+  inventory, no deployment snapshot and no fleet specification. Those are the operator's, and
   they were removed deliberately by an allowlist-driven exporter, not trimmed by hand.
 - **A fresh install has nothing to measure yet, and says so once.** `gb capabilities`,
   `gb platform`, `gb quickstart`, `gb examples`, `gb help`, `gb robot-docs`, `gb completion`
   and `gb info` answer immediately. `gb triage`, `gb doctor`, `gb health` and `gb work` read
   artifact roots that do not exist until you have run the producers. Measured on a fresh
-  clone: they print ONE route — `state: "UNCONFIGURED"`, `next_command: "gb setup --apply"` —
+  clone: they print ONE route (`state: "UNCONFIGURED"`, `next_command: "gb setup --apply"`)
   and exit `3`. They deliberately do NOT print one ERROR per unmeasured check: that was 22
   rows for one fact, indistinguishable from a broken tool. Branch on `.state` before
   `.verdict`; on an unconfigured root `verdict` is `null` on purpose, and an empty board is
@@ -318,11 +335,11 @@ tools usually lie about themselves.
 
   | status | platforms | what it means |
   |---|---|---|
-  | `SUPPORTED` | macOS | measured — every path and capability is read off a live install |
+  | `SUPPORTED` | macOS | measured: every path and capability is read off a live install |
   | `UNVERIFIED` | Windows, Linux | the client exists, but nobody here has run one. The support directory is inferred from Electron's `userData` rule (`%APPDATA%\Grok Bot`, `$XDG_CONFIG_HOME/Grok Bot`), the credential read and the scheduler install are `NOT_IMPLEMENTED`, and all four facts are reported rather than discovered |
   | `UNSUPPORTED` | iOS, Android | companion clients of a cloud computer: no local session, no support directory, nothing here to audit |
 
-  If the inferred path is wrong on your machine, `GB_SUPPORT_DIR=<path>` moves it — and does
+  If the inferred path is wrong on your machine, `GB_SUPPORT_DIR=<path>` moves it, and does
   not move the status, because pointing this tool at a directory does not verify an operating
   system. `gb platform --selftest` resolves six planted platforms from `fixtures/platform/`
   and proves the Windows and Linux branches are implemented and refuse honestly; it does not
@@ -333,11 +350,11 @@ tools usually lie about themselves.
   POSIX rather than weakened until it passes.
 - **`pip install` installs the CLI and the producers, not the corpus.** The gate's 55-case
   fixture corpus, the plugin manifest, the Bot template library and the hero art ship in this
-  repository but are not copied into `site-packages` — they are ~9 MB of material that grades
+  repository but are not copied into `site-packages`: they are ~9 MB of material that grades
   repository content, not a running deployment. `gb validate fixtures` and `gb validate
   plugin` therefore want a clone; `gb doctor` reports those two subsystems DOWN/DEGRADED on a
   bare install and says why. `templates/` is in the same position for the same reason, which is
-  why `gb-walk bots` names a clone as its remediation instead of walking an empty directory —
+  why `gb walk bots` names a clone as its remediation instead of walking an empty directory:
   and why `install.sh`, run from a clone, points the `gb-walk` launcher at that clone rather than
   at the wheel.
 - **Producers write beside the tool.** Every producer writes its artifact relative to the
@@ -350,6 +367,10 @@ tools usually lie about themselves.
   reports whether a server *would* be reachable, from configuration, without holding a key.
 - **It does not decide whether an answer is acceptable.** The gate raises the floor and makes
   the residue visible. The human remains the trust root.
+
+## About Contributions
+
+> *About Contributions:* Please don't take this the wrong way, but I do not accept outside contributions for any of my projects. I simply don't have the mental bandwidth to review anything, and it's my name on the thing, so I'm responsible for any problems it causes; thus, the risk-reward is highly asymmetric from my perspective. I'd also have to worry about other "stakeholders," which seems unwise for tools I mostly make for myself for free. Feel free to submit issues, and even PRs if you want to illustrate a proposed fix, but know I won't merge them directly. Instead, I'll have Claude or Codex review submissions via `gh` and independently decide whether and how to address them. Bug reports in particular are welcome. Sorry if this offends, but I want to avoid wasted time and hurt feelings. I understand this isn't in sync with the prevailing open-source ethos that seeks community contributions, but it's the only way I can move at this velocity and keep my sanity.
 
 ## License
 

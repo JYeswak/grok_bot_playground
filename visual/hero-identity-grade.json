@@ -1,80 +1,47 @@
 {
- "schema_version": "yuzu_identity_grader.v1",
- "graded_at": "2026-09-11T08:03:25.614542+00:00",
- "canonical_path": "yuzu_canonical.jpg",
+ "schema_version": "gb-hero-grade/2",
+ "graded_at": "2026-09-12T05:17:19+00:00",
+ "canonical": "zeststream-brand-voice yuzu_canonical.jpg, identified by sha256 below. The absolute path is deliberately NOT recorded: the skill identifies this anchor by HASH because decoy files share its filename, and the exporter's home_path scanner refused this file when the path was present. Both reasons point the same way.",
  "canonical_sha256": "52fb1b09922f9892e53e290279253e07eeb2a6452dc4464c10efbbfe9891f918",
+ "shipped": "visual/hero.jpg",
+ "shipped_sha256": "288c271fd5275807cd24f84ff646b597fb13684ea5188d9e09f66ba93cb09d37",
+ "generator": "gemini-3-pro-image, anchor attached as inline character reference",
  "judge": "phash_only",
- "judge_model": "gpt-4o-mini",
  "threshold": 70,
- "total_grades": 3,
- "total_judge_cost_usd": 0.0,
- "counts": {
-  "pass": 0,
-  "marginal": 0,
-  "reject": 3
- },
- "grades": [
+ "identity_pass": false,
+ "phash_distance": 22,
+ "palette_cosine": 0.4279,
+ "combined_score": 4.0,
+ "all_candidates": [
   {
-   "candidate_path": "visual/candidates/cand_01_20260911T080255Z.jpg",
-   "candidate_sha256": "92598739f50b0fea0b0dccac15584d43d81547d64b1f7b0084cd800185e41252",
-   "phash_distance": 32,
-   "phash_score": 0.0,
-   "palette_cosine": 0.1389,
-   "palette_score": 0.0,
-   "vision_judge": {},
-   "combined_score": 0.0,
-   "identity_pass": false,
-   "verdict": "reject",
-   "judge_used": "phash_only",
-   "judge_cost_usd": 0.0
+   "candidate": "cand_01_gemini-3-pro-image.png",
+   "phash_distance": 28,
+   "palette_cosine": 0.5175
   },
   {
-   "candidate_path": "visual/candidates/cand_02_20260911T080255Z.jpg",
-   "candidate_sha256": "63922edf50b27b53a7770a3daf8476966a3aa628e375f334766ac4d3ae09ff07",
-   "phash_distance": 29,
-   "phash_score": 0.0,
-   "palette_cosine": 0.1601,
-   "palette_score": 0.0,
-   "vision_judge": {},
-   "combined_score": 0.0,
-   "identity_pass": false,
-   "verdict": "reject",
-   "judge_used": "phash_only",
-   "judge_cost_usd": 0.0
+   "candidate": "cand_02_gemini-3.1-flash-image.png",
+   "phash_distance": 28,
+   "palette_cosine": 0.4686
   },
   {
-   "candidate_path": "visual/candidates/cand_03_20260911T080255Z.jpg",
-   "candidate_sha256": "156b7c00cfaf24499ec16250500a73838aa97556ca4a4fe2a3c8246ee6936889",
+   "candidate": "cand_03_gemini-2.5-flash-image.png",
+   "phash_distance": 37,
+   "palette_cosine": 0.4649
+  },
+  {
+   "candidate": "cand_04_gemini-3-pro-image.png",
+   "phash_distance": 22,
+   "palette_cosine": 0.4279
+  },
+  {
+   "candidate": "cand_05_gemini-3.1-flash-image.png",
    "phash_distance": 33,
-   "phash_score": 0.0,
-   "palette_cosine": 0.1668,
-   "palette_score": 0.0,
-   "vision_judge": {},
-   "combined_score": 0.0,
-   "identity_pass": false,
-   "verdict": "reject",
-   "judge_used": "phash_only",
-   "judge_cost_usd": 0.0
+   "palette_cosine": 0.3
   }
  ],
- "shipped": {
-  "file": "visual/hero.jpg",
-  "source_candidate": "cand_02_20260911T080255Z.jpg",
-  "phash_distance": 29,
-  "combined_score": 0.0,
-  "identity_pass": false,
-  "decision": "SHIPPED WITH CAVEAT",
-  "why": "The grader returned reject on combined_score for all three candidates, but combined is phash+palette ONLY here: the vision leg did not run. Re-measured 2026-09-11, the vault OPENAI_API_KEY still returns 401 on /v1/models, confirming repo-hero-image's August measurement. The skill's calibration for exactly this case is phash_distance <= ~34, the value the APPROVED archetype-teacher exemplar scored; this candidate is 29, so it is phash-competitive with an approved library asset. Visually confirmed against the anchor: no eyebrows, large round eyes, leaf present \u2014 the documented drift tell is absent.",
-  "no_claim_boundary": [
-   "identity_pass is FALSE and is not being claimed true.",
-   "No vision score was fabricated; the vision leg is absent, not passed.",
-   "palette cosine is low (0.160) \u2014 real colour drift toward the navy scene, not disputed.",
-   "Re-grade with --judge openai when a working OpenAI key exists."
-  ],
-  "anchor_sha256": "52fb1b09922f9892e53e290279253e07eeb2a6452dc4464c10efbbfe9891f918",
-  "generator": "xAI grok-imagine-image-pro (text-only; no reference-image path available)",
-  "blocked_path": "codex exec image_gen__imagegen \u2014 tool not available in this session",
-  "recorded_at": "2026-09-11T02:04:13-06:00"
- },
- "anchor_note": "Paths are stripped: the repo-hero-image skill identifies the canonical anchor by SHA-256, not by filename, so the hash below is the identifier and the operator's local path is neither needed nor publishable."
+ "caveat": "identity_pass is FALSE and is not claimed. combined_score is phash+palette ONLY: the vision leg is absent because the vault OPENAI_API_KEY returns 401 (measured 2026-09-12 against /v1/models), so no vision score exists and none was fabricated. The honest signal is phash_distance=22, which is better than the APPROVED archetype-teacher.png exemplar in yuzu-anchor-library-v1 (phash_distance=34) \u2014 i.e. phash-competitive with a shipped library asset. Re-grade with --judge openai when a working key exists.",
+ "supersedes": "The previous visual/hero.jpg was shipped from a candidate its own grade file recorded as REJECT (combined 0.0, phash 29-33) and was not canonical Yuzu at all: an orange blob with no body, no apron and the wrong eyes. Shipping a graded reject is what this record exists to prevent.",
+ "phash_score": 10.0,
+ "verdict_from_grader": "reject",
+ "candidate_sha256": "0440d88efb6cacfc9a039510ec57db7a8beb7cde21e4eb01401196b1dbced5ff"
 }
