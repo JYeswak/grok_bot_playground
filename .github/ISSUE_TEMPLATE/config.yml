@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Grok Bot Galaxy companion
+    url: https://github.com/JYeswak/grok_bot_playground/blob/main/GALAXY.md
+    about: Session-by-session paste map for the Sept 15–17 livestream
+  - name: Role picker
+    url: https://github.com/JYeswak/grok_bot_playground/blob/main/docs/ROLES.md
+    about: Which charter to paste for your seat, and which persona pack follows

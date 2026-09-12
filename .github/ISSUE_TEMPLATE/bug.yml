@@ -1,0 +1,29 @@
+name: Bug
+description: The tool ran and the answer is wrong, or it crashed
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: input
+    id: cmd
+    attributes:
+      label: Command
+      placeholder: gb triage
+    validations:
+      required: true
+  - type: input
+    id: exit
+    attributes:
+      label: Exit code
+      placeholder: "3"
+  - type: textarea
+    id: got
+    attributes:
+      label: What it printed
+    validations:
+      required: true
+  - type: textarea
+    id: want
+    attributes:
+      label: What it should have printed
+    validations:
+      required: true
