@@ -2529,6 +2529,10 @@ and refuses (exit 5) rather than leaving this root half-configured.
 
 CANCELLATION. Every command is safe to SIGINT: artifact writes are atomic, so you get either the
 old artifact or the new one, and the process exits 130.
+
+AGENT DROP FILES. A fresh clone carries CLAUDE.md and .cursor/rules/grok-bot.mdc: the 40-line
+contract (six commands, human-only steps, the four-product split). If you are an agent and you
+found this page first, read CLAUDE.md next — it is shorter and points back here.
 """)
     return EXIT_OK
 
@@ -3468,6 +3472,27 @@ def body() -> int:
             "exports of different trees cannot agree on it"
         )
         return EXIT_OK
+    # BARE `gb` ROUTES INSTEAD OF PRINTING THE 58-VERB WALL (measured 2026-09-12). A
+    # first-run operator typed `gb`, got a 6.3 KB usage dump on stderr and exit 2, and
+    # learned nothing — the turn never started. The zeroth verb now answers the same
+    # question `gb triage` answers on a configured root, and the same route `gb setup`
+    # offers on a fresh one. `-h`/`--help` still print the full manual; any other flag
+    # falls through to the parser so a typo keeps its usage error.
+    rest = [a for a in sys.argv[1:] if a not in ("--version", "-V")]
+    if not [a for a in rest if not a.startswith("-")] and not any(
+        a in ("-h", "--help") for a in rest
+    ):
+        if any(a != "--json" for a in rest):
+            name, args = parse_sub(
+                COMMANDS,
+                prog="gb",
+                description="gb — operate a live Grok Bot deployment.",
+            )
+            return HANDLERS[name](args)
+        st = instance_state()
+        if st.unconfigured:
+            return route_unconfigured("gb", "--json" in rest, st)
+        return cmd_triage(TriageArgs(check=None, json="--json" in rest))
     name, args = parse_sub(
         COMMANDS,
         prog="gb",

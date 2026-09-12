@@ -1,0 +1,17 @@
+---
+description: Working in a grok_bot_playground clone
+alwaysApply: true
+---
+
+Read `AGENTS.md` at the repo root first. It is the contract; this rule is only a pointer so it
+cannot drift out of sync with it.
+
+- `gb` measures a Grok Bot deployment and proposes Bots as pasteable text. It does not drive the
+  Grok Bot app, cannot sign in, and never asks for a credential.
+- Route from `gb capabilities --json`. Do not hardcode a verb list or read `bin/`.
+- Do not open with `gb triage`; it judges a configured deployment. Start at
+  `gb platform --json`, then `gb mirror`.
+- Exit 3 means a prerequisite is genuinely missing and the message names it. Corpus verbs
+  (`gb corpus`, `gb demand`, `gb findings`, `gb x`) refuse in a clone by design.
+- Grok Bot runs on a cloud VM and cannot reach a localhost MCP server. Cursor IDE can. They are
+  different products with different config.

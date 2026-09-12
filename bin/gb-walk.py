@@ -969,6 +969,125 @@ def paste(doc: Dict[str, Any], template_id: str) -> int:
     warn(f"no template with id {template_id!r}. Known ids: {known}")
     return 2
 
+# ---------------------------------------------------------------------------------------------
+# Role and livestream-seat filters — a desk, not the whole catalog.
+#
+# `--role <persona-id>` reads personas/<id>.json and walks only its bots[].template ids.
+# `--galaxy <seat>` reads galaxy-seats.json (the machine mirror of docs/ROLES.md's seat
+# table) and walks the seat's first paste plus its pack desk. Both fail CLOSED: an unknown
+# role/seat lists what exists (exit 2), and a seat row naming a template or pack that no
+# longer exists refuses (exit 2) instead of touring a stale desk. A filter that silently
+# passed a renamed id would paste yesterday's charter with today's confidence.
+# ---------------------------------------------------------------------------------------------
+def resolve_personas(
+    explicit: Optional[str],
+) -> Tuple[Optional[pathlib.Path], List[str]]:
+    """Find `personas/`. Same explicit-authoritative rule as resolve_templates."""
+    for source, value in (
+        ("--personas", explicit),
+        ("$GB_PERSONAS", os.environ.get("GB_PERSONAS")),
+    ):
+        if value:
+            named = pathlib.Path(value).expanduser()
+            return (named if named.is_dir() else None), [f"{named} (from {source})"]
+    here = pathlib.Path(__file__).resolve()
+    candidates = (
+        here.parents[1] / "personas",
+        pathlib.Path.cwd() / "personas",
+    )
+    looked: List[str] = []
+    for c in candidates:
+        looked.append(str(c))
+        if c.is_dir():
+            return c, looked
+    return None, looked
+
+
+def resolve_seats() -> Tuple[Optional[pathlib.Path], List[str]]:
+    """Find `galaxy-seats.json`. Release data, not user data: repo root, then cwd."""
+    here = pathlib.Path(__file__).resolve()
+    candidates = (
+        here.parents[1] / "galaxy-seats.json",
+        pathlib.Path.cwd() / "galaxy-seats.json",
+    )
+    looked = [str(c) for c in candidates]
+    for c in candidates:
+        if c.is_file():
+            return c, looked
+    return None, looked
+
+
+def load_persona_ids(
+    personas_dir: pathlib.Path, pack: str
+) -> Tuple[Optional[List[str]], str]:
+    """Template ids of one persona pack, or (None, error naming the packs that exist)."""
+    known = sorted(p.stem for p in personas_dir.glob("*.json"))
+    path = personas_dir / f"{pack}.json"
+    if not path.is_file():
+        return None, f"no persona pack {pack!r}. Known packs: {', '.join(known) or '(none)'}"
+    doc = read_json_capped(path)
+    if not isinstance(doc, dict) or not isinstance(doc.get("bots"), list):
+        return None, f"personas/{pack}.json has no bots[] list — not a pack file"
+    ids = [str(b.get("template")) for b in doc["bots"] if isinstance(b, dict) and b.get("template")]
+    return ids, ""
+
+
+def load_seat_row(
+    seats_file: pathlib.Path, seat: str
+) -> Tuple[Optional[Dict[str, Any]], str]:
+    """One galaxy seat row, or (None, error listing the seats that exist)."""
+    doc = read_json_capped(seats_file)
+    rows = doc.get("seats") if isinstance(doc, dict) else None
+    if not isinstance(rows, list):
+        return None, f"{seats_file.name} has no seats[] list — not a seats file"
+    for row in rows:
+        if isinstance(row, dict) and row.get("seat") == seat:
+            return row, ""
+    known = ", ".join(str(r.get("seat")) for r in rows if isinstance(r, dict))
+    return None, f"no livestream seat {seat!r}. Known seats: {known or '(none)'}"
+
+
+def check_seat_row(
+    row: Dict[str, Any], template_ids: List[str], personas_dir: Optional[pathlib.Path]
+) -> str:
+    """Fail-closed validation of one seat row. Returns '' when the row resolves."""
+    if row.get("first_paste") not in template_ids:
+        return (
+            f"seat {row.get('seat')!r} pastes {row.get('first_paste')!r}, which is not in "
+            f"templates/ — the seat map is stale, refusing rather than pasting yesterday's charter"
+        )
+    pack = row.get("pack")
+    if pack is not None and personas_dir is not None and not (personas_dir / f"{pack}.json").is_file():
+        return (
+            f"seat {row.get('seat')!r} names pack {pack!r}, which is not in personas/ — "
+            f"the seat map is stale"
+        )
+    return ""
+
+
+def render_seat(
+    row: Dict[str, Any],
+    desk: List[Dict[str, Any]],
+    first: Dict[str, Any],
+    ink: Ink,
+) -> None:
+    """The seat view: session header, first-paste charter, then the pack desk compactly."""
+    emit(ink.bold(f"Seat: {row.get('session')}  (day {row.get('day')}, {row.get('mdt')} MDT)"))
+    emit()
+    emit(f"  first paste   {first.get('id')} — paste the charter below, then add the routine")
+    emit(f"  charter       ({len(str(first.get('charter') or ''))} chars)")
+    for ln in _indent(str(first.get("charter") or "")):
+        emit(ln)
+    emit()
+    if row.get("pack") is not None:
+        emit(f"  the whole desk ({row.get('pack')}, {len(desk)} Bot(s)) — one line each:")
+        for t in desk:
+            emit(f"    {t.get('id')} — {t.get('job')}")
+        emit()
+        emit("  clipboard:  gb-walk.py bots --paste <id> | pbcopy")
+    emit(ink.bold("next"))
+    emit("  gb triage                                  then measure what the new Bot changed")
+
 
 # ---------------------------------------------------------------------------------------------
 # Selftest
@@ -1523,6 +1642,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="bots track: print ONLY that template's charter, for `| pbcopy`",
     )
     ap.add_argument(
+        "--role",
+        metavar="PACK",
+        help="bots track: walk only the desk in personas/<PACK>.json, not the catalog",
+    )
+    ap.add_argument(
+        "--galaxy",
+        metavar="SEAT",
+        help="bots track: walk one livestream seat (see galaxy-seats.json), first paste + desk",
+    )
+    ap.add_argument(
+        "--personas", metavar="DIR", help="where the persona pack files live"
+    )
+    ap.add_argument(
         "--templates", metavar="DIR", help="where the gb-template/1 files live"
     )
     ap.add_argument(
@@ -1554,19 +1686,88 @@ def body(argv: Optional[Sequence[str]] = None) -> int:
     ink = Ink(_colour_enabled(sys.stdout) and not args.json)
     interactive = sys.stdin.isatty() if hasattr(sys.stdin, "isatty") else False
 
-    if args.track == "bots":
+    if args.track == "bots" or args.role or args.galaxy:
         directory, looked = resolve_templates(args.templates)
         doc = walk_bots(directory=directory, looked=looked)
-        if args.paste:
-            if directory is None:
-                warn("no templates/ directory found; nothing to paste. Looked in:")
-                for p in looked:
+        if directory is None and (args.paste or args.role or args.galaxy):
+            warn("no templates/ directory found; nothing to show. Looked in:")
+            for p in looked:
+                warn(f"  {p}")
+            return 3
+        # Role/seat filters narrow the doc BEFORE paste/render, so --paste stays
+        # clipboard-clean and every screen below inherits the same desk.
+        seat_row = None
+        if args.role or args.galaxy:
+            pdir, plooked = resolve_personas(args.personas)
+            if pdir is None:
+                warn("no personas/ directory found. Looked in:")
+                for p in plooked:
                     warn(f"  {p}")
                 return 3
+            if args.galaxy:
+                sfile, slooked = resolve_seats()
+                if sfile is None:
+                    warn("no galaxy-seats.json found. Looked in:")
+                    for p in slooked:
+                        warn(f"  {p}")
+                    return 3
+                seat_row, err = load_seat_row(sfile, args.galaxy)
+                if seat_row is None:
+                    warn(err)
+                    return 2
+                stale = check_seat_row(
+                    seat_row,
+                    [str(t.get("id")) for t in doc["templates"]],
+                    pdir,
+                )
+                if stale:
+                    warn(stale)
+                    return 2
+            pack = args.role or (seat_row.get("pack") if seat_row else None)
+            if pack is None:
+                ids = [str(t.get("id")) for t in doc["templates"]
+                       if str(t.get("id")) == seat_row.get("first_paste")]
+                doc["filter"] = f"livestream seat {seat_row.get('seat')!r} (no pack — first paste only)"
+            else:
+                ids, err = load_persona_ids(pdir, pack)
+                if ids is None:
+                    warn(err)
+                    return 2
+                missing = [i for i in ids
+                           if i not in [str(t.get("id")) for t in doc["templates"]]]
+                if missing:
+                    warn(
+                        f"pack {pack!r} names template(s) not in templates/: "
+                        f"{', '.join(missing)} — refusing rather than touring a stale desk"
+                    )
+                    return 2
+                doc["filter"] = (
+                    f"livestream seat {seat_row.get('seat')!r} ({seat_row.get('session')})"
+                    if seat_row is not None
+                    else f"persona pack {pack!r}"
+                )
+            if seat_row is not None:
+                # The seat's first paste need not sit in the pack desk (eng-lead's desk
+                # has no galaxy-engineering) — capture it from the full shelf first.
+                doc["first"] = next(
+                    t for t in doc["templates"]
+                    if str(t.get("id")) == seat_row.get("first_paste")
+                )
+            doc["templates"] = [t for t in doc["templates"] if str(t.get("id")) in ids]
+            doc["count"] = len(doc["templates"])
+            doc["seat"] = seat_row
+        if args.paste:
             return paste(doc, args.paste)
         if args.json:
             print(json.dumps(doc, indent=1, default=str))
             return 0 if doc["count"] else 3
+        if seat_row is not None:
+            first = next(
+                t for t in doc["templates"]
+                if str(t.get("id")) == seat_row.get("first_paste")
+            )
+            render_seat(seat_row, doc["templates"], first, ink)
+            return 0
         return render_bots(doc, ink, step=args.step, interactive=interactive)
 
     cwd = pathlib.Path.cwd()

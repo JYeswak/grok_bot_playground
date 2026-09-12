@@ -1,10 +1,11 @@
 {
  "schema": "gb-export-public/1",
  "tool": "gb-export-public",
- "exported_at": "2026-09-12T00:22:32-06:00",
+ "exported_at": "2026-09-12T00:40:56-06:00",
  "source_root": "grokbot",
- "file_count": 2674,
+ "file_count": 2678,
  "files": {
+  ".cursor/rules/grok-bot.mdc": "a840d60dd92710cc4665b2f694be9682ffe29a4973119e443ff6f4eae438ed93",
   ".gitattributes": "5c444610c7b71c4c7c67e9901981f6ea484959cef6904d98017c3f42a67f9115",
   ".github/ISSUE_TEMPLATE/bug.yml": "d06098ae0c692b9c72ac9b2b8ec3ae526e5d637e00d4ea2b71cb9203444d6d03",
   ".github/ISSUE_TEMPLATE/config.yml": "bcb3c7d03c0c66f72ec428a2f58637e3af6efb22f5032291c143a15e8e14efcf",
@@ -12,13 +13,15 @@
   ".github/PULL_REQUEST_TEMPLATE.md": "4879bbd03af68fb0fc7c74a312f97490666d765463a965fad7e43049a2120975",
   ".github/workflows/ci.yml": "cd684e6bf6fe010bbd7860383988bba01464cd5a9d1a492f794cf7162bf4f609",
   ".gitignore": "ee1820e14425bb1811a0d01ea14def431aebb9c511687038db37de36455b1181",
+  "AGENTS.md": "0fabac7544122269125e649275419d4e16a5c30c05897e0100412224e259ce06",
+  "CLAUDE.md": "1565dd7daee25dedf4a8a68a2a65ddc560449a73fdaa079d2fb5135c3822cdd3",
   "GALAXY.md": "76d885dc85a8061bd2147a47efa4dd112f21d9112b7447be4a51d70820f46acd",
   "GATES.md": "5f9fc442a8766e2f3300dc3bb680c55b125a230826f52dd5e354d37edd54168a",
   "LICENSE": "0afa932ebeca3bdc7042b193408eef512ebd03f899fff00faef45d6be53342ce",
   "QUICKSTART.md": "186fd110f335de7c5f58239904aab6f39b2ac96e0203c3ae234a2ed9ec385f44",
   "README.md": "c9e660a34c691abaadee8673e1ba43a8c65d4f8858a3ba0cc6b23abc58dd5ab8",
   "bin/__init__.py": "5738b7e5608647f52e2e91246e4b604aceb6428eff90fcf2903d1e6f73ad2d7f",
-  "bin/gb": "7d10eddbe842a5777c49fa5f89862e6f14b2b92f95b38ded2ba24d0c11f50413",
+  "bin/gb": "cd1cda6b696e940fd4fdb0e3a05f8f60b90f607355ea4bd5c2999d580652d565",
   "bin/gb-advise.py": "7323a3e4cd28eb266e81a03b70592190db8a65636d7762b10eb4a1486f431747",
   "bin/gb-audit-remote.sh": "99ce2faee8a86dbcedef7b261ca317c7fa6f793793a7dbe63492573f85f0763d",
   "bin/gb-bench.py": "87961b1f526ea9f2648d2a5ab66051190bdd03f3787844dc49e3934fa5cc0d4c",
@@ -40,7 +43,7 @@
   "bin/gb-fleet.py": "cd237ba112474f750d9032a39929fdbf218b1c63aa68069e14b6f39641a09140",
   "bin/gb-galaxy.py": "a81b16fea9eaa55a0cd2d1ab976c84fcc49007bf60a839c33dda17d8c9e2c2a9",
   "bin/gb-gaps.py": "67b1f6c078167713e87b76e1bc1e5fd89bf6ad6ee6eba5da6ee6b3b354693985",
-  "bin/gb-gatesdoc.py": "3375a340022952c4220f46392384ef47b0c59018e524279c976e72f4f7bd433b",
+  "bin/gb-gatesdoc.py": "464f4285dc1c15375e53f8be578bbec172ed17d421eb8dd9bc7cfaae25d3f033",
   "bin/gb-github.py": "bf8aed6448ef52da96954eb2b94bf24b5c376e16c747cda786a8f37a6a2da610",
   "bin/gb-goldens.py": "9b2d1b5c9cf36925e21eea8c4a3e5874eb9dfe7b1d2e4314a1c0dfd8b3727af2",
   "bin/gb-group.py": "56d880c8d692ea3f4c02b7c50c1f97b2ce6b18b49f23623da1f68d2945433fc0",
@@ -75,7 +78,7 @@
   "bin/gb-typecheck.py": "a265a492fcd26153dcd18f28e5e665cb16d34f183f670e4a473ce88cbcc45e4f",
   "bin/gb-usecases.py": "d72632884b8c2db1f1b01dd549b50a4c83ecbcbced885450be00bbf264ad2ca5",
   "bin/gb-utilization.py": "0ede6adf4a7c8da621f792eb3b14109099cd5ba1c0ba1e700dff299f82bfca5b",
-  "bin/gb-walk.py": "b44df977f8ffed2308ff85d74df12cc9bef1bb1e5454ca5b7995e6c078c4370a",
+  "bin/gb-walk.py": "48b4fec0d296d604531dc3c550c549834d16adf40495b5343aa23bceb111491d",
   "bin/gb-weekly.sh": "9cc4a8155589c9715b2ce0111183cd707a4d7a3bf24ee49f9ec5a9d6ba8a9c55",
   "bin/gb-whatchanged.py": "422980fae899c7047efd4ed5c4f5d5ddf22f27aed256740dec142c2d3e552499",
   "bin/gb-x-sweep.py": "4ce7617b51f7e749dc88d2a52f8e89cc6d19ce21e9042126b2506a37073b1e60",
@@ -2530,21 +2533,22 @@
   "library/templates/experiment-readout/skills/readout/SKILL.md": "b4965689cfbb842ac37ed38aa0606850ab09aa709869a9c58216a61b0a743008",
   "library/templates/pdf-extract/bot.yaml": "272d4fd4c3ef6fec3bf5444e255faeb3b835b545efededf8ff13988b99853496",
   "library/templates/pdf-extract/skills/extract/SKILL.md": "5de6c0607900decb0c1288d47847242b13c195399a659a93bced83a52e4912d3",
-  "personas/eng-lead.json": "66c75f76e626a87d85c9c1ef6140404467512daf8955399e3503fdc6128717a3",
+  "personas/eng-lead.json": "909038ed2ad4837c59fa26b5e71d3d20b8a783bd44ed4ee420052e2c3f517a9e",
   "personas/exec-cos.json": "75775dd51519ea9a05e889d2dae84e03192c3ccbfdebc7a100230b6308845537",
   "personas/finance-ops.json": "72fc612eefe42d55b833dbda63f65944c092340e8d06f34252870e5409009b9a",
-  "personas/founder-operator.json": "ace902f17137c31e3f5e318ec77abb3a6050305895ca044cd107d2b15ffaa5b3",
+  "personas/founder-operator.json": "7b445fd79dc8870011e375e179d3804cbf2efe18971eb77a5f6a117be0abcc94",
   "personas/home-services-operator.json": "ef0076e941b863779ee5d34c3d7c61e1e26b6b6cb57b65aadf0bf92f93bd11af",
-  "personas/marketing-content.json": "15f504e923655f870ffad0c268a82e614b7cb0ce52854645056454fad25797d9",
+  "personas/marketing-content.json": "c3a85cdee3125770592a50caf89c6cbd6fcfa58c8d681cd63122d878ff4c84e3",
   "personas/personal-productivity.json": "923483a64cee4e012d86dcabf0d1c8e6778baa2aafcf6c56dd28a5dae6bbfe8a",
-  "personas/product-manager.json": "0fd2e737fa327c7c24f7c8866016120b42e14afe554582215f64049f261ae3f3",
+  "personas/product-manager.json": "94a1f8affa32b1cfc35ac4537718c9d33ecca17c9be9d93a290a53a4cf586e49",
   "personas/recruiter.json": "82026661d15ab30159847004ed04bd1db347502b0c645027b7f9aff5eb267405",
   "personas/researcher-analyst.json": "f3e83296d3bb528edf68940656ec35007a1acfe0d3c9ca484c480d4682fface9",
-  "personas/sales-outbound.json": "18663b98dc27d3c254d95dab58ed1b14ff52ec83d65e5d2f6b516336aa843ab7",
-  "personas/success-support.json": "97da773a1b7e7d9bfce5f8d45a9bfd7b052e8e9a2615cf684018431f937a5469",
-  "plugin/.cursor-plugin/plugin.json": "214e7a2f268f2e75f5182fb19048dc8280e5b82ec3d73699ed008e43caa0ee32",
+  "personas/sales-outbound.json": "99582c9c2c30f0ac283c491fddeae78ed6585c0d20850154faf97c2dd9d3329d",
+  "personas/success-support.json": "40dbfd8decf2863031e0f8575b5956cb5df846a86b30509b27423ca5f155fa9f",
+  "plugin/.cursor-plugin/plugin.json": "a6e0b9ce1746b5bbcf4d3a2781ab4d6b3659a5ffe582a810b7746c153dea7afb",
   "plugin/README.md": "2c674b43a42ae1d569469afe1f0e83a7c15599c82ca4f65a9e2998eb54b76ffe",
   "plugin/commands/setup.md": "896f7e07d3b2df3236d9938167708950023635975b32d5be4782be7185a3b223",
+  "plugin/marketplace-entry.json": "9d2bfdfc0bc6bd64279eafef50be15500529fb4867dd81616b6583aa2ba218b6",
   "plugin/skills/account-health-watch/SKILL.md": "9f5a103f5e2a813c92f3dbb9bc921d88aa36e0085adb797f1cd7627cda9a5b8d",
   "plugin/skills/aituber-pipeline/SKILL.md": "d92c8aa599f7b666c55ea0de14fe3254de33184bec337f2b9558c8a7f85f5bc6",
   "plugin/skills/alltools-fanout/SKILL.md": "9cfae6b4bb1dd3d3532f5fe74b5b9d4d47ed0858b67c4eef093c6075004b0863",
@@ -2774,6 +2778,21 @@
     "src": "packaging/gitignore",
     "dest": ".gitignore",
     "why": "ignore rules for the public tree"
+   },
+   {
+    "src": "packaging/AGENTS.public.md",
+    "dest": "AGENTS.md",
+    "why": "what an agent must read first"
+   },
+   {
+    "src": "packaging/CLAUDE.public.md",
+    "dest": "CLAUDE.md",
+    "why": "a pointer to AGENTS.md \u2014 one contract, never a second copy to drift"
+   },
+   {
+    "src": "packaging/cursor-rules-grok-bot.mdc",
+    "dest": ".cursor/rules/grok-bot.mdc",
+    "why": "the same pointer, in Cursor's native rule location"
    },
    {
     "src": "packaging/grok_bot_ops/__init__.py",
@@ -3191,7 +3210,9 @@
   "source_of_truth": "named files resolve from disk; allowlisted trees resolve from `git ls-files` only, so an unnamed working-tree file can never be exported"
  },
  "named_files_not_yet_tracked": [],
- "skipped_in_allowlisted_trees": [],
+ "skipped_in_allowlisted_trees": [
+  "plugin/install-local.sh"
+ ],
  "named_exclusions": [
   {
    "what": "visual/candidates/",

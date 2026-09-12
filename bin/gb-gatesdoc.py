@@ -76,7 +76,17 @@ EXPORTER = BIN / "gb-export-public.py"
 # The two docs a stranger meets first. If the exporter ever stops shipping either of them
 # the scan set would silently shrink and this check would pass by scanning nothing, so the
 # derived set is held against this positive control.
-REQUIRED_DOCS: Tuple[str, ...] = ("packaging/README.public.md", "QUICKSTART.md")
+# `packaging/AGENTS.public.md` joined this list on 2026-09-12. Until that day a clone carried NO
+# agent file at all — not AGENTS.md, not CLAUDE.md, not .cursorrules, not .cursor/ — because the
+# only AGENTS.md in the project is the 51 kB operator manual, excluded by name for containing one
+# account's measurements. An agent landing in a clone greps for AGENTS.md, finds nothing, and
+# invents a plan out of `bin/`. Listing it here means dropping it from the exporter is a FAILURE
+# rather than a quiet regression, exactly as it already is for the README.
+REQUIRED_DOCS: Tuple[str, ...] = (
+    "packaging/README.public.md",
+    "QUICKSTART.md",
+    "packaging/AGENTS.public.md",
+)
 
 ENFORCED = "enforced"
 ADVISORY = "advisory"
@@ -739,6 +749,64 @@ def _read(src: str) -> Optional[str]:
     return path.read_text()
 
 
+REAL_REPO = "grok_bot_playground"
+
+
+def _manifest_url_problems() -> List[str]:
+    """Every plugin manifest's URL fields must point at the repository this project publishes.
+
+    Measured 2026-09-12: `plugin/.cursor-plugin/plugin.json` had `homepage` and `repository`
+    both set to `github.com/JYeswak/grok-bot-gap-kit`, which returns 404 — it does not exist.
+    Anyone who loaded the plugin and clicked through landed nowhere, and no gate compared a
+    manifest URL against the real remote, so it shipped.
+
+    It checks the URL-BEARING FIELDS, not the file text. The first draft of this rule was a
+    substring scan for the dead slug over the whole manifest, and it fired on `"name":
+    "grok-bot-gap-kit"` — which is the plugin's own identifier and is not a URL and is not
+    broken. A rule that flags a correct line teaches people to delete the rule. Narrowed the
+    same hour it was written.
+
+    Offline by construction: it cannot prove a URL resolves, only that no field points at the
+    slug that measurably did not, and that a home is named at all.
+    """
+    out: List[str] = []
+    manifests = sorted(ROOT.glob("plugin/.*-plugin/plugin.json"))
+    if not manifests:
+        # An empty scan set is never a pass — the rule the rest of this file lives by.
+        return [
+            "no plugin manifest under plugin/.*-plugin/ — the URL check scanned nothing"
+        ]
+    for mf in manifests:
+        rel = mf.relative_to(ROOT)
+        try:
+            doc = json.loads(mf.read_text())
+        except (OSError, ValueError) as e:
+            out.append(
+                f"{rel} is not readable JSON ({e}) — a manifest an app cannot parse"
+            )
+            continue
+        urls = {
+            k: v
+            for k, v in doc.items()
+            if k in ("homepage", "repository", "bugs", "url")
+        }
+        if not urls:
+            out.append(
+                f"{rel} declares no homepage or repository — a manifest with no home"
+            )
+            continue
+        for field, value in sorted(urls.items()):
+            text = value if isinstance(value, str) else json.dumps(value)
+            if "grok-bot-gap-kit" in text:
+                out.append(
+                    f"{rel} {field} points at `grok-bot-gap-kit`, which returns 404 — "
+                    f"point it at `{REAL_REPO}`"
+                )
+            elif REAL_REPO not in text:
+                out.append(f"{rel} {field} does not name `{REAL_REPO}`: {text[:60]}")
+    return out
+
+
 def main(argv: Sequence[str]) -> int:
     if "--help" in argv or "-h" in argv:
         print(__doc__)
@@ -758,6 +826,7 @@ def main(argv: Sequence[str]) -> int:
 
     gate = load_gate()
     problems, code_ids, version = normative_problems(DOC.read_text(), gate)
+    problems.extend(_manifest_url_problems())
 
     docs = shipped_root_docs(EXPORTER.read_text())
     missing = [d for d in REQUIRED_DOCS if d not in {src for src, _ in docs}]

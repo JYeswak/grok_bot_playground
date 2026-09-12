@@ -1,21 +1,21 @@
 {
- "name": "grok-bot-gap-kit",
- "version": "0.1.0",
- "description": "Capabilities the Grok Bot catalog does not have: a statistics desk that computes on the Bot's own machine, a document extractor with provenance, and a weekly self-audit of your own deployment. Measured 2026-09-11: 0 of 322 catalog plugins cover statistics, OCR or retrieval.",
- "author": {
-  "name": "Joshua Nowak"
- },
- "homepage": "https://github.com/JYeswak/grok-bot-gap-kit",
- "repository": "https://github.com/JYeswak/grok-bot-gap-kit",
- "license": "MIT",
- "keywords": [
-  "experiment-readout",
-  "document-extraction",
-  "grok-bot-audit",
-  "capability-delta"
- ],
- "variables": {
-  "type": "object",
-  "properties": {}
- }
+  "name": "grok-bot-playground",
+  "version": "0.1.0",
+  "description": "Capabilities the Grok Bot catalog does not have: a statistics desk that computes on the Bot's own machine, a document extractor with provenance, and a weekly self-audit of your own deployment. Measured 2026-09-11: 0 of 322 catalog plugins cover statistics, OCR or retrieval.",
+  "author": {
+    "name": "Joshua Nowak"
+  },
+  "homepage": "https://github.com/JYeswak/grok_bot_playground",
+  "repository": "https://github.com/JYeswak/grok_bot_playground",
+  "license": "MIT",
+  "keywords": [
+    "experiment-readout",
+    "document-extraction",
+    "grok-bot-audit",
+    "capability-delta"
+  ],
+  "variables": {
+    "type": "object",
+    "properties": {}
+  }
 }
