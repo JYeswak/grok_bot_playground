@@ -10,6 +10,20 @@ API for Bots, routines are read-only over the API, and there is no connector-ins
 last step of every proposal here is a human in the app, on purpose, not as a limitation we hope to
 remove later.
 
+**Here for Galaxy week (Sept 15-17)? Start here instead.** Find your session in
+[GALAXY.md](GALAXY.md), then run the three lines under *Install* below and paste one charter:
+
+```sh
+gb walk bots --paste routine-proof | pbcopy   # Linux: | xclip -sel c
+```
+
+`routine-proof` is the Bot to start with whatever your role, because it answers the one
+question nobody can answer yet: it posts a single dated line once a week, so if the line
+appears, scheduled runs fire on your account, and if it never appears, the Bot is fine and the
+routine never ran. Swap the id for the one your session uses, or install the whole desk with
+`gb setup --persona <pack>`; [docs/ROLES.md](docs/ROLES.md) maps every pack to its templates.
+The rest of this page is the operator path, and it keeps.
+
 Two things you will actually do in the next five minutes:
 
 1. get the CLI, and walk it
@@ -91,14 +105,22 @@ Useful flags: `--step` pages one stop at a time (and never blocks in a pipe), `-
 clipping long output at 14 lines, `--json` gives you the whole tour as data, and `NO_COLOR=1`
 strips every escape.
 
-Then type the one verb you will actually use tomorrow:
+Then type the one verb that works before you have configured anything:
 
 ```sh
-gb triage
+gb mirror
 ```
 
-On a fresh clone it answers `UNCONFIGURED` and exits 3 — that is the tool telling you it has
-nothing to judge yet, not a failure. `gb setup` shows you the plan; `gb setup --apply` does it.
+It reads the Grok Bot desktop client's own state off this machine — no token, no network, no
+account setup — and answers in **0.18s** with six ranked findings about *your* fleet: how many
+Bots are cached, how your charter length sits against a 487-builder corpus, how many Bots are
+unschedulable, and which uuids exist on disk that the roster does not list. Measured 2026-09-12
+on a clean run.
+
+`gb triage` is the second stop, not the first. It judges a configured deployment, so on a fresh
+clone it answers `UNCONFIGURED` and exits 3 — the tool telling you it has nothing to judge yet,
+not a failure. `gb setup` shows you the plan; `gb setup --apply` does it. Once that has run,
+`gb triage` becomes the verb you use every day.
 
 ---
 

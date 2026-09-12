@@ -513,7 +513,9 @@ def selftest() -> int:
 
     # --- every derived number appears, and comes from the facts rather than a literal ---
     body = render(_facts())
-    check("## Command reference: the verbs (2)" in body, "the verb count is not derived")
+    check(
+        "## Command reference: the verbs (2)" in body, "the verb count is not derived"
+    )
     check("55 fixtures" in body, "the fixture count is not derived")
     check("2 checks" in body, "the check count is not derived")
     check(

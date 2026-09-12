@@ -43,5 +43,13 @@
  "supersedes": "The previous visual/hero.jpg was shipped from a candidate its own grade file recorded as REJECT (combined 0.0, phash 29-33) and was not canonical Yuzu at all: an orange blob with no body, no apron and the wrong eyes. Shipping a graded reject is what this record exists to prevent.",
  "phash_score": 10.0,
  "verdict_from_grader": "reject",
- "candidate_sha256": "0440d88efb6cacfc9a039510ec57db7a8beb7cde21e4eb01401196b1dbced5ff"
+ "candidate_sha256": "0440d88efb6cacfc9a039510ec57db7a8beb7cde21e4eb01401196b1dbced5ff",
+ "human_approval": {
+  "approved": true,
+  "approved_at": "2026-09-12T05:30:15+00:00",
+  "approver": "Joshua",
+  "scope": "ship visual/hero.jpg as-is",
+  "what_was_approved_over": "The grader's machine verdict on this file is 'reject' and identity_pass is false, because the vision leg could not run (OPENAI_API_KEY 401). This field records that a human looked at the image and approved it anyway. It does NOT upgrade the machine verdict: phash_distance stays 22, identity_pass stays false, verdict_from_grader stays 'reject'. A human approval is a separate fact from a measurement, and overwriting the measurement with it would destroy the only signal that can catch the next drift.",
+  "also_declined": "Offered to composite real `gb triage` terminal output into the screen instead of the model-generated status rows. Declined: the rendered rows are decoration, and that is accepted rather than unnoticed."
+ }
 }

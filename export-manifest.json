@@ -1,17 +1,22 @@
 {
  "schema": "gb-export-public/1",
  "tool": "gb-export-public",
- "exported_at": "2026-09-11T23:19:29-06:00",
+ "exported_at": "2026-09-11T23:48:29-06:00",
  "source_root": "grokbot",
- "file_count": 2668,
+ "file_count": 2674,
  "files": {
   ".gitattributes": "5c444610c7b71c4c7c67e9901981f6ea484959cef6904d98017c3f42a67f9115",
+  ".github/ISSUE_TEMPLATE/bug.yml": "d06098ae0c692b9c72ac9b2b8ec3ae526e5d637e00d4ea2b71cb9203444d6d03",
+  ".github/ISSUE_TEMPLATE/config.yml": "bcb3c7d03c0c66f72ec428a2f58637e3af6efb22f5032291c143a15e8e14efcf",
+  ".github/ISSUE_TEMPLATE/ux.yml": "1066bc68b6517ea605e3054507cd31b2142fb036b23ede2ba27c84df1a7bd3d6",
+  ".github/PULL_REQUEST_TEMPLATE.md": "4879bbd03af68fb0fc7c74a312f97490666d765463a965fad7e43049a2120975",
   ".github/workflows/ci.yml": "cd684e6bf6fe010bbd7860383988bba01464cd5a9d1a492f794cf7162bf4f609",
   ".gitignore": "ee1820e14425bb1811a0d01ea14def431aebb9c511687038db37de36455b1181",
+  "GALAXY.md": "76d885dc85a8061bd2147a47efa4dd112f21d9112b7447be4a51d70820f46acd",
   "GATES.md": "5f9fc442a8766e2f3300dc3bb680c55b125a230826f52dd5e354d37edd54168a",
   "LICENSE": "0afa932ebeca3bdc7042b193408eef512ebd03f899fff00faef45d6be53342ce",
-  "QUICKSTART.md": "cb9bbfc3a5b1150b6c717deec1f33a05471287f99bb12731406fab98b0e2b64b",
-  "README.md": "85d28fa8d434b14bf8cf88b4e8f11a80cf85025b091f1ad78e8b6d1091e41673",
+  "QUICKSTART.md": "186fd110f335de7c5f58239904aab6f39b2ac96e0203c3ae234a2ed9ec385f44",
+  "README.md": "27cb57f3193d9b85cfa84293858d4b10b356fd2e978e10a200bc883dc2f22778",
   "bin/__init__.py": "5738b7e5608647f52e2e91246e4b604aceb6428eff90fcf2903d1e6f73ad2d7f",
   "bin/gb": "8b027d345514a8f9bfdca3a3eab28c8a96f4a2dafab81987ccd65498b5681aeb",
   "bin/gb-advise.py": "7323a3e4cd28eb266e81a03b70592190db8a65636d7762b10eb4a1486f431747",
@@ -54,7 +59,7 @@
   "bin/gb-plugin-validate.py": "c69b3b3bb072316c12955824ae257c6613dd6152006824791b80a4ed7da53bbc",
   "bin/gb-post.py": "800daea322e0a679099cb0bf45f8eab5baf79677faaf95d00c3ff5f838765289",
   "bin/gb-pull-inventory.py": "92dde0f751ae978862e3225f8c75a83f8ce3bf10f105e9819351a41a64ef1236",
-  "bin/gb-readme.py": "7df83e8e63919de8a5779f67f64c1e9892a91e50b6d7559cd054ae85b27665dc",
+  "bin/gb-readme.py": "ce5af72c9f534d8cbe910d852ace198e1d289a834a5c9c07f9cb63a9aec6c5fc",
   "bin/gb-rebuild-fleet.py": "f93fc3baacf40c92de5dff02c73146d26fa240565e22ad6eb9761ee83e3e722f",
   "bin/gb-record-inventory.py": "a727fbdf04adc99f2fc98ddfe70c689de4bf6ae398bd6b7f54e3a89990a242c7",
   "bin/gb-setup-persona.py": "c1e6e572d7828a3634ace0dddb90ada5040f8fcb40746f003c2e647b0ae8714a",
@@ -80,6 +85,7 @@
   "bin/gbrpc.py": "d55529e26b05045723c5ecf78585e83b9553f6adea0a8af8f267460d7eb53549",
   "bin/gbtypes-selftest.py": "4ff29c30c02b73e93db546e8f79620790390122d30748c19d070ea31d321dc8e",
   "bin/gbtypes.py": "cbe1452eeff2e34956e252ec7872199a04ce775748da995518245bc153d8ebf9",
+  "docs/ROLES.md": "015daf28344c6e77f7fa12fb524aa4166766bb322c634f1f16f1b3f8393e65af",
   "fixtures/bad-archive-stale/README.md": "ac6d66fad012b667db52c12dea33f04c573d6a138f321823d42a1f833b72ee56",
   "fixtures/bad-archive-stale/archive/2026-08-01T0600.json": "05133b3c694be6310e333d7f1caca09dbc39516644d05e1f3b605499b06345b8",
   "fixtures/bad-archive-stale/coverage-floor.json": "8e1222b274c89c76d9673bab6ab028da76b3ab7f65885177053d371df00c3f00",
@@ -2671,7 +2677,7 @@
   "templates/youtube-brief.json": "0e812be6eccdcfd5d89f006117a4ede8c5d62bac1c7607a82b85218f097e6620",
   "types-floor.json": "4119a4707f6cc54c8b6264967406dcfcc0b364cc422894f33205408646450e66",
   "visual/HERO-PROMPT.md": "031f23a2c37c165b7ea0674541455e919a18715186d29507b758ab3348a9f49f",
-  "visual/hero-identity-grade.json": "2be92b0e40a54e87372901ff2f55063769daef1a47978266c5ee700fbaf98b34",
+  "visual/hero-identity-grade.json": "75ae722121693b3527f4a6f91ca4770257804e255896dc918f161d0f03a5a145",
   "visual/hero.jpg": "288c271fd5275807cd24f84ff646b597fb13684ea5188d9e09f66ba93cb09d37"
  },
  "binary_not_text_scanned": [
@@ -2723,6 +2729,36 @@
     "src": "types-floor.json",
     "dest": "types-floor.json",
     "why": "the strict-typing ratchet g23 enforces"
+   },
+   {
+    "src": "GALAXY.md",
+    "dest": "GALAXY.md",
+    "why": "the session -> paste -> pack picker for Galaxy week"
+   },
+   {
+    "src": "docs/ROLES.md",
+    "dest": "docs/ROLES.md",
+    "why": "every persona pack bound to the template ids it actually installs"
+   },
+   {
+    "src": ".github/PULL_REQUEST_TEMPLATE.md",
+    "dest": ".github/PULL_REQUEST_TEMPLATE.md",
+    "why": "the PR template, which states the no-outside-contributions posture up front"
+   },
+   {
+    "src": ".github/ISSUE_TEMPLATE/bug.yml",
+    "dest": ".github/ISSUE_TEMPLATE/bug.yml",
+    "why": "bug report form"
+   },
+   {
+    "src": ".github/ISSUE_TEMPLATE/ux.yml",
+    "dest": ".github/ISSUE_TEMPLATE/ux.yml",
+    "why": "first-run friction form \u2014 the report this repo most wants"
+   },
+   {
+    "src": ".github/ISSUE_TEMPLATE/config.yml",
+    "dest": ".github/ISSUE_TEMPLATE/config.yml",
+    "why": "issue chooser config"
    },
    {
     "src": "packaging/pyproject.toml",
@@ -3154,7 +3190,13 @@
   ],
   "source_of_truth": "named files resolve from disk; allowlisted trees resolve from `git ls-files` only, so an unnamed working-tree file can never be exported"
  },
- "named_files_not_yet_tracked": [],
+ "named_files_not_yet_tracked": [
+  ".github/ISSUE_TEMPLATE/bug.yml",
+  ".github/ISSUE_TEMPLATE/config.yml",
+  ".github/ISSUE_TEMPLATE/ux.yml",
+  ".github/PULL_REQUEST_TEMPLATE.md",
+  "docs/ROLES.md"
+ ],
  "skipped_in_allowlisted_trees": [],
  "named_exclusions": [
   {

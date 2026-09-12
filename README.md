@@ -15,6 +15,27 @@
   <img alt="zero required runtime dependencies" src="https://img.shields.io/badge/required%20deps-0-black">
 </p>
 
+**Here for Grok Bot Galaxy (Sept 15-17)?** Skip the manifesto below. Pick your seat in
+[GALAXY.md](GALAXY.md), paste one charter, and watch it fire.
+
+| I am a... | Paste this Bot | Or install the whole desk |
+|---|---|---|
+| New to Grok Bot | `routine-proof` | |
+| Founder | `morning-briefing` | `gb setup --persona founder-operator` |
+| Engineer | `galaxy-engineering` | `gb setup --persona eng-lead` |
+| Product manager | `vendor-watch` | `gb setup --persona product-manager` |
+| Sales / SDR | `galaxy-sdr-desk` | `gb setup --persona sales-outbound` |
+| Support / post-sales | `first-reply-desk` | `gb setup --persona success-support` |
+| Marketing / marketing ops | `galaxy-marketing-ops` | `gb setup --persona marketing-content` |
+
+Every id above is a real template in this tree and every persona is a real pack;
+[docs/ROLES.md](docs/ROLES.md) binds each pack to the ids it installs. `gb setup` prints its
+plan and changes nothing until you add `--apply`.
+
+**Honest limit, stated before you start:** the paste path does not create a Bot for you.
+Routines and connectors are still configured in the Grok Bot app. `gb` will not sign in as you
+and will not send as you.
+
 ```sh
 curl -fsSL https://raw.githubusercontent.com/JYeswak/grok_bot_playground/main/install.sh | bash
 ```
@@ -25,6 +46,7 @@ $ gb mirror              # start here: reads YOUR fleet off this machine. No tok
   3  Unschedulable        8 of 13 over 900 chars
   5  Can interrupt you    0 of 13 have notifications on
 
+$ gb walk bots --paste routine-proof | pbcopy   # Linux: | xclip -sel c
 $ gb walk cli            # a guided tour, running the read-only verbs live
 $ gb walk bots           # the Bots this repo proposes, and the charter to paste
 ```
@@ -250,7 +272,7 @@ Read from the CLI's own table. Every verb obeys it; the gate asserts agreement p
   g25-routine-liveness
 ```
 
-## Producers that prove themselves (29)
+## Producers that prove themselves (30)
 
 Each row was RUN to produce this table. A count here is the producer's own report, not a promise made on its behalf.
 
@@ -272,12 +294,13 @@ Each row was RUN to produce this table. A count here is the producer's own repor
 | `bin/gb-inventory.py` | 59/59 |
 | `bin/gb-links.py` | 77/77 |
 | `bin/gb-mirror.py` | 69/69 |
+| `bin/gb-plugin-conformance.py` | pass |
 | `bin/gb-plugin-validate.py` | pass |
 | `bin/gb-post.py` | 45/45 |
 | `bin/gb-readme.py` | 25/25 |
 | `bin/gb-sources.py` | 13/13 |
-| `bin/gb-surface-gate.py` | 55/55 |
 | `bin/gb-teach.py` | 28/28 |
+| `bin/gb-template-conformance.py` | 24/24 |
 | `bin/gb-templates.py` | 56/56 |
 | `bin/gb-triage-check.py` | 9/9 |
 | `bin/gb-usecases.py` | 16/16 |
@@ -304,7 +327,7 @@ The public tree ships the TOOLING, not the corpus. Directories below are inputs 
 gb --version      # version, a DERIVED build stamp, and the verb count
 ```
 
-This tree is **gb 1.0.0**, 58 verbs over 60 producers. The build STAMP is deliberately not printed here: it is a hash over every producer on disk, so it changes on any edit, and a generated document that carries a value which rots on every commit is a document that reports itself stale every day until everyone learns to ignore the alarm. The command is the current answer; this file is not.
+This tree is **gb 1.0.0**, 58 verbs over 65 producers. The build STAMP is deliberately not printed here: it is a hash over every producer on disk, so it changes on any edit, and a generated document that carries a value which rots on every commit is a document that reports itself stale every day until everyone learns to ignore the alarm. The command is the current answer; this file is not.
 
 The stamp exists because nothing else could catch a stale publish. `version` is a hand-edited constant that three files merely agree on, so a months-old export and today's export produce identical metadata and `pip install -U` sees no upgrade, and nothing could catch it. Two exports of different trees cannot agree on the derived stamp: a published mirror previously sat at 18 verbs, and it used to be undetectable.
 
@@ -316,6 +339,11 @@ The stamp exists because nothing else could catch a stale publish. `version` is 
 Stated rather than implied, because the gap between a tool and a running instance is where
 tools usually lie about themselves.
 
+- **The Galaxy front door added no product, on purpose.** No new templates: the shelf already
+  covers every announced session, and adding more would have made `gb walk bots` worse, not
+  better. No GUI. No one-click-deploy claim, because the paste path genuinely does not create
+  a Bot for you. No hand edits to the generated verb table, which a doc gate would refuse
+  anyway. What changed was the order a newcomer meets the tool in, not what the tool does.
 - **It does not ship a deployment.** This tree is the INSTRUMENT. It contains no account, no
   inventory, no deployment snapshot and no fleet specification. Those are the operator's, and
   they were removed deliberately by an allowlist-driven exporter, not trimmed by hand.
