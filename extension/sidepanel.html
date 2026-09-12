@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Page to Grok Bot</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <main class="panel">
+      <section class="card">
+        <div class="status-row">
+          <div>
+            <p class="eyebrow">Status</p>
+            <p id="status" class="status">Waiting to read this tab.</p>
+          </div>
+          <button id="capture" class="button subtle" type="button">Read this tab</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <div>
+            <p class="eyebrow">Page fingerprint</p>
+            <h1>Current page</h1>
+          </div>
+          <span id="page-kind" class="badge">other</span>
+        </div>
+        <div id="fingerprint" class="fingerprint empty">Open the panel from a page, then read the active tab.</div>
+      </section>
+
+      <section class="card">
+        <p class="eyebrow">What should this agent do?</p>
+        <div id="missions" class="chips" aria-label="Mission choices"></div>
+      </section>
+
+      <section class="card form-card">
+        <label class="field">
+          <span>Intent</span>
+          <textarea id="intent" rows="4" placeholder="Describe the question or watch goal."></textarea>
+        </label>
+        <div class="two-up">
+          <label class="field">
+            <span>Bot name</span>
+            <input id="name" type="text" maxlength="80" placeholder="Optional override" />
+          </label>
+          <label class="field">
+            <span>Cadence</span>
+            <select id="cadence">
+              <option value="weekly">weekly</option>
+              <option value="daily">daily</option>
+              <option value="none">none</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="preview-head">
+          <div>
+            <p class="eyebrow">Charter preview</p>
+            <h2 id="template-name">Preview</h2>
+          </div>
+          <div id="charter-meter" class="meter">0 / 900</div>
+        </div>
+        <pre id="preview" class="preview"></pre>
+        <div class="button-grid">
+          <button id="copy-charter" class="button" type="button">Copy charter</button>
+          <button id="copy-first-message" class="button" type="button">Copy first message</button>
+          <button id="copy-schedule-prompt" class="button" type="button">Copy schedule prompt</button>
+          <button id="download-template" class="button" type="button">Download gb-template/1</button>
+          <a id="open-grok" class="button accent" href="https://grok.com/" target="_blank" rel="noreferrer">Open Grok Bot</a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      This extension does not sign in, create the Bot, or install a routine.
+    </footer>
+
+    <script type="module" src="sidepanel.js"></script>
+  </body>
+</html>
