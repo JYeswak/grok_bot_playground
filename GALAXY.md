@@ -25,7 +25,7 @@ Five-minute path: [QUICKSTART.md](QUICKSTART.md).
 
 | Session | MDT | Paste | Pack | Why this Bot |
 |---|---|---|---|---|
-| Grok Bot 101 | 9:00–10:00 | `routine-proof` | — | Smallest possible proof that a scheduled run fires. One dated line, nothing else. |
+| Grok Bot 101 | 9:00–10:00 | `hello-computer` | `first-hour` | Proves the cloud computer answers before any plugin. Then a file read and one plugin proof. |
 | Grok Bot for Engineering | 12:30–14:00 | `galaxy-engineering` | `eng-lead` | Makes the review queue visible. Reads GitHub; comments on nothing. |
 | Grok Bot for Product Managers | 14:30–15:30 | `vendor-watch` | `product-manager` | Re-reads vendor pages and reports only what changed, quoted. |
 | Grok Bot for Founders | 16:00–17:30 | `morning-briefing` | `founder-operator` | One morning block: priorities, calendar, spend, overnight flags. |
@@ -60,6 +60,10 @@ gb galaxy            # optional: baseline / diff the three-day window
 
 ## What this repo will not do for you
 
-No public write API for Bots. Routines are created in the app. Connectors are
-installed in the app. `gb` will not sign in, will not create a Bot, and will
-not send as you.
+No connector installs, no sign-in, no UI driving. Routines have no create RPC — a Bot
+asked in chat to schedule itself creates a real one (proven live; the record is read
+back for its prompt content, never its count). Bots ARE creatable over the API
+(`CreateGrokBotAgentFromTemplate`, then `UpdateGrokBotAgent` — the Create-alone path
+registers a durable identity the desktop never shows), always from the neutral seed,
+always with a manifest and a rollback. `gb` sends DMs and group messages (`gb dm`,
+`gb group`) and wires MCP servers (`gb mcp`) — and will not send as you.

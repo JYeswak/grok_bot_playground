@@ -17,7 +17,7 @@ refuses to guess: `gb setup` prints the plan; `--apply` is the only write.
 
 | Seat | Session | First paste | Persona pack | Why this one, not a department Bot |
 |---|---|---|---|---|
-| New | Grok Bot 101 | `routine-proof` | — | Smallest proof that a scheduled run fires. One dated line. |
+| New | Grok Bot 101 | `hello-computer` | `first-hour` | Proves the VM is alive before any plugin. Then a file read and one plugin proof. |
 | Engineer | Engineering | `galaxy-engineering` | `eng-lead` | Makes the review queue visible. Reads GitHub; comments on nothing. |
 | Product | Product Managers | `vendor-watch` | `product-manager` | Reports only what a vendor page changed, quoted. |
 | Founder | Founders | `morning-briefing` | `founder-operator` | One morning block: priorities, calendar, spend, overnight flags. |
@@ -39,18 +39,19 @@ a desk.
 
 | Persona | Who it is for | First paste | Then these Bots |
 |---|---|---|---|
-| `founder-operator` | Solo founder / owner-operator | `morning-briefing` | `chief-of-staff`, `workforce-check`, `refusal-desk`, `decision-ledger`, `allowance-watch`, `approval-desk` |
-| `eng-lead` | Engineering lead | `galaxy-engineering` | `incident-commander`, `release-notes`, `nightly-pipeline`, `plugin-watch` |
-| `product-manager` | Product manager | `vendor-watch` | `practitioner-diff`, `qbr-prep`, `meeting-prep` |
-| `sales-outbound` | Sales, SDR, sales-eng | `galaxy-sdr-desk` | `stale-deal-sweep`, `research-desk`, `linkedin-drafts` |
-| `success-support` | Support and post-sales | `first-reply-desk` | `inbox-sweep`, `qbr-prep` |
-| `marketing-content` | Marketing and marketing ops | `one-post-a-week` | `galaxy-marketing-ops`, `repurpose-desk`, `youtube-brief`, `linkedin-drafts` |
-| `exec-cos` | Chief of staff / exec ops | `morning-briefing` | `chief-of-staff`, `decision-ledger`, `meeting-prep`, `friday-close` |
-| `finance-ops` | Finance / ops | `allowance-watch` | `cap-watch`, `sheet-ledger`, `grant-tracker` |
-| `personal-productivity` | One person, one machine | `routine-proof` | `errand-run`, `home-ops`, `fitness-coach`, `alfred-desk` |
-| `home-services-operator` | Home-services owner | `inbox-sweep` | `first-reply-desk`, `approval-desk`, `home-ops` |
-| `recruiter` | Recruiting | `hiring-screen` | `inbox-sweep` |
-| `researcher-analyst` | Research / analysis | `research-desk` | `discovery-digest`, `vendor-watch` |
+| `first-hour` | New user, first hour | `hello-computer` | `first-file-desk`, `plugin-proof` |
+| `founder-operator` | Solo founder / owner-operator | `morning-briefing` | `chief-of-staff`, `workforce-check`, `refusal-desk`, `decision-ledger`, `allowance-watch`, `approval-desk`, `maker-checker`, `hiring-screen`, `alfred-desk`, `cap-watch`, `calendar-owner`, `plugin-watch` |
+| `eng-lead` | Engineering lead | `galaxy-engineering` | `incident-commander`, `release-notes`, `routine-proof`, `nightly-pipeline`, `plugin-watch`, `alfred-desk`, `cap-watch` |
+| `product-manager` | Product manager | `vendor-watch` | `qbr-prep`, `practitioner-diff`, `plugin-watch`, `meeting-prep` |
+| `sales-outbound` | Sales, SDR, sales-eng | `galaxy-sdr-desk` | `delegate-outbound`, `linkedin-drafts`, `research-desk`, `meeting-prep`, `stale-deal-sweep`, `friday-close`, `plugin-watch` |
+| `success-support` | Support and post-sales | `first-reply-desk` | `qbr-prep`, `inbox-sweep`, `meeting-prep`, `approval-desk`, `plugin-watch` |
+| `marketing-content` | Marketing and marketing ops | `one-post-a-week` | `youtube-brief`, `repurpose-desk`, `discovery-digest`, `search-console-diff`, `galaxy-marketing-ops`, `plugin-watch` |
+| `exec-cos` | Chief of staff / exec ops | `morning-briefing` | `chief-of-staff`, `decision-ledger`, `manager-desk`, `inbox-sweep`, `delegate-worker`, `plugin-watch` |
+| `finance-ops` | Finance / ops | `allowance-watch` | `maker-checker`, `sheet-ledger`, `cap-watch`, `grant-tracker`, `plugin-watch` |
+| `personal-productivity` | One person, one machine | `morning-briefing` | `home-ops`, `fitness-coach`, `alfred-desk`, `errand-run`, `partner-list`, `plugin-watch` |
+| `home-services-operator` | Home-services owner | `inbox-sweep` | `errand-run`, `first-reply-desk`, `approval-desk`, `plugin-watch` |
+| `recruiter` | Recruiting | `hiring-screen` | `plugin-watch`, `inbox-sweep` |
+| `researcher-analyst` | Research / analysis | `research-desk` | `discovery-digest`, `tunable-digest`, `grant-tracker`, `vendor-watch`, `plugin-watch` |
 
 If a name in the right-hand column is missing from `templates/`, that is a
 defect in *this file*, not a Bot to invent. Check with:
@@ -70,5 +71,7 @@ The 645 attributed Bots other people built sit at a median charter of **625**
 characters. Every template in this repo is one job, under a 900-character cap,
 with a `verify` line that names the number that should move.
 
-Start with `routine-proof`. If that dated line never appears, nothing else in
+Start with `hello-computer`. If the kernel string never appears, nothing else in
 the pack will either — and that is cheaper to learn on a canary than on a CRM.
+`routine-proof` is the next canary: one dated line a week, so you know scheduled
+runs fire. Use it after the computer has answered, not instead of it.

@@ -5,8 +5,8 @@
 </p>
 
 <p align="center">
-  <em>Set up, run and grow a Grok Bot deployment from one command, driven by a
-  person or by an agent, and never to claim anything it has not measured.</em>
+  <em>Set up, run and grow a Grok Bot deployment from one command — paste a Bot,
+  install a desk, watch it fire.</em>
 </p>
 
 <p align="center">
@@ -15,12 +15,29 @@
   <img alt="zero required runtime dependencies" src="https://img.shields.io/badge/required%20deps-0-black">
 </p>
 
-**Here for Grok Bot Galaxy (Sept 15-17)?** Skip the manifesto below. Pick your seat in
+## First hour (five minutes)
+
+A person or an agent can go from clone to a paste-ready Bot without opening AGENTS.md.
+
+```sh
+gb bootstrap --for-agent
+gb walk bots --paste hello-computer | pbcopy   # Linux: | xclip -sel c
+gb setup --persona first-hour
+```
+
+`gb bootstrap --for-agent` prints the first-hour argv (paste, dry-run deploy, persona
+setup, verify) and stops. Paste the charter into Grok Bot. `gb setup --persona first-hour`
+prints the plan and writes nothing until you add `--apply`.
+
+This repo ships **62 templates**, **13 persona packs**, and Galaxy seats. Every command
+above is copy-pasteable.
+
+**Here for Grok Bot Galaxy (Sept 15-17)?** Skip the rest of this page. Pick your seat in
 [GALAXY.md](GALAXY.md), paste one charter, and watch it fire.
 
 | I am a... | Paste this Bot | Or install the whole desk |
 |---|---|---|
-| New to Grok Bot | `routine-proof` | |
+| New to Grok Bot | `hello-computer` | `gb setup --persona first-hour` |
 | Founder | `morning-briefing` | `gb setup --persona founder-operator` |
 | Engineer | `galaxy-engineering` | `gb setup --persona eng-lead` |
 | Product manager | `vendor-watch` | `gb setup --persona product-manager` |
@@ -32,33 +49,33 @@ Every id above is a real template in this tree and every persona is a real pack;
 [docs/ROLES.md](docs/ROLES.md) binds each pack to the ids it installs. `gb setup` prints its
 plan and changes nothing until you add `--apply`.
 
-**Honest limit, stated before you start:** the paste path does not create a Bot for you.
-Routines and connectors are still configured in the Grok Bot app. `gb` will not sign in as you
-and will not send as you.
-
 ```sh
 curl -fsSL https://raw.githubusercontent.com/JYeswak/grok_bot_playground/main/install.sh | bash
 ```
 
 ```console
-$ gb mirror              # start here: reads YOUR fleet off this machine. No token, no network.
-  1  Bots                 13 in this machine's cache
-  3  Unschedulable        8 of 13 over 900 chars
-  5  Can interrupt you    0 of 13 have notifications on
-
-$ gb walk bots --paste routine-proof | pbcopy   # Linux: | xclip -sel c
-$ gb walk cli            # a guided tour, running the read-only verbs live
-$ gb walk bots           # the Bots this repo proposes, and the charter to paste
+$ gb bootstrap --for-agent
+$ gb walk bots --paste hello-computer | pbcopy   # Linux: | xclip -sel c
+$ gb setup --persona first-hour
+$ gb walk cli            # guided tour of the read-only verbs
+$ gb walk bots           # the 62 Bots this repo proposes, and the charter to paste
 ```
+
+### Honest limits
+
+The paste path does not create a Bot for you. There is no connector-install API.
+Routines and connectors are still configured in the Grok Bot app. Mutations are
+dry-run until `--apply`. This repo does not drive the Grok Bot UI: `gb` will not
+sign in as you and will not send as you.
 
 ---
 
 ## What this is
 
-Grok Bot gives you agents that keep working when you close the laptop. What it does not give
-you is a way to see the fleet as one thing: which Bots can act unattended, which charters have
-no approval boundary, which routines have never fired, and what the vendor changed under you
-last week. `gb` is that view, and the actions that follow from it.
+Grok Bot gives you agents that keep working when you close the laptop. `gb` is how you
+launch one, see the fleet as one thing, and grow it: which Bots can act unattended,
+which charters have no approval boundary, which routines have never fired, and what
+the vendor changed under you last week.
 
 It does three jobs:
 
@@ -75,7 +92,7 @@ It does three jobs:
 **Built for an agent as much as for a person.** Every verb takes `--json` and returns a
 schema-stamped envelope; exit codes are semantic, not cosmetic; `gb robot-docs` is a handbook
 written for a model rather than a human; and `gb capabilities --json` describes the whole
-surface so an agent can plan without reading `bin/`.
+surface so an agent can plan without reading `bin/`. Start with `gb bootstrap --for-agent`.
 
 **It refuses rather than guesses.** An unmeasured check is an error, never a pass. A verb with
 no data says which command produces it. Numbers ship with their denominators, and a claim whose
@@ -98,8 +115,8 @@ your `PATH`, is safe to re-run, **verifies itself by running `gb capabilities --
 what it answered**, and removes only what it created on `--uninstall`. `bash install.sh --dry-run`
 prints the exact plan and touches nothing.
 
-New here? **[QUICKSTART.md](QUICKSTART.md)** is the five-minute path: install, walk the CLI, walk
-the proposed Bots, paste one charter into your own Grok Bot, verify it fired.
+New here? **[QUICKSTART.md](QUICKSTART.md)** is the five-minute path: `gb bootstrap --for-agent`,
+paste `hello-computer`, `gb setup --persona first-hour`, verify it fired.
 
 Python 3.9 or newer. **No required runtime dependencies**: the tool is stdlib only, and the
 exporter that builds this tree resolves every import in it against the interpreter's standard
@@ -118,9 +135,10 @@ Two forms, one implementation: the console script runs the very same `bin/gb` th
 The difference is what is on disk around it. See [what it does not do](#limitations-what-this-does-not-do).
 
 ```sh
-gb quickstart          # the orientation page
-gb robot-docs          # the same thing for an agent
-gb capabilities --json # the machine-readable contract
+gb bootstrap --for-agent   # first-hour argv for an agent; never --apply
+gb quickstart              # the orientation page
+gb robot-docs              # the same thing for an agent
+gb capabilities --json     # the machine-readable contract
 ```
 
 ## Walk it
@@ -130,8 +148,8 @@ of this repository.
 
 ```sh
 gb walk cli      # the tool: 11 stops covering every verb, in the order a new operator needs them
-gb walk bots     # the 12 Bots this repo proposes, each with a charter you can paste
-gb walk bots --paste routine-proof | pbcopy    # just the charter, clean
+gb walk bots     # the 62 Bots this repo proposes, each with a charter you can paste
+gb walk bots --paste hello-computer | pbcopy    # just the charter, clean
 ```
 
 The `cli` track **runs the read-only verbs live** and shows their real output inline. It runs
@@ -151,26 +169,24 @@ clone. Run `install.sh` from one and the `gb-walk` launcher is pointed at it aut
 
 ## The Bots this repo proposes
 
-Twelve templates, in three tiers, each a single narrow job with a charter, one routine, at most
-one integration, an explicit approval boundary, and a `verify` line naming the number that should
-change once it runs. Median charter 757.5 characters against a 900 cap.
+**62 templates** and **13 persona packs**. Each template is a single narrow job with a charter,
+one routine, at most one integration, an explicit approval boundary, and a `verify` line naming
+the number that should change once it runs. Pick a seat from the table above, or
+`gb setup --list-personas`.
 
-The tiers are the argument. The deployment this was built against runs **ten department Bots**
-with a median charter of **1,029 characters**, of which **2 have a routine and 0 have ever run**,
-and **0 memory shards carry content**. The 645 attributed Bots built by other people have a median
-charter of **625 characters** and **1.9 integrations** each. A narrow job can be scheduled because
-"run this job" is a sentence; a department cannot, which is exactly why no routine ever fired.
-Tier A closes those two zeros, tier B narrows a department, tier C is corpus-proven.
+A narrow job can be scheduled because "run this job" is a sentence; a department Bot cannot,
+which is why routines on department desks never fire. The 645 attributed Bots built by other
+people have a median charter of **625 characters** and **1.9 integrations** each.
 
 ```sh
 python3 bin/gb-templates.py stats           # ours vs the corpus vs the live account
 python3 bin/gb-templates.py show <id> --json
 ```
 
-This repository **proposes** Bots; it cannot create one. There is no public write API for Bots,
-routines are read-only over the API, and there is no connector-install call, so the last step is
-always a human in the app. `templates/SCHEMA.md` states the whole boundary, including what is
-still unverified.
+This repository **proposes** Bots; it cannot create one over an API. There is no public write
+API for Bots, routines are read-only over the API, and there is no connector-install call, so
+the last step is always a human in the app. `templates/SCHEMA.md` states the whole boundary,
+including what is still unverified.
 
 <!-- gb:derived:begin -->
 <!-- Everything between these markers is GENERATED by `gb readme --write`. Do not hand-edit:
@@ -319,7 +335,7 @@ The public tree ships the TOOLING, not the corpus. Directories below are inputs 
 |---|---|
 | `fixtures/` | the gate's known-good/known-bad corpus — synthetic, and a gate with no known-bad is not a gate |
 | `library/` | Bot templates and `gbx`, the template CLI |
-| `personas/` | the 12 persona packs `gb setup --persona` installs |
+| `personas/` | the persona packs `gb setup --persona` installs |
 | `plugin/` | the publishable Cursor/Grok plugin and its skills |
 | `templates/` | the gb-template/1 Bot templates `gb-walk.py bots` walks, and their schema |
 

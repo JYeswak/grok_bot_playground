@@ -13,12 +13,15 @@ turned every drift into a red gate. That is the right alarm and the wrong remedy
 fires on a number a human has to retype will keep firing. The remedy is to stop typing the
 number. So the README has two halves, and only one of them is written by a person:
 
-  HANDWRITTEN   the hero, "What this is", "Install", "What it does not do" — judgement, voice,
-                and the promises a tool makes. A generator has no business writing these, and
-                this file never touches them.
+  HANDWRITTEN   the hero, "First hour", "What this is", "Install", "What it does not do" —
+                judgement, voice, and the promises a tool makes. The first-hour pitch
+                (`gb bootstrap --for-agent`, paste hello-computer, `gb setup --persona
+                first-hour`) lives HERE, never in the derived block. A generator has no
+                business writing these, and this file never touches them.
   DERIVED       the verbs, the exit codes, the oracles, the layout, the build stamp. Every one
                 is a measurement, so every one comes from `gb capabilities --json`, the gate
                 producer, the selftests, and the exporter's own allowlist.
+
 
 THE MARKERS ARE THE CONTRACT. Derived content lives strictly between
 `<!-- gb:derived:begin -->` and `<!-- gb:derived:end -->`. Everything outside is preserved
@@ -68,6 +71,15 @@ WARN = (
 EXIT_STALE = 1
 EXIT_USAGE = 2
 EXIT_ENVIRONMENT = 3
+
+# First-hour pitch MUST stay in the handwritten head. A derive that moved it
+# into render() would replace the capability pitch with measurement tables.
+PITCH_NEEDLES = (
+    "gb bootstrap --for-agent",
+    "gb walk bots --paste hello-computer",
+    "gb setup --persona first-hour",
+)
+PITCH_COP_OUT = "Honest limit, stated before you start"
 
 
 # ----------------------------------------------------------------------------------------------
@@ -337,7 +349,11 @@ def render(f: Facts) -> str:
 
 
 def splice(current: str, block: str) -> str:
-    """Replace the derived region, preserving every handwritten byte around it."""
+    """Replace the derived region, preserving every handwritten byte around it.
+
+    The first-hour pitch is handwritten (above BEGIN). This function never
+    rewrites that head, so the next derive cannot revert the capability pitch.
+    """
     if BEGIN in current and END in current:
         head = current[: current.index(BEGIN)]
         tail = current[current.index(END) + len(END) :]
@@ -360,6 +376,23 @@ def _strip_generated_date(block: str) -> str:
     return re.sub(r"<!-- generated \d{4}-\d{2}-\d{2} by [^>]*-->", "", block)
 
 
+def _handwritten_head(text: str) -> str:
+    if BEGIN in text:
+        return text[: text.index(BEGIN)]
+    return text
+
+
+def _pitch_problems(head: str) -> List[str]:
+    """Refuse a derive that dropped or inverted the handwritten first-hour pitch."""
+    problems: List[str] = []
+    for needle in PITCH_NEEDLES:
+        if needle not in head:
+            problems.append(f"first-hour pitch missing {needle!r}")
+    if PITCH_COP_OUT in head:
+        problems.append("honest-limit cop-out sits before the capability pitch")
+    return problems
+
+
 # ----------------------------------------------------------------------------------------------
 
 
@@ -368,10 +401,20 @@ def cmd_write(a: argparse.Namespace) -> int:
     block = render(facts)
     cur = TARGET.read_text() if TARGET.is_file() else ""
     new = splice(cur, block)
+    problems = _pitch_problems(_handwritten_head(new))
+    if problems:
+        print(
+            "gb-readme: REFUSED — derive would drop the handwritten first-hour pitch",
+            file=sys.stderr,
+        )
+        for p in problems:
+            print(f"  {p}", file=sys.stderr)
+        return EXIT_ENVIRONMENT
     if new == cur:
         print(f"  {TARGET.relative_to(ROOT)} already current")
         return 0
     gbtypes.atomic_write_text(TARGET, new)
+
     outside_before = (
         cur.replace(_derived_of(cur) or "", "") if _derived_of(cur) else cur
     )
@@ -398,6 +441,15 @@ def cmd_check(a: argparse.Namespace) -> int:
             "gb-readme: STALE — the file carries no derived block at all; run `gb readme --write`",
             file=sys.stderr,
         )
+        return EXIT_STALE
+    problems = _pitch_problems(_handwritten_head(cur))
+    if problems:
+        print(
+            "gb-readme: STALE — handwritten first-hour pitch is missing or inverted",
+            file=sys.stderr,
+        )
+        for p in problems:
+            print(f"  {p}", file=sys.stderr)
         return EXIT_STALE
     want = render(measure())
     if _strip_generated_date(have).strip() == _strip_generated_date(want).strip():

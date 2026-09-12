@@ -116,6 +116,23 @@ EXIT_CODES: Dict[int, str] = {
     130: "CANCELLED — SIGINT arrived; no partial artifact was written",
 }
 
+# First-hour on-ramp. Axiom 0: a newbie who types `gb start` must not Levenshtein
+# onto `gb store`. These two commands are the copy-paste next step; keep them
+# identical everywhere they are named (bare `gb`, setup, walk, unknown verbs).
+FIRST_HOUR_WALK = "gb walk bots --paste hello-computer"
+FIRST_HOUR_SETUP = "gb setup --persona first-hour"
+FIRST_HOUR_GUESSES = frozenset({
+    "start", "launch", "hello", "onboard", "onboarding", "init",
+    "begin", "intro", "getting-started", "gettingstarted",
+    "first-hour", "firsthour", "hello-computer", "hellocomputer",
+})
+# Mega-command follow-ups (Axiom 10). Same strings in `gb bootstrap` JSON + --for-agent.
+FIRST_HOUR_DEPLOY = "gb templates deploy hello-computer"
+FIRST_HOUR_VERIFY = "gb triage"
+FIRST_HOUR_PLATFORM = "gb platform --json"
+
+
+
 # subsystem -> (producer argv, what it answers). The single registry every verb reads, so a new
 # producer is discoverable from `doctor`, `health`, `capabilities` and `repair` by adding it here
 # once rather than in four places.
@@ -244,6 +261,9 @@ EXAMPLES = """\
   gb setup                       what configuring this machine would do (writes nothing)
   gb setup --apply               register this desktop and take the first measurements
   gb setup --apply --device brain    name the machine yourself instead of using the hostname
+  gb bootstrap                   first-hour paste + dry-run deploy + setup + verify argv
+  gb bootstrap --json | jq -r '.commands[]'   the same four (plus platform) for a script
+  gb bootstrap --for-agent       machine contract + exact next argv, then stop
   gb triage                      what is wrong right now, and the command that fixes it
   gb triage --json | jq .red     the same answer, for a script
   gb work                        what to pick up next, and whether the ranking is trustworthy
@@ -316,8 +336,12 @@ class SetupArgs:
 
     apply: bool = arg(help="actually register and measure; without this the command only plans")
     device: Optional[str] = arg(help="label for THIS machine in desktops.json (default: hostname)")
-    persona: Optional[str] = arg(help="persona id for the tailored setup walk (see --list-personas)")
-    list_personas: bool = arg(help="list the 12 persona packs and exit")
+    persona: Optional[str] = arg(
+        help="persona id for the tailored setup walk; new-user pack is first-hour "
+             "(gb setup --persona first-hour; see --list-personas)",
+        aliases=("--personas",),
+    )
+    list_personas: bool = arg(help="list the persona packs and exit (new-user pack: first-hour)")
     json: bool = arg(help="machine-readable envelope on stdout")
 
 
@@ -380,6 +404,17 @@ class BareArgs:
     """No arguments."""
 
 
+
+@dataclasses.dataclass(frozen=True)
+class RobotDocsArgs:
+    """Agent handbook: first-hour paste, deploy, setup, and verify argv."""
+
+    topic: Optional[str] = arg(
+        positional=True,
+        help="guide (default: print the handbook)",
+    )
+
+
 @dataclasses.dataclass(frozen=True)
 class PlatformArgs:
     """Which OS this is, whether this tool is verified on it, and what works here."""
@@ -434,15 +469,35 @@ class TemplatesArgs:
 
 @dataclasses.dataclass(frozen=True)
 class WalkArgs:
-    """Guided tour: walk the CLI, or walk the Bot templates this repo proposes."""
+    """Guided tour: walk the CLI, or walk the Bot templates this repo proposes.
 
-    track: str = arg(
-        default="cli", help="cli | bots", choices=("cli", "bots"), positional=True
+    First hour: gb walk bots --paste hello-computer
+    """
+
+    track: Optional[str] = arg(
+        default=None,
+        help="cli | bots (omit names the first-hour paste)",
+        choices=("cli", "bots"),
+        positional=True,
     )
-    paste: Optional[str] = arg(help="print ONLY that template's charter, ready to paste")
+    paste: Optional[str] = arg(
+        help="print ONLY that template's charter, ready to paste (first hour: hello-computer)"
+    )
+    role: Optional[str] = arg(
+        help="walk only the desk in personas/<PACK>.json (first hour: first-hour)"
+    )
     step: bool = arg(help="page through one item at a time")
     json: bool = arg(help="machine-readable envelope on stdout")
 
+
+@dataclasses.dataclass(frozen=True)
+class BootstrapArgs:
+    """First-hour plan: paste, dry-run deploy, persona setup, and verify argv in one call."""
+
+    json: bool = arg(help="machine-readable envelope on stdout")
+    for_agent: bool = arg(
+        help="print the machine contract and exact next argv, then stop"
+    )
 
 @dataclasses.dataclass(frozen=True)
 class DigestArgs:
@@ -608,6 +663,36 @@ class AdviseArgs:
 
     json: bool = arg(help="machine-readable envelope on stdout")
 
+@dataclasses.dataclass(frozen=True)
+class ResearchArgs:
+    """Ask one research question across every specialty source, receipted.
+
+    Thin relay over `bin/gb-research.py`, which owns the budgets, the tier gate and
+    the packs. The default depth (`sweep`) is disk+cache only and spends no network;
+    live calls happen only at `deep`/`exhaustive` inside `--max-calls`.
+    """
+
+    question: Optional[str] = arg(
+        default=None, positional=True,
+        help="the research question (required unless --resume/--selftest/--capabilities)")
+    depth: str = arg(
+        default="sweep",
+        help="sweep (disk+cache, zero network) | deep (+live reddit/arxiv) | "
+             "exhaustive (raised ceilings, strict tier gate)")
+    source: Optional[List[str]] = arg(
+        default=None, metavar="STR",
+        help="restrict to these sources; repeatable. "
+             "Known: vendor, x, reddit, arxiv, code, practitioner")
+    max_calls: Optional[int] = arg(
+        default=None, metavar="N",
+        help="hard ceiling on live calls (default: the producer's MAX_LIVE_CALLS)")
+    resume: Optional[str] = arg(
+        default=None, metavar="STAMP",
+        help="re-run the brief stored at research/<STAMP>/brief.json")
+    dry_run: bool = arg(help="print the plan. No fetch, no write.")
+    json: bool = arg(help="machine-readable envelope on stdout")
+    selftest: bool = arg(help="run the producer's offline inline-fixture selftest and exit")
+    capabilities: bool = arg(help="print the producer's thresholds and source registry and exit")
 
 @dataclasses.dataclass(frozen=True)
 class XArgs:
@@ -964,10 +1049,12 @@ COMMANDS: Dict[str, type] = {
     "store": StoreArgs,
     "skill-coverage": SkillCoverageArgs,
     "advise": AdviseArgs,
+    "research": ResearchArgs,
     "x": XArgs,
     "post": PostArgs,
     "roadmap": RoadmapArgs,
     "setup": SetupArgs,
+    "bootstrap": BootstrapArgs,
     "teach": TeachArgs,
     "daily": DailyArgs,
     "walk": WalkArgs,
@@ -994,7 +1081,7 @@ COMMANDS: Dict[str, type] = {
     "audit": AuditArgs,
     "why": WhyArgs,
     "capabilities": CapabilitiesArgs,
-    "robot-docs": BareArgs,
+    "robot-docs": RobotDocsArgs,
     "quickstart": BareArgs,
     "examples": BareArgs,
     "info": BareArgs,
@@ -1023,6 +1110,27 @@ def envelope(command: str, **fields: Any) -> Dict[str, Any]:
         "measured_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
         **fields,
     }
+
+
+def _refuse_apply(command: str, plan: str, why: str, as_json: bool) -> int:
+    """Mutation requested; name the dry-run argv (drop --apply). Exit 5."""
+    print(f"gb: {why}\n    plan first:  {plan}\n    (drop --apply)", file=sys.stderr)
+    if as_json:
+        emit(
+            envelope(
+                command,
+                status="REFUSED",
+                applied=False,
+                dry_run=True,
+                error=why,
+                hint=plan,
+                plan=plan,
+                next=plan,
+            ),
+            True,
+            "",
+        )
+    return EXIT_REFUSED
 
 
 REENTRY_ENV = "GB_IN_DOCTOR"
@@ -2079,9 +2187,22 @@ def _measure(label: str, pre: Dict[str, str], apply: bool, plat: Platform) -> Li
 
 def cmd_setup(a: SetupArgs) -> int:
     """Zero to measured: preflight, register this desktop, take the first measurements, verify."""
+    if a.apply and (a.persona or a.list_personas):
+        plan = (
+            "gb setup --list-personas"
+            if a.list_personas
+            else f"gb setup --persona {a.persona}"
+        )
+        return _refuse_apply(
+            "setup",
+            plan,
+            "--apply is refused for the persona walk — it only prints",
+            a.json,
+        )
     if a.list_personas or a.persona:
         # Persona walk composes AFTER machine setup (it assumes a measured instance)
         # but runs standalone: gb-setup-persona.py discovers personas/*.json itself.
+        # --apply is never forwarded: the producer prints, it does not mutate.
         argv: List[str] = [sys.executable, str(BIN / "gb-setup-persona.py")]
         if a.list_personas:
             argv.append("--list")
@@ -2220,8 +2341,16 @@ def cmd_setup(a: SetupArgs) -> int:
         human.append(f"  {row['status']:<16}{row['step']:<12}{row['detail'][:110]}")
         if row.get("remediation"):
             human.append(f"  {'':<16}{'':<12}fix: {str(row['remediation'])[:110]}")
-    human += ["", f"state: {before.state} -> {after.state}", "", "next:",
-              f"  {payload['next_command']}"]
+    human += ["", f"state: {before.state} -> {after.state}"]
+    if refused:
+        human += ["", "plan first (drop --apply):", "  gb setup"]
+    human += ["", "next:",
+              f"  {payload['next_command']}",
+              "",
+              "new-user pack (first-hour):",
+              f"  {FIRST_HOUR_SETUP}",
+              "  gb setup --list-personas",
+              f"  {FIRST_HOUR_WALK}"]
     emit(payload, a.json, "\n".join(human))
     return rc
 
@@ -2482,7 +2611,16 @@ def cmd_capabilities(a: CapabilitiesArgs) -> int:
     return EXIT_OK
 
 
-def cmd_robot_docs(_a: BareArgs) -> int:
+def cmd_robot_docs(a: RobotDocsArgs) -> int:
+    """Print the agent handbook. `guide` is an alias for the same page."""
+    if a.topic is not None and a.topic != "guide":
+        print(
+            f"gb: robot-docs has no topic {a.topic!r}.\n"
+            f"    try: gb robot-docs\n"
+            f"    or:  gb robot-docs guide",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
     print(f"""\
 gb — agent handbook (v{VERSION}, contract {CONTRACT_VERSION})
 
@@ -2494,6 +2632,18 @@ taking seconds or not returning. It is the second stop, after `gb setup --apply`
     gb capabilities --json | jq -r '.commands | keys[]'   every verb, from the contract
     gb platform --json     | jq -r .status                is this OS even measured here
     gb mirror                                             your own fleet, off disk, no token
+
+FIRST HOUR. Copy-paste these five argv (same list as `gb bootstrap`). Never --apply.
+hello-computer is the first-hour template; first-hour is the new-user persona.
+
+    {FIRST_HOUR_PLATFORM}
+    {FIRST_HOUR_WALK}
+    {FIRST_HOUR_DEPLOY}
+    {FIRST_HOUR_SETUP}
+    {FIRST_HOUR_VERIFY}
+
+    gb bootstrap --json | jq -r '.commands[]'     the same five
+    gb bootstrap --for-agent                      machine contract + exact next argv
 
 ONCE CONFIGURED, triage is the loop.
 
@@ -2551,9 +2701,9 @@ sentence on this page.
 CANCELLATION. Every command is safe to SIGINT: artifact writes are atomic, so you get either the
 old artifact or the new one, and the process exits 130.
 
-AGENT DROP FILES. A fresh clone carries AGENTS.md — read that first, it is the contract agents
-grep for — plus CLAUDE.md and .cursor/rules/grok-bot.mdc, which are pointers to it rather than
-copies. If you found this page first, read AGENTS.md next; it is shorter and points back here.
+AGENT DROP FILES. First hour does not need AGENTS.md — the five argv in FIRST HOUR are enough.
+A fresh clone also carries AGENTS.md plus CLAUDE.md and .cursor/rules/grok-bot.mdc, which are
+pointers rather than copies.
 """)
     return EXIT_OK
 
@@ -2564,6 +2714,10 @@ gb — quickstart
 
 This repo watches one thing: a live Grok Bot deployment (the account, its Bots, its plugins, and
 the vendor surface those depend on). The producers in bin/ measure it; `gb` is how you ask.
+
+First hour (new-user pack `first-hour`):
+  {FIRST_HOUR_WALK}
+  {FIRST_HOUR_SETUP}
 
   0. gb setup             fresh clone? this registers this machine and takes the first
                           measurements (dry run unless --apply). Until something has been
@@ -2737,15 +2891,58 @@ def cmd_templates(a: TemplatesArgs) -> int:
     argv: List[str] = [sys.executable, str(BIN / "gb-templates.py"), a.action]
     if a.action in ("show", "deploy", "publish"):
         if not a.id:
-            print(
-                f"gb: `templates {a.action}` needs an id — try `gb templates list`",
-                file=sys.stderr,
-            )
+            hint = f"gb templates {a.action} hello-computer"
+            listing = "gb templates list"
+            if a.apply:
+                print(
+                    f"gb: `templates {a.action} --apply` needs an id (nothing applied)\n"
+                    f"    plan first:  {hint}\n"
+                    f"    (drop --apply)\n"
+                    f"    list: {listing}",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    f"gb: `templates {a.action}` needs an id\n"
+                    f"    try:  {hint}\n"
+                    f"    list: {listing}",
+                    file=sys.stderr,
+                )
+            if a.json:
+                emit(envelope(
+                    "templates",
+                    status="USAGE",
+                    error=f"templates {a.action} needs an id",
+                    action=a.action,
+                    applied=False,
+                    next=hint if a.apply else listing,
+                    hint=hint,
+                    plan=hint,
+                    did_you_mean=listing,
+                ), True, "")
             return EXIT_USAGE
         argv.append(a.id)
     if a.apply:
         if a.action not in ("deploy", "publish"):
-            print("gb: --apply only means something for `templates deploy|publish`", file=sys.stderr)
+            plan = f"gb templates {a.action}"
+            print(
+                f"gb: --apply only means something for `templates deploy|publish` "
+                f"(nothing applied)\n"
+                f"    plan first:  {plan}\n"
+                f"    (drop --apply)",
+                file=sys.stderr,
+            )
+            if a.json:
+                emit(envelope(
+                    "templates",
+                    status="USAGE",
+                    applied=False,
+                    error="--apply only means something for templates deploy|publish",
+                    action=a.action,
+                    hint=plan,
+                    plan=plan,
+                    next=plan,
+                ), True, "")
             return EXIT_USAGE
         argv.append("--apply")
     if a.action == "publish" and a.apply:
@@ -2769,16 +2966,139 @@ def cmd_templates(a: TemplatesArgs) -> int:
 
 def cmd_walk(a: WalkArgs) -> int:
     """Pass through to `bin/gb-walk.py` — the guided tour of the CLI and the Bot templates."""
-    argv: List[str] = [sys.executable, str(BIN / "gb-walk.py")]
     if a.paste:
-        argv += ["bots", "--paste", a.paste]
-    else:
-        argv.append(a.track)
-        if a.step:
-            argv.append("--step")
+        argv: List[str] = [sys.executable, str(BIN / "gb-walk.py"), "bots", "--paste", a.paste]
+        if a.role:
+            argv += ["--role", a.role]
+        if a.json:
+            argv.append("--json")
+        return _passthrough(argv, budget_s=300, label="walk")
+    if a.role:
+        argv = [sys.executable, str(BIN / "gb-walk.py"), "bots", "--role", a.role]
+        if a.json:
+            argv.append("--json")
+        return _passthrough(argv, budget_s=300, label="walk")
+    if not a.track:
+        print(
+            "gb: walk needs a track: cli | bots\n"
+            f"    first hour:  {FIRST_HOUR_WALK}\n"
+            "    CLI tour:    gb walk cli\n"
+            "    Bot tour:    gb walk bots\n"
+            "    see:         gb walk --help",
+            file=sys.stderr,
+        )
+        if a.json:
+            emit(envelope(
+                "walk",
+                status="USAGE",
+                error="walk needs a track: cli | bots",
+                tracks=["cli", "bots"],
+                next=FIRST_HOUR_WALK,
+                hint=FIRST_HOUR_WALK,
+                did_you_mean="gb walk bots",
+            ), True, "")
+        return EXIT_USAGE
+    argv = [sys.executable, str(BIN / "gb-walk.py"), a.track]
+    if a.step:
+        argv.append("--step")
     if a.json:
         argv.append("--json")
     return _passthrough(argv, budget_s=300, label="walk")
+
+def _bootstrap_steps() -> List[Dict[str, Any]]:
+    """The first-hour argv, in order. Dry-run; never --apply."""
+    return [
+        {
+            "action": "platform",
+            "command": FIRST_HOUR_PLATFORM,
+            "destructive": False,
+            "purpose": "is this OS even measured here",
+        },
+        {
+            "action": "paste",
+            "command": FIRST_HOUR_WALK,
+            "destructive": False,
+            "purpose": "charter text for the app, ready to paste",
+        },
+        {
+            "action": "deploy",
+            "command": FIRST_HOUR_DEPLOY,
+            "destructive": False,
+            "purpose": "dry-run FromTemplate deploy of hello-computer (no --apply)",
+        },
+        {
+            "action": "setup",
+            "command": FIRST_HOUR_SETUP,
+            "destructive": False,
+            "purpose": "new-user persona pack first-hour",
+        },
+        {
+            "action": "verify",
+            "command": FIRST_HOUR_VERIFY,
+            "destructive": False,
+            "purpose": "what is wrong right now after the plan",
+        },
+    ]
+
+
+def cmd_bootstrap(a: BootstrapArgs) -> int:
+    """One call: paste + dry-run deploy + persona setup + verify argv. Never --apply."""
+    steps = _bootstrap_steps()
+    commands = [str(s["command"]) for s in steps]
+    digest = hashlib.sha256("\n".join(commands).encode()).hexdigest()[:12]
+    payload = envelope(
+        "bootstrap",
+        dry_run=True,
+        mutates=False,
+        data_hash=digest,
+        quick_ref={
+            "summary": "first-hour setup+launch: paste, dry-run deploy, persona, verify",
+            "template": "hello-computer",
+            "persona": "first-hour",
+            "apply": False,
+        },
+        commands=commands,
+        steps=steps,
+        warnings=[
+            "this verb never applies; "
+            "`gb templates deploy hello-computer --apply` is a follow-up "
+            "after a signed-in desktop session",
+        ],
+    )
+    # Axiom 12: bootstrap is a static plan, not a measurement. Wall-clock on
+    # stdout makes two identical runs byte-unequal. data_hash is already over
+    # the command list only.
+    payload.pop("measured_at", None)
+    if a.for_agent and not a.json:
+        width = max(len(str(s["action"])) for s in steps)
+        lines = [
+            "gb bootstrap — first-hour contract (read; never --apply)",
+            f"schema: gb-bootstrap/{CONTRACT_VERSION}",
+            "mutates: false",
+            "dry_run: true",
+            "",
+        ]
+        for s in steps:
+            lines.append(f"{s['action']:<{width}}  {s['command']}")
+        print("\n".join(lines))
+        return EXIT_OK
+    human = [
+        "gb bootstrap — first-hour plan (nothing was written; this verb never --apply)",
+        "",
+        f"quick_ref: {payload['quick_ref']['summary']}",
+        "",
+        "copy-paste next:",
+    ]
+    for cmd in commands:
+        human.append(f"  {cmd}")
+    human += [
+        "",
+        "deploy is a dry run. Add --apply only after a signed-in desktop session,",
+        "as a follow-up — never this command.",
+    ]
+    emit(payload, a.json, "\n".join(human))
+    return EXIT_OK
+
 
 
 def cmd_daily(a: DailyArgs) -> int:
@@ -2974,6 +3294,34 @@ def cmd_advise(a: AdviseArgs) -> int:
     if a.json:
         argv.append("--json")
     return _passthrough(argv, budget_s=600, label="advise")
+
+def cmd_research(a: ResearchArgs) -> int:
+    """Relay over `bin/gb-research.py` — one question, receipted, budget-capped.
+
+    Default depth (`sweep`) is disk+cache only and spends no network; live calls
+    happen only at `deep`/`exhaustive` inside `--max-calls`. Budgets, packs and the
+    tier gate are owned by the producer; this relay only forwards flags.
+    """
+    argv: List[str] = [sys.executable, str(BIN / "gb-research.py")]
+    if a.question:
+        argv.append(a.question)
+    argv += ["--depth", a.depth]
+    for s in a.source or []:
+        argv += ["--source", s]
+    if a.max_calls is not None:
+        argv += ["--max-calls", str(a.max_calls)]
+    if a.resume:
+        argv += ["--resume", a.resume]
+    if a.dry_run:
+        argv.append("--dry-run")
+    if a.json:
+        argv.append("--json")
+    if a.selftest:
+        argv.append("--selftest")
+    if a.capabilities:
+        argv.append("--capabilities")
+    budget = 600 if a.depth in ("deep", "exhaustive") else 120
+    return _passthrough(argv, budget_s=budget, label="research")
 
 
 def cmd_x(a: XArgs) -> int:
@@ -3459,13 +3807,14 @@ def cmd_dm(a: DmArgs) -> int:
 
 
 HANDLERS: Dict[str, Callable[[Any], int]] = {
-    "setup": cmd_setup, "platform": cmd_platform, "mine": cmd_mine, "monitor": cmd_monitor,
+    "setup": cmd_setup, "bootstrap": cmd_bootstrap, "platform": cmd_platform, "mine": cmd_mine, "monitor": cmd_monitor,
     "templates": cmd_templates, "walk": cmd_walk, "daily": cmd_daily, "digest": cmd_digest,
     "mirror": cmd_mirror, "demand": cmd_demand, "galaxy": cmd_galaxy, "fleet": cmd_fleet,
     "blast": cmd_blast,
     "corpus": cmd_corpus, "dogfood": cmd_dogfood, "gatesdoc": cmd_gatesdoc,
     "readme": cmd_readme,
     "advise": cmd_advise,
+    "research": cmd_research,
     "x": cmd_x,
     "post": cmd_post, "findings": cmd_findings, "teach": cmd_teach,
     "roadmap": cmd_roadmap,
@@ -3482,6 +3831,37 @@ HANDLERS: Dict[str, Callable[[Any], int]] = {
     "capabilities": cmd_capabilities, "robot-docs": cmd_robot_docs, "quickstart": cmd_quickstart,
     "examples": cmd_examples, "info": cmd_info, "help": cmd_help, "completion": cmd_completion,
 }
+
+def _is_first_hour_guess(token: str) -> bool:
+    """True when the unknown verb is a newbie's name for the first-hour on-ramp."""
+    folded = token.lower().replace("_", "-")
+    compact = folded.replace("-", "")
+    return folded in FIRST_HOUR_GUESSES or compact in {
+        g.replace("-", "") for g in FIRST_HOUR_GUESSES
+    }
+
+
+def _hint_first_hour(token: str) -> int:
+    """Unknown-command error that names the exact next commands. Stderr = diag."""
+    print(
+        f"gb: no command {token!r}.\n"
+        f"    first hour:  {FIRST_HOUR_WALK}\n"
+        f"    new user:    {FIRST_HOUR_SETUP}\n"
+        f"    list packs:  gb setup --list-personas",
+        file=sys.stderr,
+    )
+    return EXIT_USAGE
+
+
+def _first_hour_human_lines() -> List[str]:
+    """The short FIRST HOUR block appended to human (non-JSON) operator output."""
+    return [
+        "",
+        "FIRST HOUR:",
+        f"  {FIRST_HOUR_WALK}",
+        f"  {FIRST_HOUR_SETUP}",
+    ]
+
 
 def body() -> int:
     # `--version` is handled BEFORE parse_sub, because the subcommand parser treats a bare
@@ -3502,9 +3882,12 @@ def body() -> int:
     # offers on a fresh one. `-h`/`--help` still print the full manual; any other flag
     # falls through to the parser so a typo keeps its usage error.
     rest = [a for a in sys.argv[1:] if a not in ("--version", "-V")]
-    if not [a for a in rest if not a.startswith("-")] and not any(
-        a in ("-h", "--help") for a in rest
-    ):
+    pos = [a for a in rest if not a.startswith("-")]
+    # Intent-legible newbie verbs (start/launch/hello/onboard/init) must not fall through
+    # to Levenshtein (`start`→`store`, `hello`→`help`, `init`→`info`) or the 58-verb wall.
+    if pos and pos[0] not in COMMANDS and _is_first_hour_guess(pos[0]):
+        return _hint_first_hour(pos[0])
+    if not pos and not any(a in ("-h", "--help") for a in rest):
         if any(a != "--json" for a in rest):
             name, args = parse_sub(
                 COMMANDS,
@@ -3512,27 +3895,29 @@ def body() -> int:
                 description="gb — operate a live Grok Bot deployment.",
             )
             return HANDLERS[name](args)
+        as_json = "--json" in rest
         st = instance_state()
         if st.unconfigured:
-            return route_unconfigured("gb", "--json" in rest, st)
-        return cmd_triage(TriageArgs(check=None, json="--json" in rest))
+            return route_unconfigured("gb", as_json, st)
+        rc = cmd_triage(TriageArgs(check=None, json=as_json))
+        if not as_json:
+            print("\n".join(_first_hour_human_lines()))
+        return rc
     name, args = parse_sub(
         COMMANDS,
         prog="gb",
         description=(
-            "gb — operate a live Grok Bot deployment: measure the vendor surface and your own "
-            "account, judge both, and act on what is wrong."
+            "gb — set up, run and grow a Grok Bot deployment from one command."
         ),
-        # `gb mirror` FIRST, corrected 2026-09-12. This said "start with: gb triage" everywhere,
-        # and on a fresh clone triage REFUSES (exit 3) and routes onward to a write
-        # (`gb setup --apply`). `gb mirror` answers read-only in 0.24s with ranked findings
-        # about the reader's own Bots, needs no token and no network, and was recommended by
-        # nothing. Measured in a clean export: three steps to a refusal versus one to an answer.
+        # FIRST HOUR / AGENT is the discoverability contract (pass 3). Bootstrap is the
+        # mega-command; the two copy-paste lines are the pass-1 first-try verbs, kept
+        # verbatim. Do not dump AGENTS.md here. Honest limits live in the README after
+        # the pitch, not in this epilog.
         epilog=(
-            "start with:   gb mirror        (read-only, no token, no network — your own fleet)\n"
-            "then:         gb triage        (needs gb setup first)\n"
-            "agent?        gb robot-docs\n"
-            "machine?      gb capabilities --json"
+            "FIRST HOUR / AGENT:\n"
+            "  gb bootstrap --for-agent\n"
+            f"  {FIRST_HOUR_WALK}\n"
+            f"  {FIRST_HOUR_SETUP}"
         ),
     )
     return HANDLERS[name](args)

@@ -12,6 +12,22 @@
   {
    "template": "fitness-coach",
    "why": "Weekly coaching check-in; the largest built personal category allots one bot per lane, not one bot for everything."
+  },
+  {
+   "template": "alfred-desk",
+   "why": "Keep the fleet small: every proposed Bot defaults to zero until a manual workflow has already worked."
+  },
+  {
+   "template": "errand-run",
+   "why": "Turns the week's piled errands into one ordered trip."
+  },
+  {
+   "template": "partner-list",
+   "why": "Shared grocery and errand list for two humans; who added each item, what is still open, no send."
+  },
+  {
+   "template": "plugin-watch",
+   "why": "Week-1 Bot: diffs installed plugin gitRefs and quotes every move. Installed is not working."
   }
  ],
  "human_steps": [
@@ -61,7 +77,11 @@
   "create-routine-weekday-morning-brief",
   "create-routine-weekly-home-ops-review",
   "create-routine-weekly-fitness-checkin",
-  "install-skills-vector-retrieval-photos-organize"
+  "install-skills-vector-retrieval-photos-organize",
+  "deploy-alfred-desk",
+  "deploy-errand-run",
+  "deploy-partner-list",
+  "deploy-plugin-watch"
  ],
  "skills": [
   "inbox-triage",
@@ -69,7 +89,8 @@
   "standup-writer",
   "disksaver-audit",
   "photos-organize",
-  "vector-retrieval"
+  "vector-retrieval",
+  "plugin-enable-verify"
  ],
  "tagline": "One brief each morning; home, health, and inbox each get a lane."
 }

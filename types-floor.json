@@ -4,6 +4,7 @@
  "files": [
   "bin/gb",
   "bin/gb-mine.py",
+  "bin/gb-research.py",
   "bin/gb-store.py",
   "bin/gb-typecheck.py",
   "bin/gbargs.py",

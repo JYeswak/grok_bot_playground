@@ -54,6 +54,7 @@ import tempfile
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from gbargs import nearest  # noqa: E402
 from gbtypes import (  # noqa: E402
     atomic_write_json,
     atomic_write_text,
@@ -64,6 +65,18 @@ from gbtypes import (  # noqa: E402
 
 SCHEMA = "gb-walk/1"
 TEMPLATE_SCHEMA = "gb-template/1"
+
+
+def walk_envelope(track: str, **fields: Any) -> Dict[str, Any]:
+    """Outer shape for --json: schema + tool + command, then the track's fields."""
+    return {
+        "schema": SCHEMA,
+        "tool": "gb",
+        "command": "walk",
+        "track": track,
+        **fields,
+    }
+
 
 # The 15 keys BotTemplateAuthor froze for gb-template/1 on 2026-09-11. Every template carries all
 # of them; a template missing one is SKIPPED with the key named, because a walk screen that
@@ -138,6 +151,25 @@ def emit(line: str = "") -> None:
 
 def warn(line: str) -> None:
     print(line, file=sys.stderr)
+
+
+def _few_ids(ids: List[str], prefer: str, n: int = 6) -> str:
+    """Short known-id preview. Prefer the first-hour id so a typo still names it."""
+    ordered: List[str] = []
+    if prefer in ids:
+        ordered.append(prefer)
+    for item in ids:
+        if item not in ordered:
+            ordered.append(item)
+        if len(ordered) >= n:
+            break
+    extra = len(ids) - len(ordered)
+    if not ordered:
+        return "(none)"
+    text = ", ".join(ordered)
+    if extra > 0:
+        text += f", ... +{extra} more"
+    return text
 
 
 def _indent(body: str, prefix: str = "    | ") -> List[str]:
@@ -577,19 +609,18 @@ def walk_cli(
                 "items": items,
             }
         )
-    return {
-        "schema": SCHEMA,
-        "track": "cli",
-        "gb": str(gb) if gb else None,
-        "gb_version": (caps or {}).get("version"),
-        "cwd": str(cwd),
-        "verbs_annotated": len(annotated),
-        "verbs_live": len(live) if live is not None else None,
-        "unannotated": unannotated,
-        "absent_from_this_gb": absent,
-        "max_lines": max_lines,
-        "stops": stops,
-    }
+    return walk_envelope(
+        "cli",
+        gb=str(gb) if gb else None,
+        gb_version=(caps or {}).get("version"),
+        cwd=str(cwd),
+        verbs_annotated=len(annotated),
+        verbs_live=len(live) if live is not None else None,
+        unannotated=unannotated,
+        absent_from_this_gb=absent,
+        max_lines=max_lines,
+        stops=stops,
+    )
 
 
 def render_cli(doc: Dict[str, Any], ink: Ink, *, step: bool, interactive: bool) -> int:
@@ -871,27 +902,25 @@ def walk_bots(
     *, directory: Optional[pathlib.Path], looked: Sequence[str]
 ) -> Dict[str, Any]:
     if directory is None:
-        return {
-            "schema": SCHEMA,
-            "track": "bots",
-            "templates_dir": None,
-            "looked_in": list(looked),
-            "count": 0,
-            "skipped": [],
-            "warnings": [],
-            "templates": [],
-        }
+        return walk_envelope(
+            "bots",
+            templates_dir=None,
+            looked_in=list(looked),
+            count=0,
+            skipped=[],
+            warnings=[],
+            templates=[],
+        )
     good, skipped, warnings = load_templates(directory)
-    return {
-        "schema": SCHEMA,
-        "track": "bots",
-        "templates_dir": str(directory),
-        "looked_in": list(looked),
-        "count": len(good),
-        "skipped": skipped,
-        "warnings": warnings,
-        "templates": good,
-    }
+    return walk_envelope(
+        "bots",
+        templates_dir=str(directory),
+        looked_in=list(looked),
+        count=len(good),
+        skipped=skipped,
+        warnings=warnings,
+        templates=good,
+    )
 
 
 def render_bots(doc: Dict[str, Any], ink: Ink, *, step: bool, interactive: bool) -> int:
@@ -956,10 +985,11 @@ def render_bots(doc: Dict[str, Any], ink: Ink, *, step: bool, interactive: bool)
     return 0
 
 
-def paste(doc: Dict[str, Any], template_id: str) -> int:
+def paste(doc: Dict[str, Any], template_id: str, as_json: bool = False) -> int:
     """Print ONLY the charter. No header, no banner, no trailing newline beyond the charter's own.
 
     This is piped into `pbcopy`. Anything else on stdout ends up in the Bot's description field.
+    Unknown-id with --json is the exception: stdout is a USAGE envelope, never an empty charter.
     """
     for t in doc["templates"]:
         if t.get("id") == template_id:
@@ -967,9 +997,33 @@ def paste(doc: Dict[str, Any], template_id: str) -> int:
             if not str(t.get("charter") or "").endswith("\n"):
                 sys.stdout.write("\n")
             return 0
-    known = ", ".join(str(t.get("id")) for t in doc["templates"]) or "(none)"
-    warn(f"no template with id {template_id!r}. Known ids: {known}")
+    ids = [str(t.get("id")) for t in doc["templates"]]
+    preview = _few_ids(ids, "hello-computer")
+    listing = "gb templates list"
+    near = nearest(template_id, ids)
+    hint = (
+        f"gb walk bots --paste {near}"
+        if near
+        else "gb walk bots --paste hello-computer"
+    )
+    warn(f"no template with id {template_id!r}. Known ids: {preview}")
+    warn(f"    did you mean:  {hint}")
+    warn(f"    list: {listing}")
+    if as_json:
+        print(
+            json.dumps(
+                walk_envelope(
+                    "bots",
+                    status="USAGE",
+                    error=f"no template with id {template_id!r}",
+                    hint=hint,
+                    did_you_mean=hint,
+                ),
+                indent=1,
+            )
+        )
     return 2
+
 
 # ---------------------------------------------------------------------------------------------
 # Role and livestream-seat filters — a desk, not the whole catalog.
@@ -1026,11 +1080,26 @@ def load_persona_ids(
     known = sorted(p.stem for p in personas_dir.glob("*.json"))
     path = personas_dir / f"{pack}.json"
     if not path.is_file():
-        return None, f"no persona pack {pack!r}. Known packs: {', '.join(known) or '(none)'}"
+        preview = _few_ids(known, "first-hour")
+        near = nearest(pack, known)
+        hint = (
+            f"gb walk bots --role {near}" if near else "gb walk bots --role first-hour"
+        )
+        return (
+            None,
+            f"no persona pack {pack!r}.\n"
+            f"    known: {preview}\n"
+            f"    did you mean:  {hint}\n"
+            f"    list: gb setup --list-personas",
+        )
     doc = read_json_capped(path)
     if not isinstance(doc, dict) or not isinstance(doc.get("bots"), list):
         return None, f"personas/{pack}.json has no bots[] list — not a pack file"
-    ids = [str(b.get("template")) for b in doc["bots"] if isinstance(b, dict) and b.get("template")]
+    ids = [
+        str(b.get("template"))
+        for b in doc["bots"]
+        if isinstance(b, dict) and b.get("template")
+    ]
     return ids, ""
 
 
@@ -1059,7 +1128,11 @@ def check_seat_row(
             f"templates/ — the seat map is stale, refusing rather than pasting yesterday's charter"
         )
     pack = row.get("pack")
-    if pack is not None and personas_dir is not None and not (personas_dir / f"{pack}.json").is_file():
+    if (
+        pack is not None
+        and personas_dir is not None
+        and not (personas_dir / f"{pack}.json").is_file()
+    ):
         return (
             f"seat {row.get('seat')!r} names pack {pack!r}, which is not in personas/ — "
             f"the seat map is stale"
@@ -1074,21 +1147,31 @@ def render_seat(
     ink: Ink,
 ) -> None:
     """The seat view: session header, first-paste charter, then the pack desk compactly."""
-    emit(ink.bold(f"Seat: {row.get('session')}  (day {row.get('day')}, {row.get('mdt')} MDT)"))
+    emit(
+        ink.bold(
+            f"Seat: {row.get('session')}  (day {row.get('day')}, {row.get('mdt')} MDT)"
+        )
+    )
     emit()
-    emit(f"  first paste   {first.get('id')} — paste the charter below, then add the routine")
+    emit(
+        f"  first paste   {first.get('id')} — paste the charter below, then add the routine"
+    )
     emit(f"  charter       ({len(str(first.get('charter') or ''))} chars)")
     for ln in _indent(str(first.get("charter") or "")):
         emit(ln)
     emit()
     if row.get("pack") is not None:
-        emit(f"  the whole desk ({row.get('pack')}, {len(desk)} Bot(s)) — one line each:")
+        emit(
+            f"  the whole desk ({row.get('pack')}, {len(desk)} Bot(s)) — one line each:"
+        )
         for t in desk:
             emit(f"    {t.get('id')} — {t.get('job')}")
         emit()
         emit("  clipboard:  gb-walk.py bots --paste <id> | pbcopy")
     emit(ink.bold("next"))
-    emit("  gb triage                                  then measure what the new Bot changed")
+    emit(
+        "  gb triage                                  then measure what the new Bot changed"
+    )
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1682,6 +1765,21 @@ def body(argv: Optional[Sequence[str]] = None) -> int:
     if args.selftest:
         return selftest()
     if args.track is None:
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "schema": SCHEMA,
+                        "tool": "gb",
+                        "command": "walk",
+                        "status": "USAGE",
+                        "error": "walk needs a track: cli | bots",
+                        "tracks": ["cli", "bots"],
+                    },
+                    indent=1,
+                )
+            )
+            return 2
         ap.print_help()
         return 2
 
@@ -1727,16 +1825,44 @@ def body(argv: Optional[Sequence[str]] = None) -> int:
                     return 2
             pack = args.role or (seat_row.get("pack") if seat_row else None)
             if pack is None:
-                ids = [str(t.get("id")) for t in doc["templates"]
-                       if str(t.get("id")) == seat_row.get("first_paste")]
-                doc["filter"] = f"livestream seat {seat_row.get('seat')!r} (no pack — first paste only)"
+                ids = [
+                    str(t.get("id"))
+                    for t in doc["templates"]
+                    if str(t.get("id")) == seat_row.get("first_paste")
+                ]
+                doc["filter"] = (
+                    f"livestream seat {seat_row.get('seat')!r} (no pack — first paste only)"
+                )
             else:
                 ids, err = load_persona_ids(pdir, pack)
                 if ids is None:
                     warn(err)
+                    if args.json:
+                        known = sorted(p.stem for p in pdir.glob("*.json"))
+                        near = nearest(str(pack), known)
+                        hint = (
+                            f"gb walk bots --role {near}"
+                            if near
+                            else "gb walk bots --role first-hour"
+                        )
+                        print(
+                            json.dumps(
+                                walk_envelope(
+                                    "bots",
+                                    status="USAGE",
+                                    error=err.split("\n", 1)[0],
+                                    hint=hint,
+                                    did_you_mean=hint,
+                                ),
+                                indent=1,
+                            )
+                        )
                     return 2
-                missing = [i for i in ids
-                           if i not in [str(t.get("id")) for t in doc["templates"]]]
+                missing = [
+                    i
+                    for i in ids
+                    if i not in [str(t.get("id")) for t in doc["templates"]]
+                ]
                 if missing:
                     warn(
                         f"pack {pack!r} names template(s) not in templates/: "
@@ -1752,14 +1878,15 @@ def body(argv: Optional[Sequence[str]] = None) -> int:
                 # The seat's first paste need not sit in the pack desk (eng-lead's desk
                 # has no galaxy-engineering) — capture it from the full shelf first.
                 doc["first"] = next(
-                    t for t in doc["templates"]
+                    t
+                    for t in doc["templates"]
                     if str(t.get("id")) == seat_row.get("first_paste")
                 )
             doc["templates"] = [t for t in doc["templates"] if str(t.get("id")) in ids]
             doc["count"] = len(doc["templates"])
             doc["seat"] = seat_row
         if args.paste:
-            return paste(doc, args.paste)
+            return paste(doc, args.paste, as_json=args.json)
         if args.json:
             print(json.dumps(doc, indent=1, default=str))
             return 0 if doc["count"] else 3

@@ -55,7 +55,7 @@ from typing import (
     TypeVar,
 )
 
-__all__ = ["arg", "parse", "build_parser", "ArgSpec"]
+__all__ = ["arg", "parse", "build_parser", "ArgSpec", "nearest"]
 
 
 class DataclassLike(Protocol):
@@ -85,6 +85,7 @@ class ArgSpec:
     metavar: str = ""
     choices: Tuple[str, ...] = ()
     positional: bool = False
+    aliases: Tuple[str, ...] = ()
 
 
 def arg(
@@ -96,6 +97,7 @@ def arg(
     metavar: str = "",
     choices: Sequence[str] = (),
     positional: bool = False,
+    aliases: Sequence[str] = (),
 ) -> Any:
     """Declare a field's CLI surface. Returns a `dataclasses.field`, so the class stays a
     dataclass and `dataclasses.replace`, `asdict`, and the checker all keep working."""
@@ -106,6 +108,7 @@ def arg(
         metavar=metavar,
         choices=tuple(choices),
         positional=positional,
+        aliases=tuple(aliases),
     )
     meta = {"gbargs": spec}
     if default is not _MISSING:
@@ -131,11 +134,12 @@ def _flag_name(field_name: str) -> str:
 
 def _names_for(field_name: str, spec: ArgSpec) -> List[str]:
     """The argparse name(s) a field is addressed by: a positional keeps its identifier, a flag
-    gets the hyphenated long form plus an optional short alias."""
+    gets the hyphenated long form plus an optional short alias and any extra long aliases."""
     if spec.positional:
         return [field_name]
     names = [f"-{spec.short.lstrip('-')}"] if spec.short else []
     names.append(_flag_name(field_name))
+    names.extend(spec.aliases)
     return names
 
 
@@ -232,6 +236,100 @@ def _edit_distance(a: str, b: str) -> int:
     return prev[-1]
 
 
+def nearest(
+    token: str, candidates: Sequence[str], *, max_distance: int = 1
+) -> Optional[str]:
+    """Unique near-miss among `candidates`. Hyphen/underscore fold, then compact, then
+    unique Levenshtein-1. None when the token is empty, already exact, or ambiguous.
+
+    Hints only: callers print 'did you mean' and do not auto-execute the match. `walk bot`
+    is rewritten in `parse_sub` because that one is an unambiguous pure-read alias.
+    """
+    if not token:
+        return None
+    items = [c for c in candidates if c]
+    if token in items:
+        return None
+    folded = token.lower().replace("_", "-")
+    if folded in items:
+        return folded
+    compact = folded.replace("-", "")
+    compact_hits = [
+        c for c in items if c.lower().replace("_", "").replace("-", "") == compact
+    ]
+    if len(compact_hits) == 1:
+        return compact_hits[0]
+    near = [c for c in items if _edit_distance(folded, c.lower()) <= max_distance]
+    if len(near) == 1:
+        return near[0]
+    return None
+
+
+def _flag_set(cls: Type[Any]) -> List[str]:
+    """Long (and short) option strings this command's dataclass actually accepts."""
+    names: List[str] = ["-h", "--help"]
+    for f in dataclasses.fields(cls):
+        spec: ArgSpec = f.metadata.get("gbargs", ArgSpec())
+        if spec.positional:
+            continue
+        names.extend(_names_for(f.name, spec))
+    return names
+
+
+def _infer_argv(
+    cls: Type[Any], command: str, raw: List[str], *, prog: str
+) -> List[str]:
+    """Recover first-hour near-misses on a known command before argparse rejects them.
+
+    `walk bot` rewrites to `walk bots` and proceeds (pure read). Unique Levenshtein-1
+    flag typos print the exact corrected argv and exit 2 — never auto-executed, so a
+    mistyped `--apply` cannot become a mutation.
+    """
+    out = list(raw)
+    try:
+        cmd_at = out.index(command)
+    except ValueError:
+        return out
+    if (
+        command == "walk"
+        and cmd_at + 1 < len(out)
+        and not out[cmd_at + 1].startswith("-")
+    ):
+        token = out[cmd_at + 1]
+        if token == "bot":
+            out[cmd_at + 1] = "bots"
+            return out
+        hit = nearest(token, ("cli", "bots"))
+        if hit:
+            shown = list(out)
+            shown[cmd_at + 1] = hit
+            print(
+                f"{prog}: unknown walk track {token!r}.\n"
+                f"    did you mean:  {prog} {' '.join(shown)}",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+    known = set(_flag_set(cls))
+    for i, a in enumerate(out):
+        if a == command or not a.startswith("-"):
+            continue
+        flag, eq, val = a.partition("=")
+        if flag in known:
+            continue
+        hits = [k for k in known if k.startswith("--") and _edit_distance(flag, k) <= 1]
+        if len(hits) != 1:
+            continue
+        shown = list(out)
+        shown[i] = hits[0] + (eq + val if eq else "")
+        print(
+            f"{prog}: unknown option {flag!r}.\n"
+            f"    did you mean:  {prog} {' '.join(shown)}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    return out
+
+
 def parse_sub(
     commands: "Dict[str, Type[Any]]",
     argv: Optional[Sequence[str]] = None,
@@ -300,15 +398,19 @@ def parse_sub(
             raise SystemExit(2)
         near = sorted(commands, key=lambda c: _edit_distance(first, c))
         if near and _edit_distance(first, near[0]) <= max(2, len(near[0]) // 3):
+            shown = list(raw)
+            shown[shown.index(first)] = near[0]
             print(
                 f"{ap.prog}: no command '{first}'.\n"
-                f"    did you mean:  {ap.prog} {near[0]}\n"
+                f"    did you mean:  {ap.prog} {' '.join(shown)}\n"
                 f"    list them:     {ap.prog} capabilities --json | jq -r '.commands|keys[]'",
                 file=sys.stderr,
             )
             raise SystemExit(2)
+    elif first is not None:
+        raw = _infer_argv(commands[first], first, raw, prog=ap.prog)
 
-    ns = ap.parse_args(list(argv) if argv is not None else None)
+    ns = ap.parse_args(raw)
     chosen = getattr(ns, "_command", None)
     if not chosen:
         ap.print_help(sys.stderr)

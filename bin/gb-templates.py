@@ -590,6 +590,36 @@ def warn(text: str) -> None:
             pass
 
 
+def _few_ids(ids: List[str], prefer: str, n: int = 6) -> str:
+    """Short known-id preview. Prefer hello-computer so a typo still names it."""
+    ordered: List[str] = []
+    if prefer in ids:
+        ordered.append(prefer)
+    for item in ids:
+        if item not in ordered:
+            ordered.append(item)
+        if len(ordered) >= n:
+            break
+    extra = len(ids) - len(ordered)
+    if not ordered:
+        return "(none)"
+    text = ", ".join(ordered)
+    if extra > 0:
+        text += f", ... +{extra} more"
+    return text
+
+
+def _teach_unknown_template(
+    tid: str, rows: List[Dict[str, Any]], verb: str
+) -> Tuple[str, str, str]:
+    """Return (hint, listing, preview) for an id that is not in the catalog."""
+    ids = [str(r.get("id")) for r in rows if r.get("id")]
+    preview = _few_ids(ids, "hello-computer")
+    hint = f"gb templates {verb} hello-computer"
+    listing = "gb templates list"
+    return hint, listing, preview
+
+
 def render_list(rows: List[Dict[str, Any]]) -> str:
     out = [
         f"{'tier':<5}{'id':<20}{'chars':>6}  {'cadence':<8}{'integrations':<18}job",
@@ -1816,8 +1846,29 @@ def cmd_deploy(
     rows = valid_only(path)
     match = next((r for r in rows if r.get("id") == tid), None)
     if match is None:
-        ids = ", ".join(sorted(str(r.get("id")) for r in rows))
-        warn(f"gb-templates: no template {tid!r}. available: {ids}")
+        hint, listing, preview = _teach_unknown_template(tid, rows, "deploy")
+        warn(f"gb-templates: no template {tid!r}. Known ids: {preview}")
+        warn(f"    try:  {hint}")
+        if apply:
+            warn(f"    plan first:  {hint}  (drop --apply; nothing applied)")
+        warn(f"    list: {listing}")
+        if as_json:
+            emit(
+                json.dumps(
+                    {
+                        "schema": "gb-template-deploy/2",
+                        "tool": "gb",
+                        "command": "templates",
+                        "status": "USAGE",
+                        "error": f"no template {tid!r}",
+                        "applied": False,
+                        "hint": hint,
+                        "plan": hint,
+                        "did_you_mean": listing,
+                    },
+                    indent=1,
+                )
+            )
         return 2
     spec = deploy_spec(match, root)
     bot = spec["bots"][0]
@@ -1858,11 +1909,17 @@ def cmd_deploy(
             json.dumps(
                 {
                     "schema": "gb-template-deploy/2",
+                    "tool": "gb",
+                    "command": "templates",
                     "template": tid,
                     "bot_name": bot["name"],
                     "charter_chars": len(bot["description"]),
                     "seed": spec["seed"].get("share_id"),
                     "applied": apply,
+                    "plan": f"gb templates deploy {tid}",
+                    "next_command": (
+                        None if apply else f"gb templates deploy {tid} --apply"
+                    ),
                     "spec": str(spec_file),
                     "manifest": str(man_path) if man_path else None,
                     "rc": proc.code,
@@ -1887,20 +1944,26 @@ def cmd_deploy(
         return rc
 
     emit(proc.out.rstrip())
-    if not apply and runnable:
+    if not apply:
         emit("")
-        emit("DRY RUN — nothing created, nothing sent. With --apply this run would:")
-        emit(
-            f"  1. create {bot['name']!r} from seed {spec['seed'].get('share_id')} "
-            f"({len(bot['description'])}-char charter)"
-        )
-        emit("  2. send that Bot ONE message, verbatim:")
-        for line in routine_request(match).splitlines():
-            emit(f"     | {line}")
-        emit(
-            f"  3. poll ListGrokBotAgentAutomations for the NEW uuid for up to "
-            f"{int(ROUTINE_WAIT_S)}s and report CONFIRMED or PARTIAL"
-        )
+        emit(f"plan:  gb templates deploy {tid}")
+        emit(f"apply: gb templates deploy {tid} --apply")
+        if runnable:
+            emit("")
+            emit(
+                "DRY RUN — nothing created, nothing sent. With --apply this run would:"
+            )
+            emit(
+                f"  1. create {bot['name']!r} from seed {spec['seed'].get('share_id')} "
+                f"({len(bot['description'])}-char charter)"
+            )
+            emit("  2. send that Bot ONE message, verbatim:")
+            for line in routine_request(match).splitlines():
+                emit(f"     | {line}")
+            emit(
+                f"  3. poll ListGrokBotAgentAutomations for the NEW uuid for up to "
+                f"{int(ROUTINE_WAIT_S)}s and report CONFIRMED or PARTIAL"
+            )
     elif apply and runnable:
         for line in render_routine(step, match):
             emit(line)
@@ -1971,8 +2034,25 @@ def cmd_publish(
     rows = valid_only(path)
     match = next((r for r in rows if r.get("id") == tid), None)
     if match is None:
-        ids = ", ".join(sorted(str(r.get("id")) for r in rows))
-        warn(f"gb-templates: no template {tid!r}. available: {ids}")
+        hint, listing, preview = _teach_unknown_template(tid, rows, "publish")
+        warn(f"gb-templates: no template {tid!r}. Known ids: {preview}")
+        warn(f"    try:  {hint}")
+        warn(f"    list: {listing}")
+        if as_json:
+            emit(
+                json.dumps(
+                    {
+                        "schema": "gb-template-publish/1",
+                        "tool": "gb",
+                        "command": "templates",
+                        "status": "USAGE",
+                        "error": f"no template {tid!r}",
+                        "hint": hint,
+                        "did_you_mean": listing,
+                    },
+                    indent=1,
+                )
+            )
         return 2
     charter = str(match.get("charter") or "")
     hits = deid_screen(f"{match.get('name', '')}\n{match.get('title', '')}\n{charter}")
@@ -2185,7 +2265,36 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.verb == "deploy":
         if not args.id:
-            warn("gb-templates: `deploy` needs a template id — try `gb templates list`")
+            hint = "gb templates deploy hello-computer"
+            listing = "gb templates list"
+            if args.apply:
+                warn(
+                    "gb-templates: `deploy --apply` needs a template id (nothing applied)"
+                )
+                warn(f"    plan first:  {hint}")
+                warn("    (drop --apply)")
+                warn(f"    list: {listing}")
+            else:
+                warn("gb-templates: `deploy` needs a template id")
+                warn(f"    try:  {hint}")
+                warn(f"    list: {listing}")
+            if args.json:
+                emit(
+                    json.dumps(
+                        {
+                            "schema": "gb-template-deploy/2",
+                            "tool": "gb",
+                            "command": "templates",
+                            "status": "USAGE",
+                            "error": "deploy needs a template id",
+                            "applied": False,
+                            "hint": hint,
+                            "plan": hint,
+                            "did_you_mean": listing,
+                        },
+                        indent=1,
+                    )
+                )
             return 2
         return cmd_deploy(
             args.id,
@@ -2196,9 +2305,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
     if args.verb == "publish":
         if not args.id:
-            warn(
-                "gb-templates: `publish` needs a template id — try `gb templates list`"
-            )
+            hint = "gb templates publish hello-computer"
+            listing = "gb templates list"
+            warn("gb-templates: `publish` needs a template id")
+            warn(f"    try:  {hint}")
+            warn(f"    list: {listing}")
             return 2
         return cmd_publish(
             args.id,
@@ -2263,17 +2374,59 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
     if args.verb == "show":
         if not args.id:
-            warn("show needs a template id — try `gb-templates.py list`")
+            hint = "gb templates show hello-computer"
+            listing = "gb templates list"
+            warn("show needs a template id")
+            warn(f"    try:  {hint}")
+            warn(f"    list: {listing}")
+            if args.json:
+                emit(
+                    json.dumps(
+                        {
+                            "schema": "gb-template-show/1",
+                            "tool": "gb",
+                            "command": "templates",
+                            "status": "USAGE",
+                            "error": "show needs a template id",
+                            "hint": hint,
+                            "did_you_mean": listing,
+                        },
+                        indent=1,
+                    )
+                )
             return 2
         hit = [d for d in rows if d["id"] == args.id]
         if not hit:
-            warn(
-                f"no template {args.id!r} in {path} — have: "
-                f"{', '.join(d['id'] for d in rows) or 'none'}"
-            )
+            hint, listing, preview = _teach_unknown_template(args.id, rows, "show")
+            warn(f"no template {args.id!r}. Known ids: {preview}")
+            warn(f"    try:  {hint}")
+            warn(f"    list: {listing}")
+            if args.json:
+                emit(
+                    json.dumps(
+                        {
+                            "schema": "gb-template-show/1",
+                            "tool": "gb",
+                            "command": "templates",
+                            "status": "USAGE",
+                            "error": f"no template {args.id!r}",
+                            "hint": hint,
+                            "did_you_mean": listing,
+                        },
+                        indent=1,
+                    )
+                )
             return 2
         emit(
-            json.dumps({"template": hit[0]}, indent=1)
+            json.dumps(
+                {
+                    "schema": "gb-template-show/1",
+                    "tool": "gb",
+                    "command": "templates",
+                    "template": hit[0],
+                },
+                indent=1,
+            )
             if args.json
             else render_show(hit[0])
         )

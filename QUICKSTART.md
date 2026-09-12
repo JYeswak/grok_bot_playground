@@ -1,33 +1,39 @@
 # Quickstart — five minutes, start to finish
 
-This repository is a **playground**, and it is worth being blunt about what that means before you
-type anything.
-
-`gb` **measures** a Grok Bot deployment from artifacts on your own disk, and it **proposes** Bots
-as text you paste in by hand. It does **not** drive the Grok Bot app. It cannot create a Bot,
-cannot sign in, cannot read your Bots, and never asks for a credential. There is no public write
-API for Bots, routines are read-only over the API, and there is no connector-install call — so the
-last step of every proposal here is a human in the app, on purpose, not as a limitation we hope to
-remove later.
-
-**Here for Galaxy week (Sept 15-17)? Start here instead.** Find your session in
-[GALAXY.md](GALAXY.md), then run the three lines under *Install* below and paste one charter:
+Launch a Bot, then optionally install a desk. Copy-paste these:
 
 ```sh
-gb walk bots --paste routine-proof | pbcopy   # Linux: | xclip -sel c
+gb bootstrap --for-agent
+gb walk bots --paste hello-computer | pbcopy   # Linux: | xclip -sel c
+gb setup --persona first-hour                  # plan only until --apply
 ```
 
-`routine-proof` is the Bot to start with whatever your role, because it answers the one
-question nobody can answer yet: it posts a single dated line once a week, so if the line
-appears, scheduled runs fire on your account, and if it never appears, the Bot is fine and the
-routine never ran. Swap the id for the one your session uses, or install the whole desk with
-`gb setup --persona <pack>`; [docs/ROLES.md](docs/ROLES.md) maps every pack to its templates.
-The rest of this page is the operator path, and it keeps.
+Paste the charter into Grok Bot. This repo ships **62 templates**, **13 persona packs**,
+and Galaxy seats in [GALAXY.md](GALAXY.md).
+
+**Here for Galaxy week (Sept 15-17)?** Find your session in [GALAXY.md](GALAXY.md), run
+the three lines above, and paste one charter. New users start with `hello-computer`
+(the VM answers) then `gb setup --persona first-hour` (one file read, one plugin proof).
+`routine-proof` is the schedule canary — one dated line a week — after the computer has
+answered, not instead of it. Swap the id for the one your session uses;
+[docs/ROLES.md](docs/ROLES.md) maps every pack to its templates.
 
 Two things you will actually do in the next five minutes:
 
 1. get the CLI, and walk it
 2. read a proposed Bot, paste its charter into your own Grok Bot, and verify it works
+
+### Honest limits
+
+`gb` does not drive the Grok Bot app, cannot sign in, and never asks for a credential.
+There is no connector-install call — connectors are installed in the app. What it CAN do,
+over the account API and always receipted: create a Bot from the seed template
+(`gb templates deploy <id>`, `--plan` by default, manifest + `--rollback`), ask a Bot in
+chat to schedule its own routine (the only routine-create path; proven 2026-09-11 and
+2026-09-12, prompt content verified back, never the count), send DMs and group messages
+(`gb dm`, `gb group`), and wire MCP servers plus cut their tool allowlists (`gb mcp`).
+Every other mutation is dry-run until `--apply`, and the last step of every proposal is
+still verified by reading the server back — never by the Bot's reply.
 
 ---
 
@@ -105,22 +111,23 @@ Useful flags: `--step` pages one stop at a time (and never blocks in a pipe), `-
 clipping long output at 14 lines, `--json` gives you the whole tour as data, and `NO_COLOR=1`
 strips every escape.
 
-Then type the one verb that works before you have configured anything:
+Then type the first-hour commands — they work before you have configured anything:
 
 ```sh
-gb mirror
+gb bootstrap --for-agent
+gb walk bots --paste hello-computer | pbcopy
+gb setup --persona first-hour
 ```
 
-It reads the Grok Bot desktop client's own state off this machine — no token, no network, no
-account setup — and answers in **0.18s** with six ranked findings about *your* fleet: how many
-Bots are cached, how your charter length sits against a 487-builder corpus, how many Bots are
-unschedulable, and which uuids exist on disk that the roster does not list. Measured 2026-09-12
-on a clean run.
+`gb bootstrap --for-agent` prints paste + dry-run deploy + setup + verify argv and stops.
+`gb mirror` is the later, read-only look at *your* fleet off this machine — no token, no
+network. Measured 2026-09-12 on a clean run: **0.18s**, six ranked findings.
 
 `gb triage` is the second stop, not the first. It judges a configured deployment, so on a fresh
 clone it answers `UNCONFIGURED` and exits 3 — the tool telling you it has nothing to judge yet,
 not a failure. `gb setup` shows you the plan; `gb setup --apply` does it. Once that has run,
 `gb triage` becomes the verb you use every day.
+
 
 ---
 
@@ -130,9 +137,10 @@ not a failure. `gb setup` shows you the plan; `gb setup --apply` does it. Once t
 gb-walk bots
 ```
 
-Twelve templates, walked in tier order. For each one: the single narrow job, the charter with its
+Sixty-two templates, walked in tier order. For each one: the single narrow job, the charter with its
 character count, the routine and what it leaves behind, the approval boundary, what it remembers
 between runs, and a `verify` line naming the number that should change once it is running.
+
 
 The tiers are the argument, not decoration:
 
@@ -146,9 +154,10 @@ The tiers are the argument, not decoration:
 - **Tier C** is corpus-proven: shapes that recur across 645 attributed Bots built by real people,
   whose median charter is **625 characters** with **1.9 integrations** each.
 
-These twelve have a median charter of 757.5 characters (range 727–806, all under a 900 cap) and
+The original twelve have a median charter of 757.5 characters (range 727–806, all under a 900 cap) and
 0.5 integrations each — deliberately closer to the corpus than to the account they are proposed
-for.
+for. The shelf now holds **62**.
+
 
 Sanity-check the corpus yourself:
 
@@ -161,14 +170,15 @@ python3 bin/gb-templates.py stats      # ours vs the 645-Bot corpus vs the live 
 
 ## 4. Paste one charter into your own Grok Bot (1 minute)
 
-Pick one. If you are unsure, pick `routine-proof`: it is the smallest possible test of whether
-scheduled runs on your account fire at all, and it cannot do any harm because it only ever posts
-one line.
+Pick one. If you are unsure, pick `hello-computer`: it proves the VM answers. After that,
+`routine-proof` is the smallest test of whether scheduled runs on your account fire at all,
+and it cannot do any harm because it only ever posts one line.
 
 ```sh
-gb-walk bots --paste routine-proof | pbcopy       # macOS
-gb-walk bots --paste routine-proof | xclip -sel c # Linux
+gb-walk bots --paste hello-computer | pbcopy       # macOS
+gb-walk bots --paste hello-computer | xclip -sel c # Linux
 ```
+
 
 `--paste` writes the charter and **nothing else** to stdout — no header, no banner, no trailing
 note — so what lands in your clipboard is exactly what belongs in the Bot's description field.
@@ -214,11 +224,13 @@ gb doctor --scope <subsystem>
 
 | you want | read |
 |---|---|
+| the first-hour argv, for an agent | `gb bootstrap --for-agent` |
 | the whole surface, written for an agent | `gb robot-docs` |
 | the machine contract (verbs, exit codes, subsystems) | `gb capabilities --json` |
 | the template schema and the vendor boundary | `templates/SCHEMA.md` |
 | one template in full, as data | `python3 bin/gb-templates.py show <id> --json` |
-| everything else | `README.md` |
+| everything else | [packaging/README.public.md](packaging/README.public.md) |
+
 
 Exit codes, because they are load-bearing and `1` does not mean "crashed":
 

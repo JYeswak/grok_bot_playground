@@ -3,9 +3,10 @@
 
 Composes with `gb setup` (which owns preflight, device registration, and the
 first measurements) rather than duplicating it. This walk PRINTS a tailored
-procedure per persona; it never acts. A future --apply may execute the
-[mechanical] steps; it does not exist yet, and passing --apply is a usage
-error (exit 2).
+procedure per persona; it never acts. --apply is refused (exit 5) and
+names the print-only plan (`gb setup --persona first-hour`, or the
+given --persona). A future --apply may execute the [mechanical] steps;
+it does not exist yet.
 
 Personas are DISCOVERED from personas/*.json at runtime — never hardcoded. A new
 pack file appears in --list with zero code changes. A pack that fails schema
@@ -29,6 +30,9 @@ import pathlib
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from gbargs import nearest  # noqa: E402
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PERSONA_DIR = ROOT / "personas"
 TEMPLATES = ROOT / "templates"
@@ -38,6 +42,9 @@ MCP_SERVERS = ROOT / "mcp-servers"
 EXIT_OK = 0
 EXIT_DRIFT = 1
 EXIT_USAGE = 2
+EXIT_REFUSED = 5
+SCHEMA = "gb-setup-persona/1"
+
 
 FIRST_PARTY: Dict[str, str] = {
     "gmail": "Gmail (first-party OAuth connector, installed in-app)",
@@ -72,6 +79,25 @@ class Drift(Exception):
 
 def warn(msg: str) -> None:
     print(f"gb-setup-persona.py: warning: {msg}", file=sys.stderr)
+
+
+def _few_ids(ids: List[str], prefer: str, n: int = 6) -> str:
+    """Short known-id preview. Prefer the first-hour pack so a typo still names it."""
+    ordered: List[str] = []
+    if prefer in ids:
+        ordered.append(prefer)
+    for item in ids:
+        if item not in ordered:
+            ordered.append(item)
+        if len(ordered) >= n:
+            break
+    extra = len(ids) - len(ordered)
+    if not ordered:
+        return "(none)"
+    text = ", ".join(ordered)
+    if extra > 0:
+        text += f", ... +{extra} more"
+    return text
 
 
 def is_str_list(v: Any) -> bool:
@@ -353,11 +379,22 @@ def render_text(pack: Dict[str, Any], steps: List[Step]) -> str:
 
 def envelope(pack: Dict[str, Any], steps: List[Step]) -> Dict[str, Any]:
     return {
-        "tool": "gb-setup-persona",
+        "schema": SCHEMA,
+        "tool": "gb",
+        "command": "setup",
         "persona": pack["id"],
         "name": pack["name"],
         "dry_run": True,
         "steps": steps,
+    }
+
+
+def list_envelope(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    return {
+        "schema": SCHEMA,
+        "tool": "gb",
+        "command": "setup",
+        "personas": rows,
     }
 
 
@@ -377,11 +414,32 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = ap.parse_args(argv)
 
     if args.apply:
+        pid = args.persona or "first-hour"
+        plan = f"gb setup --persona {pid}"
         print(
-            "gb-setup-persona.py: --apply is not implemented — this walk only prints.",
+            "gb-setup-persona.py: --apply is refused — this walk only prints.\n"
+            f"    plan first:  {plan}\n"
+            "    (drop --apply)",
             file=sys.stderr,
         )
-        return EXIT_USAGE
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "schema": SCHEMA,
+                        "tool": "gb",
+                        "command": "setup",
+                        "status": "REFUSED",
+                        "applied": False,
+                        "error": "--apply is refused; persona walk only prints",
+                        "hint": plan,
+                        "plan": plan,
+                        "did_you_mean": plan,
+                    },
+                    indent=1,
+                )
+            )
+        return EXIT_REFUSED
 
     if args.list:
         packs, _ = discover()
@@ -389,7 +447,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             {"id": p["id"], "name": p["name"], "tagline": p["tagline"]} for p in packs
         ]
         if args.json:
-            print(json.dumps({"tool": "gb-setup-persona", "personas": rows}, indent=2))
+            print(json.dumps(list_envelope(rows), indent=1))
         else:
             for r in rows:
                 print(f"{r['id']:24} {r['name']:22} {r['tagline']}")
@@ -399,10 +457,37 @@ def main(argv: Optional[List[str]] = None) -> int:
         packs, _ = discover()
         pack = next((p for p in packs if p["id"] == args.persona), None)
         if pack is None:
+            known = [str(p["id"]) for p in packs]
+            preview = _few_ids(known, "first-hour")
+            listing = "gb setup --list-personas"
+            near = nearest(args.persona, known)
+            hint = (
+                f"gb setup --persona {near}"
+                if near
+                else "gb setup --persona first-hour"
+            )
             print(
-                f"gb-setup-persona.py: unknown persona {args.persona!r} — try --list",
+                f"gb-setup-persona.py: unknown persona {args.persona!r}. "
+                f"Known packs: {preview}",
                 file=sys.stderr,
             )
+            print(f"    did you mean:  {hint}", file=sys.stderr)
+            print(f"    list: {listing}", file=sys.stderr)
+            if args.json:
+                print(
+                    json.dumps(
+                        {
+                            "schema": SCHEMA,
+                            "tool": "gb",
+                            "command": "setup",
+                            "status": "USAGE",
+                            "error": f"unknown persona {args.persona!r}",
+                            "hint": hint,
+                            "did_you_mean": hint,
+                        },
+                        indent=1,
+                    )
+                )
             return EXIT_USAGE
         try:
             tdata = validate_refs(pack)
@@ -411,13 +496,25 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"gb-setup-persona.py: DRIFT: {e}", file=sys.stderr)
             return EXIT_DRIFT
         if args.json:
-            print(json.dumps(envelope(pack, steps), indent=2))
+            print(json.dumps(envelope(pack, steps), indent=1))
         else:
             print(render_text(pack, steps), end="")
         return EXIT_OK
 
     if args.json:
         print("gb-setup-persona.py: --json needs --list or --persona", file=sys.stderr)
+        print(
+            json.dumps(
+                {
+                    "schema": SCHEMA,
+                    "tool": "gb",
+                    "command": "setup",
+                    "status": "USAGE",
+                    "error": "--json needs --list or --persona",
+                },
+                indent=1,
+            )
+        )
         return EXIT_USAGE
 
     packs, _ = discover()

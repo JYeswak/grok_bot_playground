@@ -1,9 +1,9 @@
 {
  "schema": "gb-export-public/1",
  "tool": "gb-export-public",
- "exported_at": "2026-09-12T01:04:51-06:00",
+ "exported_at": "2026-09-12T10:39:47-06:00",
  "source_root": "grokbot",
- "file_count": 2713,
+ "file_count": 2716,
  "files": {
   ".cursor/rules/grok-bot.mdc": "a840d60dd92710cc4665b2f694be9682ffe29a4973119e443ff6f4eae438ed93",
   ".gitattributes": "5c444610c7b71c4c7c67e9901981f6ea484959cef6904d98017c3f42a67f9115",
@@ -15,13 +15,13 @@
   ".gitignore": "ee1820e14425bb1811a0d01ea14def431aebb9c511687038db37de36455b1181",
   "AGENTS.md": "0fabac7544122269125e649275419d4e16a5c30c05897e0100412224e259ce06",
   "CLAUDE.md": "1565dd7daee25dedf4a8a68a2a65ddc560449a73fdaa079d2fb5135c3822cdd3",
-  "GALAXY.md": "76d885dc85a8061bd2147a47efa4dd112f21d9112b7447be4a51d70820f46acd",
+  "GALAXY.md": "96275a070a4fc84139d9405ad62944fef1977ff4b8337dfb0c3f4e0780fb91a2",
   "GATES.md": "5f9fc442a8766e2f3300dc3bb680c55b125a230826f52dd5e354d37edd54168a",
   "LICENSE": "0afa932ebeca3bdc7042b193408eef512ebd03f899fff00faef45d6be53342ce",
-  "QUICKSTART.md": "186fd110f335de7c5f58239904aab6f39b2ac96e0203c3ae234a2ed9ec385f44",
-  "README.md": "c9e660a34c691abaadee8673e1ba43a8c65d4f8858a3ba0cc6b23abc58dd5ab8",
+  "QUICKSTART.md": "4625bec59506d9119c9c44f9fce4e3144d5e4b416f7dfafc8183808d295df1b6",
+  "README.md": "ff311de5d490f61a901fa5e33809bc09c227bf5b4204d9533b95ba65b91820b9",
   "bin/__init__.py": "5738b7e5608647f52e2e91246e4b604aceb6428eff90fcf2903d1e6f73ad2d7f",
-  "bin/gb": "f0487d5127547416f3d7b753cd33482f37067f31bd9b0fd4b7add526165a465c",
+  "bin/gb": "0e8a958baadda85fc8a24adb3bf07827ff26c01d811d0b07361e7593412da0ab",
   "bin/gb-advise.py": "7323a3e4cd28eb266e81a03b70592190db8a65636d7762b10eb4a1486f431747",
   "bin/gb-audit-remote.sh": "99ce2faee8a86dbcedef7b261ca317c7fa6f793793a7dbe63492573f85f0763d",
   "bin/gb-bench.py": "87961b1f526ea9f2648d2a5ab66051190bdd03f3787844dc49e3934fa5cc0d4c",
@@ -62,10 +62,11 @@
   "bin/gb-plugin-validate.py": "c69b3b3bb072316c12955824ae257c6613dd6152006824791b80a4ed7da53bbc",
   "bin/gb-post.py": "800daea322e0a679099cb0bf45f8eab5baf79677faaf95d00c3ff5f838765289",
   "bin/gb-pull-inventory.py": "92dde0f751ae978862e3225f8c75a83f8ce3bf10f105e9819351a41a64ef1236",
-  "bin/gb-readme.py": "ce5af72c9f534d8cbe910d852ace198e1d289a834a5c9c07f9cb63a9aec6c5fc",
+  "bin/gb-readme.py": "b725668f787a576413f9e003b3c1cc435717ae15a90db885033fc90254e2d1bd",
   "bin/gb-rebuild-fleet.py": "f93fc3baacf40c92de5dff02c73146d26fa240565e22ad6eb9761ee83e3e722f",
   "bin/gb-record-inventory.py": "a727fbdf04adc99f2fc98ddfe70c689de4bf6ae398bd6b7f54e3a89990a242c7",
-  "bin/gb-setup-persona.py": "c1e6e572d7828a3634ace0dddb90ada5040f8fcb40746f003c2e647b0ae8714a",
+  "bin/gb-research.py": "084abfd018a81c38341941bbce6fed216e2578a5b29d8e70df1db2dee731ba42",
+  "bin/gb-setup-persona.py": "bdc6fd7d429bbf47a360bd2cb033167da2e8f737a4e51f23e989ac0c87c6dc7d",
   "bin/gb-skill-coverage.py": "d83810cf61aa45a2db6d0bcc687146214d5a9964e33007d14a8c6f2e69d21727",
   "bin/gb-sources.py": "2a746f2827f5bd58377eff7af6ed14df270b18b3cd5bcf1fb26103b404a1e0b8",
   "bin/gb-spend-ledger.py": "ffa0b8f1f4bbdf97c32971acf7e5918c637ee8150e5968fbfdde7f6ae8f652e5",
@@ -73,22 +74,22 @@
   "bin/gb-surface-gate.py": "0f694b33405d36f2bdd44fa293b3d26a9038a5dfd85ccf43f5320daf0d1e5a9a",
   "bin/gb-surface-snapshot.py": "7d49cb16f7d1b25e7e22d6d595d95c6d2063aad1045cb6547cea00fa4ece8a76",
   "bin/gb-teach.py": "bf578dd9292b6f10c979defcef5a156b55ccb2c5144c04669d2e8e8409da1f86",
-  "bin/gb-templates.py": "b41d78c3bd7bfac867bf97f702cb6723c61c7ff328c2217d59c1c95d4ecfe0ba",
+  "bin/gb-templates.py": "e4df82f93f3d69c8b8f1b83bf240a43567246a86743312f3222fd1d288a7c7e5",
   "bin/gb-triage-check.py": "51235ee445f4b84805cba54b32da9857b4414df461100af6044bd5d2da863e72",
   "bin/gb-typecheck.py": "a265a492fcd26153dcd18f28e5e665cb16d34f183f670e4a473ce88cbcc45e4f",
   "bin/gb-usecases.py": "7b51fee8841818041f25b03801def08421265c18c175e489237cc6cb1f5bcfa7",
   "bin/gb-utilization.py": "0ede6adf4a7c8da621f792eb3b14109099cd5ba1c0ba1e700dff299f82bfca5b",
-  "bin/gb-walk.py": "c2856585b9415b4aa868fe1f59f8a83c6b21399d88ee91a6a78c0759706c8c3e",
+  "bin/gb-walk.py": "52ac75d4ad57e8f0ee29712e952a1382a2fcbc988fb48ffca212ea569012c8b7",
   "bin/gb-weekly.sh": "9cc4a8155589c9715b2ce0111183cd707a4d7a3bf24ee49f9ec5a9d6ba8a9c55",
   "bin/gb-whatchanged.py": "422980fae899c7047efd4ed5c4f5d5ddf22f27aed256740dec142c2d3e552499",
   "bin/gb-x-sweep.py": "4ce7617b51f7e749dc88d2a52f8e89cc6d19ce21e9042126b2506a37073b1e60",
   "bin/gb-x.py": "40d6e8ea87bcef0a2fb2ba216e9256cd7b8b59b43e571c659d5c881c536b9beb",
-  "bin/gbargs.py": "f12511d01a46eec5010ac3375de8cd5d3f7e23f71a9daefa1c641c4d55e61ee4",
+  "bin/gbargs.py": "8f76edf833a8d88b08f35ff2178225228b9ae87b957d74ec7a600b6565764832",
   "bin/gblib.py": "152699cc59890444f19b21326775e48a4a8b0629f7f32e168d347c0eece9f234",
   "bin/gbrpc.py": "d55529e26b05045723c5ecf78585e83b9553f6adea0a8af8f267460d7eb53549",
   "bin/gbtypes-selftest.py": "4ff29c30c02b73e93db546e8f79620790390122d30748c19d070ea31d321dc8e",
   "bin/gbtypes.py": "cbe1452eeff2e34956e252ec7872199a04ce775748da995518245bc153d8ebf9",
-  "docs/ROLES.md": "015daf28344c6e77f7fa12fb524aa4166766bb322c634f1f16f1b3f8393e65af",
+  "docs/ROLES.md": "7f8c5a7b9d59c3adf7d88fd1c6da01e80b8596d852de4bf9bab0e704e24875bb",
   "fixtures/bad-archive-stale/README.md": "ac6d66fad012b667db52c12dea33f04c573d6a138f321823d42a1f833b72ee56",
   "fixtures/bad-archive-stale/archive/2026-08-01T0600.json": "05133b3c694be6310e333d7f1caca09dbc39516644d05e1f3b605499b06345b8",
   "fixtures/bad-archive-stale/coverage-floor.json": "8e1222b274c89c76d9673bab6ab028da76b3ab7f65885177053d371df00c3f00",
@@ -2521,6 +2522,7 @@
   "fixtures/platform/windows-unverified/appdata/Grok Bot/README.md": "5a36d3612a6b43c3ca001e2719a37d9203fd120c149ebcd9d082677b1d71a55b",
   "fixtures/platform/windows-unverified/appdata/Grok Bot/sand-statsig-bootstrap.json": "aec16303d6781fd1af39c37754c65fc477d3d1e4e1978a728ccbc7b4d01e7ab9",
   "fixtures/platform/windows-unverified/expect.json": "da626b66cdeb153f20f12b155c072fab4555bb7f9da2036ac72436a8b4ea579f",
+  "galaxy-seats.json": "87b356c1c6ca7d4e7087a274d14dcb006ac631adf9e0f295d76c425c9a2ca3da",
   "grok_bot_ops/__init__.py": "03acbbf14b16130ab25ce78e4e6113d87433963a692cdb47570d808b6e72f1dc",
   "grok_bot_ops/cli.py": "285a06094b7e113d6c9bb0d7c2b5a3ae34820b9e0b91c80ba2dda3cfe47ca6dd",
   "install.sh": "fc7cc565ccba9dc5bdabb987f07f4ca3b4133017a65457b94ace3a1df7e743e7",
@@ -2533,18 +2535,19 @@
   "library/templates/experiment-readout/skills/readout/SKILL.md": "b4965689cfbb842ac37ed38aa0606850ab09aa709869a9c58216a61b0a743008",
   "library/templates/pdf-extract/bot.yaml": "272d4fd4c3ef6fec3bf5444e255faeb3b835b545efededf8ff13988b99853496",
   "library/templates/pdf-extract/skills/extract/SKILL.md": "5de6c0607900decb0c1288d47847242b13c195399a659a93bced83a52e4912d3",
-  "personas/eng-lead.json": "909038ed2ad4837c59fa26b5e71d3d20b8a783bd44ed4ee420052e2c3f517a9e",
-  "personas/exec-cos.json": "75775dd51519ea9a05e889d2dae84e03192c3ccbfdebc7a100230b6308845537",
-  "personas/finance-ops.json": "72fc612eefe42d55b833dbda63f65944c092340e8d06f34252870e5409009b9a",
-  "personas/founder-operator.json": "7b445fd79dc8870011e375e179d3804cbf2efe18971eb77a5f6a117be0abcc94",
-  "personas/home-services-operator.json": "ef0076e941b863779ee5d34c3d7c61e1e26b6b6cb57b65aadf0bf92f93bd11af",
-  "personas/marketing-content.json": "c3a85cdee3125770592a50caf89c6cbd6fcfa58c8d681cd63122d878ff4c84e3",
-  "personas/personal-productivity.json": "923483a64cee4e012d86dcabf0d1c8e6778baa2aafcf6c56dd28a5dae6bbfe8a",
-  "personas/product-manager.json": "94a1f8affa32b1cfc35ac4537718c9d33ecca17c9be9d93a290a53a4cf586e49",
-  "personas/recruiter.json": "82026661d15ab30159847004ed04bd1db347502b0c645027b7f9aff5eb267405",
-  "personas/researcher-analyst.json": "f3e83296d3bb528edf68940656ec35007a1acfe0d3c9ca484c480d4682fface9",
-  "personas/sales-outbound.json": "99582c9c2c30f0ac283c491fddeae78ed6585c0d20850154faf97c2dd9d3329d",
-  "personas/success-support.json": "40dbfd8decf2863031e0f8575b5956cb5df846a86b30509b27423ca5f155fa9f",
+  "personas/eng-lead.json": "5f46dfdba4cbe9e36bf6e732f6137551a7c3452efc928d17185e40ca5e9ef4d7",
+  "personas/exec-cos.json": "143ebdd975cce5107166cc080948c359d07d2adfbc8b9b6cdb17c6662c908526",
+  "personas/finance-ops.json": "31e47293592e49216c8847328305a3caf4d41a0f05f5dea457fdb803453ff72f",
+  "personas/first-hour.json": "d9c0bf9dceb1ee91e482e071b778e66a0591bc5482781089def36435a78c2501",
+  "personas/founder-operator.json": "f376d3a4691ce944ba1a581232494372ca778a3a6aadab9d402f93ddc1bc5357",
+  "personas/home-services-operator.json": "c8ea7d5e9af7d76b59525ba8b5682a505ea71b422e14913fd6e00de34dc0c320",
+  "personas/marketing-content.json": "8383cf14387f10ece01a8ae9b4e6ecf613b421ab692e5aa2a1ac6d392ae092cf",
+  "personas/personal-productivity.json": "750c9d32bda9bec7d14a4b970c72ed6ac425165baa7a2899e5f22b4d688f9877",
+  "personas/product-manager.json": "3bd32df5d3075894bd4706b0c6ec00a9086d165dbb5084f041631ae2437a3c90",
+  "personas/recruiter.json": "aa3deff005fd718da78bf0b343b057596bc82c3d289313d7d4109a3d20e24288",
+  "personas/researcher-analyst.json": "7bf0dce04fd5a255c1b5d9d08a56ea4808820a4824d061e7a50ca1e6f3cefe6a",
+  "personas/sales-outbound.json": "c1480de51e841b918015fd7cad54fd051ec36e10c10209a96772de28b1b88061",
+  "personas/success-support.json": "53d640c8365f35b607ac8bd7f59dbeb232248e90a9406cb9f80ad1f1920a7b66",
   "plugin/.cursor-plugin/plugin.json": "a6e0b9ce1746b5bbcf4d3a2781ab4d6b3659a5ffe582a810b7746c153dea7afb",
   "plugin/README.md": "2c674b43a42ae1d569469afe1f0e83a7c15599c82ca4f65a9e2998eb54b76ffe",
   "plugin/commands/setup.md": "896f7e07d3b2df3236d9938167708950023635975b32d5be4782be7185a3b223",
@@ -2714,7 +2717,7 @@
   "templates/vendor-watch.json": "2ac242d7b2b82d1caac15fd96fbc3c38757a0897bfe77041b3d0a9b0d9674efb",
   "templates/workforce-check.json": "02c94f3d8d2f4ec35e82fa1b7e1d7dfa34d0f192509fc67409586c7dc37db6af",
   "templates/youtube-brief.json": "0e812be6eccdcfd5d89f006117a4ede8c5d62bac1c7607a82b85218f097e6620",
-  "types-floor.json": "4119a4707f6cc54c8b6264967406dcfcc0b364cc422894f33205408646450e66",
+  "types-floor.json": "cfc3f6fc6f80d0e2fa626c8f67c876534637004314eba7499dfc2bb0d6d504c5",
   "visual/HERO-PROMPT.md": "031f23a2c37c165b7ea0674541455e919a18715186d29507b758ab3348a9f49f",
   "visual/hero-identity-grade.json": "75ae722121693b3527f4a6f91ca4770257804e255896dc918f161d0f03a5a145",
   "visual/hero.jpg": "288c271fd5275807cd24f84ff646b597fb13684ea5188d9e09f66ba93cb09d37"
@@ -2773,6 +2776,11 @@
     "src": "GALAXY.md",
     "dest": "GALAXY.md",
     "why": "the session -> paste -> pack picker for Galaxy week"
+   },
+   {
+    "src": "galaxy-seats.json",
+    "dest": "galaxy-seats.json",
+    "why": "livestream seat -> first paste + persona pack; gb walk bots --galaxy reads this"
    },
    {
     "src": "docs/ROLES.md",
@@ -2905,6 +2913,11 @@
     "why": "what to do next, ranked, every action carrying its GATES.md row"
    },
    {
+    "src": "bin/gb-research.py",
+    "dest": "bin/gb-research.py",
+    "why": "one research question across every specialty source, receipted and budget-capped"
+   },
+   {
     "src": "bin/gb-x.py",
     "dest": "bin/gb-x.py",
     "why": "the daily X read and outbound-link harvest"
@@ -2987,7 +3000,7 @@
    {
     "src": "bin/gb-setup-persona.py",
     "dest": "bin/gb-setup-persona.py",
-    "why": "the persona walk: 12 packs, discovered from personas/*.json"
+    "why": "the persona walk: packs discovered from personas/*.json"
    },
    {
     "src": "bin/gb-group.py",
@@ -3230,7 +3243,7 @@
     "suffixes": [
      ".json"
     ],
-    "why": "the 12 persona packs `gb setup --persona` installs"
+    "why": "the persona packs `gb setup --persona` installs"
    },
    {
     "src": "plugin",
