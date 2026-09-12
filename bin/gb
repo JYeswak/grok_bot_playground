@@ -592,6 +592,7 @@ class ReadmeArgs:
     """
 
     write: bool = arg(help="regenerate the derived block")
+    check: bool = arg(help="fail when the derived block is stale, and write nothing")
     json: bool = arg(help="the measured facts as an envelope")
     selftest: bool = arg(help="prove this module's properties")
 
@@ -2924,6 +2925,11 @@ def cmd_readme(a: ReadmeArgs) -> int:
     elif a.json:
         argv.append("--json")
     else:
+        # `--check` is also the bare default. It was DOCUMENTED on ReadmeArgs and absent from
+        # the dataclass, so `gb readme --check` died with `unrecognized arguments` while the
+        # docstring three hundred lines up promised it — found by a live Linux sweep in
+        # another window on 2026-09-12, not by any gate here. A flag a doc names and argparse
+        # has never heard of is the cheapest possible lie and nothing in this tree caught it.
         argv.append("--check")
     # It runs every producer's selftest to build the table, so the budget is the sum of them.
     return _passthrough(argv, budget_s=1800, label="readme")

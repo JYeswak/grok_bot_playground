@@ -1,7 +1,7 @@
 {
  "schema": "gb-export-public/1",
  "tool": "gb-export-public",
- "exported_at": "2026-09-11T23:48:29-06:00",
+ "exported_at": "2026-09-12T00:22:32-06:00",
  "source_root": "grokbot",
  "file_count": 2674,
  "files": {
@@ -16,9 +16,9 @@
   "GATES.md": "5f9fc442a8766e2f3300dc3bb680c55b125a230826f52dd5e354d37edd54168a",
   "LICENSE": "0afa932ebeca3bdc7042b193408eef512ebd03f899fff00faef45d6be53342ce",
   "QUICKSTART.md": "186fd110f335de7c5f58239904aab6f39b2ac96e0203c3ae234a2ed9ec385f44",
-  "README.md": "27cb57f3193d9b85cfa84293858d4b10b356fd2e978e10a200bc883dc2f22778",
+  "README.md": "c9e660a34c691abaadee8673e1ba43a8c65d4f8858a3ba0cc6b23abc58dd5ab8",
   "bin/__init__.py": "5738b7e5608647f52e2e91246e4b604aceb6428eff90fcf2903d1e6f73ad2d7f",
-  "bin/gb": "8b027d345514a8f9bfdca3a3eab28c8a96f4a2dafab81987ccd65498b5681aeb",
+  "bin/gb": "7d10eddbe842a5777c49fa5f89862e6f14b2b92f95b38ded2ba24d0c11f50413",
   "bin/gb-advise.py": "7323a3e4cd28eb266e81a03b70592190db8a65636d7762b10eb4a1486f431747",
   "bin/gb-audit-remote.sh": "99ce2faee8a86dbcedef7b261ca317c7fa6f793793a7dbe63492573f85f0763d",
   "bin/gb-bench.py": "87961b1f526ea9f2648d2a5ab66051190bdd03f3787844dc49e3934fa5cc0d4c",
@@ -3190,13 +3190,7 @@
   ],
   "source_of_truth": "named files resolve from disk; allowlisted trees resolve from `git ls-files` only, so an unnamed working-tree file can never be exported"
  },
- "named_files_not_yet_tracked": [
-  ".github/ISSUE_TEMPLATE/bug.yml",
-  ".github/ISSUE_TEMPLATE/config.yml",
-  ".github/ISSUE_TEMPLATE/ux.yml",
-  ".github/PULL_REQUEST_TEMPLATE.md",
-  "docs/ROLES.md"
- ],
+ "named_files_not_yet_tracked": [],
  "skipped_in_allowlisted_trees": [],
  "named_exclusions": [
   {

@@ -272,7 +272,7 @@ Read from the CLI's own table. Every verb obeys it; the gate asserts agreement p
   g25-routine-liveness
 ```
 
-## Producers that prove themselves (30)
+## Producers that prove themselves (32)
 
 Each row was RUN to produce this table. A count here is the producer's own report, not a promise made on its behalf.
 
@@ -280,6 +280,7 @@ Each row was RUN to produce this table. A count here is the producer's own repor
 |---|---|
 | `bin/gb-advise.py` | 21/21 |
 | `bin/gb-blast.py` | 20/20 |
+| `bin/gb-bot-conformance.py` | pass |
 | `bin/gb-corpus.py` | 23/23 |
 | `bin/gb-demand.py` | 16/16 |
 | `bin/gb-digest.py` | 10/10 |
@@ -299,6 +300,7 @@ Each row was RUN to produce this table. A count here is the producer's own repor
 | `bin/gb-post.py` | 45/45 |
 | `bin/gb-readme.py` | 25/25 |
 | `bin/gb-sources.py` | 13/13 |
+| `bin/gb-surface-gate.py` | 55/55 |
 | `bin/gb-teach.py` | 28/28 |
 | `bin/gb-template-conformance.py` | 24/24 |
 | `bin/gb-templates.py` | 56/56 |
