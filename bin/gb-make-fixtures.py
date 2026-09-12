@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import datetime as dt
 import hashlib
 import json
 import pathlib
@@ -444,6 +445,10 @@ def inventory(
     enabled=True,
     drop_policy=False,
     server_bots=None,
+    # g25-routine-liveness asks a question no other check asks: is this routine PAST DUE and
+    # still never run? It needs `next_run_at_ms`, which this builder never emitted — which is
+    # exactly why disabling g25 still produced 54/54. A check no fixture can fail is not a check.
+    next_run_ms=None,
     usage=...,
 ) -> dict:
     doc = {
@@ -485,6 +490,7 @@ def inventory(
                         "enabled": enabled,
                         "recent_runs": list(routines),
                         "provenance": "user",
+                        "next_run_at_ms": next_run_ms,
                     }
                 ],
             }
@@ -1630,10 +1636,25 @@ def main() -> int:
     unmeasured.pop("tunables", None)
     write_root(out, "bad-tunables-missing", "2026-09-11", man, files, unmeasured, prev)
 
-    # g12 — money. RED when on-demand billing is on and nobody recorded a ceiling decision;
-    # ERROR when no inventory carries a usage block, because unmeasured spend is not bounded spend.
+    # g12 — money. RED when on-demand billing is on and the period is on pace to
+    # cross the included allowance; ERROR when no inventory carries a usage block,
+    # because unmeasured spend is not bounded spend.
+    # g12 REFRAMED 2026-09-11: the check no longer asks "is there a decision file",
+    # it asks "is this period on pace to cross the included allowance while
+    # on-demand is on". So the known-bad must plant a real overspend PACE, not a
+    # missing file. 45% used at 40% of the window elapsed projects to 112.5% —
+    # over the allowance, with on-demand enabled, which is the only state that
+    # actually bills. A flat raw-45% reading would call this fine, which is
+    # exactly the failure the projection exists to catch.
+    # The window is PINNED to the fixture date (not wall-clock-relative): the
+    # gate reads elapsed against its --now date, so a relative window drifts RED
+    # into GREEN within hours of generation. 2026-09-09T00:00Z..2026-09-14T00:00Z
+    # is 40% elapsed at the 2026-09-11 fixture date, deterministically, forever.
     spend_on = copy.deepcopy(USAGE_OK)
     spend_on["on_demand_enabled"] = True
+    spend_on["usage_percent"] = 45.0
+    spend_on["period_start"] = "2026-09-09T00:00:00Z"
+    spend_on["next_reset"] = "2026-09-14T00:00:00Z"
     write_root(
         out,
         "bad-ondemand-unbounded",
@@ -1648,6 +1669,32 @@ def main() -> int:
             ),
             "2026-09-11T0700.brain": inventory(
                 "brain", "fixture-brain.local", usage=spend_on
+            ),
+        },
+    )
+    # g25-routine-liveness: enabled, past its own next_run_at_ms, and ZERO runs ever.
+    # 1788998400000 = 2026-09-10T00:00:00Z, computed not guessed — the first attempt used
+    # 1789171200000 and called it "one day before", but it is 2026-09-12, two days AFTER the
+    # fixture date, so the fixture came out GREEN and the check still had no proof. A FIXED
+    # instant keeps this past-due forever instead of drifting the way a relative window would.
+    # What makes this distinct from g9-routine-health: nothing here has FAILED. The runs list
+    # is empty, not failing — the case g9 branches past, since it tests "runs is None" and
+    # "every run failed" and an empty list is neither.
+    dead_routine = dict(routines=(), next_run_ms=1788998400000)
+    write_root(
+        out,
+        "bad-routine-never-fired",
+        "2026-09-11",
+        man,
+        files,
+        GOOD_AUDIT,
+        prev,
+        inventories={
+            "2026-09-11T0700.studio": inventory(
+                "studio", "fixture.local", **dead_routine
+            ),
+            "2026-09-11T0700.brain": inventory(
+                "brain", "fixture-brain.local", **dead_routine
             ),
         },
     )

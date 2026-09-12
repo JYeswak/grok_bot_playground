@@ -41,11 +41,13 @@ import dataclasses
 import datetime as dt
 import importlib.util
 import json
+import hashlib
 import os
 import pathlib
 import re
 import shutil
 import socket
+import subprocess
 import sys
 import time
 import urllib.error
@@ -66,6 +68,40 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 BIN = ROOT / "bin"
 VERSION = "1.0.0"
 CONTRACT_VERSION = 1
+
+
+def build_stamp() -> str:
+    """A content hash of the producers this build actually carries.
+
+    WHY A HAND-EDITED VERSION IS NOT ENOUGH (measured 2026-09-12). The published mirror was a
+    STALE EXPORT: 18 registered verbs against 57 here, a `bin/gb` of 1997 lines against 3233.
+    Nothing could tell the two apart. `version` is a hand-edited constant in three files and
+    the exporter only checks the three for AGREEMENT, never for CHANGE, so a months-old export
+    and today's export produce identical metadata and `pip install -U` sees no upgrade.
+
+    And there was no `--version` flag at all: `gb --version` answered "unrecognized
+    arguments". A tool that cannot say what it is cannot be caught being out of date, which is
+    why the staleness survived long enough for someone to install 18 of 57 verbs and see no
+    warning.
+
+    So the stamp is DERIVED, never declared: the verb count plus a hash over the names and
+    sizes of every producer on disk. Two exports of different trees cannot agree on it, and
+    nobody has to remember to bump anything. Names and sizes rather than contents because this
+    runs on every `--version` and must stay cheap; it detects a producer added, removed, or
+    changed in length, which is the staleness class that actually occurred.
+    """
+    h = hashlib.sha256()
+    try:
+        rows = sorted(
+            (p.name, p.stat().st_size)
+            for p in BIN.iterdir()
+            if p.is_file() and (p.suffix in (".py", ".sh") or p.name == "gb")
+        )
+    except OSError:
+        return "unknown"
+    for name, size in rows:
+        h.update(f"{name}:{size}\n".encode())
+    return f"{len(rows)}p.{h.hexdigest()[:12]}"
 
 EXIT_OK, EXIT_FINDINGS, EXIT_USAGE = 0, 1, 2
 EXIT_ENVIRONMENT, EXIT_UPSTREAM, EXIT_REFUSED = 3, 4, 5
@@ -100,6 +136,8 @@ REPAIRS: Dict[str, Tuple[List[str], str]] = {
     "fixtures": (["gb-make-fixtures.py"], "regenerate the gate's fixture corpus from source"),
     "coverage": (["gb-coverage.py"], "rewrite COVERAGE.md from the artifacts on disk"),
     "types": (["gb-typecheck.py"], "re-measure the type floor and write the artifact"),
+    "surface": (["gb-surface-snapshot.py"], "re-fetch the vendor surface and write surface/<stamp>"),
+    "market": (["gb-market-snapshot.py"], "re-take the market snapshot and write market/<stamp>.json"),
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -228,6 +266,21 @@ EXAMPLES = """\
 class TriageArgs:
     """What is wrong right now, and the exact command that addresses it."""
 
+    check: Optional[str] = arg(
+        default=None,
+        help="one check id (e.g. g8-desktop-inventory); omit for the whole board",
+        choices=(
+            "g1-surface-fetch-integrity", "g2-surface-canary", "g3-snapshot-freshness",
+            "g4-client-update-applied", "g5-bot-charter-present", "g6-capability-delta-reviewed",
+            "g7-desktop-parity", "g8-desktop-inventory", "g9-routine-health",
+            "g10-loop-scheduled", "g11-tunable-delta-reviewed", "g12-ondemand-spend-bounded",
+            "g13-practitioner-index-reviewed", "g14-coverage-ratchet", "g15-market-delta-reviewed",
+            "g16-doc-delta-reviewed", "g17-discovery-triaged", "g18-mcp-surface-healthy",
+            "g19-fleet-earning-its-keep", "g20-context-archived", "g21-usecase-corpus-reviewed",
+            "g22-durable-io", "g23-types-ratcheted", "g24-cli-contract", "g25-routine-liveness",
+        ),
+        positional=True,
+    )
     json: bool = arg(help="machine-readable envelope on stdout")
 
 
@@ -263,6 +316,8 @@ class SetupArgs:
 
     apply: bool = arg(help="actually register and measure; without this the command only plans")
     device: Optional[str] = arg(help="label for THIS machine in desktops.json (default: hostname)")
+    persona: Optional[str] = arg(help="persona id for the tailored setup walk (see --list-personas)")
+    list_personas: bool = arg(help="list the 12 persona packs and exit")
     json: bool = arg(help="machine-readable envelope on stdout")
 
 
@@ -279,7 +334,7 @@ class RepairArgs:
 class ValidateArgs:
     """Verify a thing without changing it. Pure read."""
 
-    thing: str = arg(positional=True, help="plugin | mcp | types | platform | fixtures")
+    thing: str = arg(positional=True, help="plugin | mcp | types | platform | fixtures | coverage | surface | archive | discovery | gaps | market | usecases | utilization | whatchanged")
     json: bool = arg(help="machine-readable envelope on stdout")
 
 
@@ -335,6 +390,19 @@ class PlatformArgs:
 
 
 @dataclasses.dataclass(frozen=True)
+class MonitorArgs:
+    """Named thresholds over the artifacts already on disk, for a scheduler to branch on."""
+
+    once: bool = arg(help="a single pass (the default)")
+    watch: bool = arg(help="loop until interrupted; refused with --json")
+    interval: int = arg(default=300, help="seconds between --watch passes")
+    budget_pct: Optional[float] = arg(help="spend ceiling as a percent of the allowance")
+    max_age_days: Optional[int] = arg(help="artifact staleness ceiling in days")
+    json: bool = arg(help="machine-readable envelope on stdout")
+    dry_run: bool = arg(help="evaluate and report, but write no artifact")
+
+
+@dataclasses.dataclass(frozen=True)
 class MineArgs:
     """Mine franken-harvest and the local mirror for capability this deployment could adopt."""
 
@@ -345,9 +413,576 @@ class MineArgs:
     json: bool = arg(help="machine-readable envelope on stdout")
 
 
+@dataclasses.dataclass(frozen=True)
+class TemplatesArgs:
+    """The Bot templates this repo proposes, and the rules that keep them runnable."""
+
+    action: str = arg(
+        default="list",
+        help="list | show | validate | stats | deploy | publish",
+        choices=("list", "show", "validate", "stats", "deploy", "publish"),
+        positional=True,
+    )
+    id: Optional[str] = arg(help="template id, for `show`, `deploy` and `publish`", positional=True)
+    apply: bool = arg(help="deploy/publish: act for real (dry run without it)")
+    screened: bool = arg(help="publish: a human reviewed the charter for private data")
+    force: bool = arg(help="publish: allow minting drafts under an owned template (refused by default)")
+    source: Optional[str] = arg(help="publish: source Bot name or uuid (default: Grok)")
+    path: Optional[str] = arg(help="templates directory (default: templates/)")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+
+@dataclasses.dataclass(frozen=True)
+class WalkArgs:
+    """Guided tour: walk the CLI, or walk the Bot templates this repo proposes."""
+
+    track: str = arg(
+        default="cli", help="cli | bots", choices=("cli", "bots"), positional=True
+    )
+    paste: Optional[str] = arg(help="print ONLY that template's charter, ready to paste")
+    step: bool = arg(help="page through one item at a time")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+
+@dataclasses.dataclass(frozen=True)
+class DigestArgs:
+    """What changed, in prose, with an executable action on every row."""
+
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+
+@dataclasses.dataclass(frozen=True)
+class MirrorArgs:
+    """Read YOUR Grok Bot deployment off this machine and rank it against the corpus."""
+
+    deep: bool = arg(help="also read routines, memory and usage from the API (read-only)")
+    save: bool = arg(
+        help="record this reading in mirror/<ISO>.json so a later run can diff it"
+    )
+    since: Optional[str] = arg(
+        metavar="PATH|latest",
+        help="diff this reading against a saved snapshot and print what MOVED",
+    )
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+
+@dataclasses.dataclass(frozen=True)
+class BlastArgs:
+    """What your Bots can do UNATTENDED, and how bad it could get.
+
+    Measured on this account: every one of 13 Bots reaches all 142 write-shaped tool instances,
+    because the effective MCP config is ACCOUNT-level with no per-Bot scope — you cannot reduce
+    one Bot's reach without reducing every Bot's. 130 of those 142 are named by an auto-review
+    rule; the 12 that are not are all CREATIONS, because the account's rules name sending,
+    paying, publishing, deleting and changing production, and never name creating.
+
+    The worst cell is 2 of 13: reaches a write-shaped tool no rule names, runs unattended on an
+    enabled routine, and cannot notify its operator.
+
+    Two figures are HEURISTIC and labelled as such wherever they surface. The honest signal
+    exists — MCP tool definitions carry `annotations.readOnlyHint` / `destructiveHint`, the
+    server's own answer — but `bin/gb-deployment-audit.py` records only the tool name and a
+    count and discards the rest, so it is not on disk. Retiring the heuristic is an audit fix,
+    not something this verb can work around.
+    """
+
+    json: bool = arg(help="machine-readable envelope on stdout")
+    selftest: bool = arg(help="prove this module's properties")
+
+
+@dataclasses.dataclass(frozen=True)
+class DemandArgs:
+    """Integrations builders ask for that no installable connector serves."""
+
+    action: str = arg(
+        default="rank", help="rank | gaps", choices=("rank", "gaps"), positional=True
+    )
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+
+@dataclasses.dataclass(frozen=True)
+class GalaxyArgs:
+    """Baseline and diff the ecosystem across the Sep 15-17 Grok Bot Galaxy livestream."""
+
+    action: str = arg(
+        default="sessions",
+        help="baseline | diff | sessions",
+        choices=("baseline", "diff", "sessions"),
+        positional=True,
+    )
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+
+@dataclasses.dataclass(frozen=True)
+class FleetArgs:
+    """Talk to the live fleet: roster and routines from the SERVER, or one message to one Bot.
+
+    Reads the roster from `ListGrokBotAgents`, deliberately, not from the local
+    `sand-client-persistence` cache — that cache lagged the API by minutes and reported a live
+    Bot as deleted.
+    """
+
+    action: str = arg(
+        default="roster",
+        help="roster | routines | send | rebuild | rollback",
+        choices=("roster", "routines", "send", "rebuild", "rollback"),
+        positional=True,
+    )
+    bot: Optional[str] = arg(help="Bot name (exact, or a unique prefix)")
+    text: Optional[str] = arg(help="send: the message body")
+    yes: bool = arg(help="send: actually send it (dry run without this)")
+    only: Optional[str] = arg(help="rebuild: just this source Bot name")
+    spec: Optional[str] = arg(help="rebuild: Bot list PATH instead of fleet-spec.json")
+    apply: bool = arg(help="rebuild: instantiate + shape after planning (dry run without it)")
+    manifest: Optional[str] = arg(help="rollback: delete exactly what that manifest created")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+@dataclasses.dataclass(frozen=True)
+class CorpusArgs:
+    """The 645-Bot corpus, with every figure's DENOMINATOR stated."""
+
+    action: str = arg(
+        default="stats",
+        help="stats | builders | categories | freshness",
+        choices=("stats", "builders", "categories", "freshness"),
+        positional=True,
+    )
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+
+@dataclasses.dataclass(frozen=True)
+class DogfoodArgs:
+    """Capability this repo has that `gb` cannot reach — a missing verb is a defect."""
+
+    action: str = arg(
+        default="audit", help="audit | baseline", choices=("audit", "baseline"), positional=True
+    )
+    accept: Optional[str] = arg(help="record an accepted new gap (who)")
+    why: Optional[str] = arg(help="record why a new gap was accepted")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+
+@dataclasses.dataclass(frozen=True)
+class GatesdocArgs:
+    """Fail when GATES.md and the gate producer disagree about the gate."""
+
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+
+@dataclasses.dataclass(frozen=True)
+class ReadmeArgs:
+    """Derive the public README's factual half from the running tool.
+
+    Every count in that file was hand-typed and every one had drifted: 24 checks against a
+    live 25, 54 fixtures against 55, a verb table frozen at nineteen while the CLI reached
+    fifty-seven. `gb gatesdoc` now FAILS on exactly that drift, which is the right alarm and
+    the wrong remedy — an alarm that fires on a number a human has to retype will keep firing.
+
+    So the README has two halves and only one is written by a person. The hero, "What this
+    is", "Install" and "What it does not do" are HANDWRITTEN: judgement, voice, and the
+    promises a tool makes. The verbs, exit codes, gate, selftests and shipped trees are
+    DERIVED, strictly between `<!-- gb:derived:begin -->` and `<!-- gb:derived:end -->`, and
+    every byte outside those markers is preserved — a selftest leg proves it, because a
+    generator that eats prose gets switched off within a week and then the counts rot again.
+
+    `--check` exits 1 when the block is stale, which is what makes this gated rather than
+    remembered. The build STAMP is deliberately not rendered: it hashes every producer on
+    disk, so printing it would report the document stale on every commit until everyone
+    learned to ignore the alarm. The doc carries the command; the command carries the value.
+    """
+
+    write: bool = arg(help="regenerate the derived block")
+    json: bool = arg(help="the measured facts as an envelope")
+    selftest: bool = arg(help="prove this module's properties")
+
+
+@dataclasses.dataclass(frozen=True)
+class AdviseArgs:
+    """Rank what to do next by joining every producer this repo already runs.
+
+    Committed at 953bb31 and registered NOWHERE — absent from this command table AND from the
+    exporter's allowlist, so it was a dead verb twice over: unreachable locally and unshipped
+    publicly. Found by `gb dogfood audit`, which exists to find exactly this.
+    """
+
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+
+@dataclasses.dataclass(frozen=True)
+class XArgs:
+    """What practitioners are ACTUALLY doing with Grok Bot, ranked by distinct authors.
+
+    `bin/gb-x-sweep.py` holds the ONLY use-case classifier in this repo and was reachable by
+    no verb and shipped to nobody — the same double-dead defect as `advise`, found the same
+    way. It produced 487 use-describing posts from 448 distinct authors (442 authored), and
+    that number could not be re-derived through the CLI at all.
+
+    Ranking is by DISTINCT AUTHORS, never by post count or engagement. Measured 2026-09-11:
+    ranking by citations made one account talking to itself (`alltoolsverse`, 5x) look like a
+    market, and an 866k-impression row I cited turned out to belong to a different @mattyp
+    post about moving to San Francisco. `authored` excludes relays; in `agent-orchestration`
+    that is the difference between 43 and 38, because all five relays are one SpaceXAI
+    engineer. Cite the authored number.
+
+    `reclassify` is OFFLINE — zero search calls, ~1s — so any figure here is reproducible
+    without spending the rate limit, which is what makes it quotable.
+    """
+
+    action: str = arg(
+        default="reclassify",
+        help="reclassify (offline, from artifacts) | collect (live search) | matrix | fetch (gb-x.py firehose)",
+        choices=["reclassify", "collect", "matrix", "fetch"],
+        positional=True,
+    )
+    max_calls: Optional[int] = arg(
+        help="hard ceiling on search calls; collect refuses to exceed it"
+    )
+    dry_run: bool = arg(help="show the query matrix without spending a call")
+    apply: bool = arg(help="fetch: write the artifact (quota spent regardless)")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+@dataclasses.dataclass(frozen=True)
+class PostArgs:
+    """Posts that RUN their own numbers before they ship, and refuse themselves if they fail.
+
+    Measured 2026-09-12, against a survey of 42 third-party Grok Bot sources: 11 of them
+    (26%) carry a reproducible number at all. Every post this emits carries the command that
+    re-derives it, because that 74% is the whole opening.
+
+    The gate is not decorative. On its first run over eight real claims it refused two of
+    them, both with the highest teaching value in the set — and both refusals were MY
+    command's fault, not the claim's: a wrong dict key crashed the reproduce line. That
+    exposed a second defect in the verifier itself, which was reporting a crashed instrument
+    as a false claim. A traceback is now its own verdict and never impugns the claim.
+
+    `draft` verifies and prints. `record` writes to the ledger and refuses to record anything
+    that does not verify at that moment. `verify` re-runs everything already published, and a
+    number that has MOVED is reported as drift rather than error — those are the best posts,
+    because our own prior figure is the baseline nobody else has.
+    """
+
+    action: str = arg(
+        default="draft",
+        help="draft | verify | ledger | record",
+        choices=["draft", "verify", "ledger", "record"],
+        positional=True,
+    )
+    limit: Optional[int] = arg(help="stop after N publishable posts")
+    out: bool = arg(help="also write posts/<ISO>.md")
+    include_published: bool = arg(help="do not hide ledger repeats")
+    ids: Optional[str] = arg(help="record: comma-separated claim ids")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+
+@dataclasses.dataclass(frozen=True)
+class FindingsArgs:
+    """The claim SUPPLY: every teachable thing the verbs can prove, bound to its command.
+
+    Feeds `gb post`. The two are deliberately separate: this one asks "what is true and
+    re-derivable", the other asks "is it worth telling anyone, and does the command still
+    agree". Collapsing them would mean the thing that generates a claim also decides whether
+    it passes, and a producer that grades itself is the failure mode this repo exists to avoid.
+
+    `--verify-commands` re-runs every row's command and exits 1 on any that answers nothing.
+    It caught two rotted commands the day it was written, both from jq precedence:
+    `[...] | length, .plugins.total` parses as `[...] | (length, .plugins.total)`.
+    """
+
+    verify_commands: bool = arg(
+        help="re-run every row's command; exit 1 if any fails to re-derive its row"
+    )
+    no_write: bool = arg(help="print only; do not write the artifact")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+
+@dataclasses.dataclass(frozen=True)
+class TeachArgs:
+    """What form a Grok Bot teaching post actually takes, measured over the collected corpus.
+
+    The headline is the opening: 51 teaching posts in 3,026, from 34 distinct authors — 1.7%
+    of everything said about this product explains HOW to do anything. Only 3 authors (9%)
+    ever show a command, one author holds 100% of before/after framing, and thread-markers
+    and video-chapters are ABSENT with a positive control proving the detector can see forms
+    that are present.
+
+    Precision is a CENSUS, not an estimate: all 77 detector hits were read by hand and each
+    verdict recorded, giving 51/77 = 66.2%. Two CJK relay frames got past every rule and were
+    found only by hand, one of which changed a verdict — so the rule set is known-incomplete
+    and says so rather than implying coverage.
+    """
+
+    action: str = arg(
+        default="forms",
+        help="forms | absences | authors | posts | census",
+        choices=["forms", "absences", "authors", "posts", "census"],
+        positional=True,
+    )
+    write: bool = arg(help="write the teach/<ISO>.json artifact")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+
+@dataclasses.dataclass(frozen=True)
+class RoadmapArgs:
+    """The open product gaps, each re-proved on every run so the list cannot go stale.
+
+    Four wizard duels produced 24 ideas and nothing could say which had shipped. An audit
+    measured it: 2 shipped as named, 6 under different names, 8 partial, 8 never. Searching
+    for the PROPOSED VERB NAMES — my own first method — found one and understated delivery
+    by seven, because `gb delta` had shipped as `gb digest` and the routine witness as the
+    gate check `g25-routine-liveness`.
+
+    So every row here carries a command plus the signal that appears in that command's output
+    WHILE the gap exists. A gap someone closes drops off by itself; nobody has to remember to
+    delete a line. Rows may also carry a positive CONTROL the probe must see before a CLOSED
+    verdict is believed — added after a real, unfixed gap reported CLOSED because its signal
+    never appeared in its own command's output. A wrong signal fails in the flattering
+    direction, which is the one nobody re-checks.
+
+    Ranked by severity x reach, effort breaking ties only. The first ranking divided by
+    effort and put a trivial README fix above a blocking gap every operator hits, which is
+    exactly how a backlog fills with easy wins while the structural problem ages.
+    """
+
+    detail: bool = arg(help="full why/fix/proof for every open gap")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+@dataclasses.dataclass(frozen=True)
+class McpArgs:
+    """Add MCP servers, proof-call their tools, and cut tool allowlists — programmatic, receipted."""
+
+    action: str = arg(
+        help="add | tools | call | allowlist | list",
+        choices=("add", "tools", "call", "allowlist", "list"),
+        positional=True,
+    )
+    target: Optional[str] = arg(help="add: server URL; otherwise the config server name", positional=True)
+    tool: Optional[str] = arg(help="call: tool name (short or server-prefixed)", positional=True)
+    args_json: Optional[str] = arg(help="call: JSON args for the tool", positional=True)
+    name: Optional[str] = arg(help="add: config name (default: derived from the URL)")
+    agent: Optional[str] = arg(help="call: Bot name/id to attribute the call to")
+    note: Optional[str] = arg(help="allowlist: boundary note recorded on the entry")
+    keep: Tuple[str, ...] = arg(help="allowlist: tools to keep; repeatable")
+    json: bool = arg(help="machine-readable envelope on stdout")
+@dataclasses.dataclass(frozen=True)
+class BotArgs:
+    """Talk to Bots and read them back — dispatch turns, read previews, full ask lifecycle."""
+
+    action: str = arg(
+        help="send | read | log | ask | resolve",
+        choices=("send", "read", "log", "ask", "resolve"),
+        positional=True,
+    )
+    target: Optional[str] = arg(help="Bot name or uuid", positional=True)
+    text: Optional[str] = arg(help="send/ask: message text", positional=True)
+    timeout: float = arg(default=300.0, help="ask: await seconds")
+    expect: Optional[str] = arg(help="ask: regex the reply must match")
+    limit: int = arg(default=10, help="log: entry count")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+
+@dataclasses.dataclass(frozen=True)
+class HandoverArgs:
+    """Give a rebuilt Bot its predecessor's context back (dry run unless --send)."""
+    bot: Optional[str] = arg(help="restore one Bot by name (default: show all)")
+    send: bool = arg(help="actually deliver; dispatches a turn and spends allowance")
+    json: bool = arg(help="machine-readable envelope on stdout")
+@dataclasses.dataclass(frozen=True)
+class GroupArgs:
+    """Rooms (multi-Bot groups): list, create, members, send. Dry run unless --yes."""
+    action: str = arg(
+        help="list | create | members | send",
+        choices=("list", "create", "members", "send"),
+        positional=True,
+    )
+    target: Optional[str] = arg(help="room name or uuid (members/send)", positional=True)
+    text: Optional[str] = arg(help="create: description; send: message text", positional=True)
+    members: Optional[str] = arg(help="create: csv uuids; members: --set csv uuids")
+    set: Optional[str] = arg(help="members: full-set csv uuids (replace, no delta exists)")
+    mention: Optional[str] = arg(help="send: Bot name rendered as @mention with the ask")
+    yes: bool = arg(help="act for real (rooms persist; no delete RPC exists)")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+@dataclasses.dataclass(frozen=True)
+class DmArgs:
+    """Bot-to-Bot DM (confirmed server router, not a private room). Dry run unless --yes."""
+    from_bot: Optional[str] = arg(help="sending Bot name or uuid", positional=True)
+    to_bot: Optional[str] = arg(help="target Bot name or uuid", positional=True)
+    text: Optional[str] = arg(help="message text", positional=True)
+    yes: bool = arg(help="act for real (spends allowance)")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+
+@dataclasses.dataclass(frozen=True)
+class RecordArgs:
+    """Turn the per-desktop hand audit into a machine-checkable artifact."""
+    device: Optional[str] = arg(help="label from desktops.json")
+    root: Optional[str] = arg(help="repo root (default: autodetected)")
+    template: bool = arg(help="write a skeleton to fill in")
+    no_roster: bool = arg(help="do not pre-name Bots from the newest audit")
+    validate: Optional[str] = arg(help="validate FILE, fail on unlooked nulls")
+    list: bool = arg(help="what is recorded, and how old")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+@dataclasses.dataclass(frozen=True)
+class MatrixArgs:
+    """Can we use X? Computed from the shipped client, not remembered from a doc."""
+    id: Optional[str] = arg(help="show one feature in full")
+    root: Optional[str] = arg(help="repo root (default: autodetected)")
+    todo: bool = arg(help="only features that are ON and not measured-adopted")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+@dataclasses.dataclass(frozen=True)
+class ExportArgs:
+    """Split the publishable TOOL out of this INSTANCE repository, repeatably."""
+    out: str = arg(metavar="DIR", help="destination directory for the export", positional=True)
+    force: bool = arg(help="replace DIR when it already exists and is not empty")
+    no_git: bool = arg(help="skip `git init` + initial commit in the export")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+@dataclasses.dataclass(frozen=True)
+class GatesArgs:
+    """What this account can use, by family, with the unnameable remainder stated."""
+    family: Optional[str] = arg(help="one family in full")
+    markdown: bool = arg(help="write capabilities/<date>.md from the LIVE payload")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+@dataclasses.dataclass(frozen=True)
+class BenchArgs:
+    """Measure the latency of the hot operator surface. Measures only; changes nothing."""
+    repeat: int = arg(default=5, help="runs per row; min/median/max are over these")
+    verb: Tuple[str, ...] = arg(help="row to measure (repeatable); omit for all")
+    dry_run: bool = arg(help="measure and print, write no artifact")
+    json: bool = arg(help="the artifact on stdout instead of a table")
+
+@dataclasses.dataclass(frozen=True)
+class InventoryArgs:
+    """Read the Grok Bot account surface, or pull a fresh per-device inventory."""
+    read: str = arg(default="account", help="account | usage | computers | plugins | mcp | skills | pull",
+                   choices=("account", "usage", "computers", "plugins", "mcp", "skills", "pull"),
+                   metavar="{account,usage,computers,plugins,mcp,skills,pull}", positional=True)
+    device: Optional[str] = arg(help="pull: desktop label from desktops.json")
+    apply: bool = arg(help="pull: write the artifact (dry run without it)")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+@dataclasses.dataclass(frozen=True)
+class GoldensArgs:
+    """Capture or verify the CLI's observable behaviour (golden baselines)."""
+    action: str = arg(default="verify", help="capture | verify", choices=("capture", "verify"), positional=True)
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+@dataclasses.dataclass(frozen=True)
+class SpendArgs:
+    """Per-Bot spend ledger from live usage-event reads (read-only)."""
+    out: str = arg(default="spend", help="artifact directory (default: spend/)")
+    json: bool = arg(help="machine-readable envelope on stdout")
+@dataclasses.dataclass(frozen=True)
+class DeploymentArgs:
+    """The deployment audit: offline by default, --live reads the account."""
+    action: str = arg(default="audit", help="audit", choices=("audit",), positional=True)
+    live: bool = arg(help="read the live account (client session, memory-only auth)")
+    label: Optional[str] = arg(help="desktop label for the audit artifact")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+@dataclasses.dataclass(frozen=True)
+class FeedsArgs:
+    """Daily-tick feed collection. Probe by default (never touches network)."""
+    action: str = arg(default="probe", help="collect | probe", choices=("collect", "probe"), positional=True)
+    retired: bool = arg(help="include retired sources")
+    root: Optional[str] = arg(help="repo root (default: autodetected)")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+@dataclasses.dataclass(frozen=True)
+class GithubArgs:
+    """Daily-tick GitHub collection. Dry-run unless --apply writes."""
+    action: str = arg(default="collect", help="collect | selftest", choices=("collect", "selftest"), positional=True)
+    apply: bool = arg(help="write the artifact (dry run without it)")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+@dataclasses.dataclass(frozen=True)
+class LinksArgs:
+    """Daily-tick link fetcher. Probe plans only; collect fetches."""
+    action: str = arg(default="probe", help="collect | probe", choices=("collect", "probe"), positional=True)
+    limit: Optional[int] = arg(help="max links")
+    max_age: Optional[float] = arg(help="max age days")
+    refusals: bool = arg(help="show refusal ledger")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+@dataclasses.dataclass(frozen=True)
+class SourcesArgs:
+    """Daily-tick source collection. Velocity reads; collect fetches."""
+    action: str = arg(default="velocity", help="collect | velocity", choices=("collect", "velocity"), positional=True)
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+@dataclasses.dataclass(frozen=True)
+class StoreArgs:
+    """Content-addressed store ops. Diff/stats read; ingest/compact write."""
+    action: str = arg(default="stats", help="ingest | diff | stats | compact | selftest",
+                      choices=("ingest", "diff", "stats", "compact", "selftest"), positional=True)
+    kind: Tuple[str, ...] = arg(help="root to operate on (repeatable)")
+    limit: Optional[int] = arg(help="max rows")
+    json_out: bool = arg(help="the artifact on stdout instead of files")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+@dataclasses.dataclass(frozen=True)
+class SkillCoverageArgs:
+    """Operations × skills coverage: every op reachable, every skill earning."""
+    top: int = arg(default=10, help="top-N uncovered/cold lists to print")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+
+
+@dataclasses.dataclass(frozen=True)
+class DailyArgs:
+    """The daily tick: run the collection fleet, ingest, compact, then diff against yesterday."""
+
+    no_fetch: bool = arg(help="skip the network producers; ingest and diff what is on disk")
+    kind: Tuple[str, ...] = arg(help="only diff these producer roots; repeatable")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+
 COMMANDS: Dict[str, type] = {
+    "mcp": McpArgs,
+    "bot": BotArgs,
+    "group": GroupArgs,
+    "dm": DmArgs,
+    "handover": HandoverArgs,
+    "record": RecordArgs,
+    "matrix": MatrixArgs,
+    "export": ExportArgs,
+    "gates": GatesArgs,
+    "bench": BenchArgs,
+    "findings": FindingsArgs,
+    "inventory": InventoryArgs,
+    "goldens": GoldensArgs,
+    "spend": SpendArgs,
+    "deployment": DeploymentArgs,
+    "feeds": FeedsArgs,
+    "github": GithubArgs,
+    "links": LinksArgs,
+    "sources": SourcesArgs,
+    "store": StoreArgs,
+    "skill-coverage": SkillCoverageArgs,
+    "advise": AdviseArgs,
+    "x": XArgs,
+    "post": PostArgs,
+    "roadmap": RoadmapArgs,
     "setup": SetupArgs,
+    "teach": TeachArgs,
+    "daily": DailyArgs,
+    "walk": WalkArgs,
+    "templates": TemplatesArgs,
+    "digest": DigestArgs,
+    "mirror": MirrorArgs,
+    "demand": DemandArgs,
+    "blast": BlastArgs,
+    "galaxy": GalaxyArgs,
+    "fleet": FleetArgs,
+    "corpus": CorpusArgs,
+    "dogfood": DogfoodArgs,
+    "gatesdoc": GatesdocArgs,
+    "readme": ReadmeArgs,
     "mine": MineArgs,
+    "monitor": MonitorArgs,
     "platform": PlatformArgs,
     "triage": TriageArgs,
     "work": WorkArgs,
@@ -458,7 +1093,7 @@ def newest(dirname: str) -> Optional[Dict[str, Any]]:
 # ---------------------------------------------------------------------------------------------
 PRODUCER_ROOTS: Tuple[str, ...] = (
     "deployment", "inventory", "surface", "market", "usecases", "discovery", "mcp",
-    "typecheck", "archive", "utilization", "gaps",
+    "typecheck", "archive", "utilization", "gaps", "mine", "monitor", "bench",
 )
 DEVICE_REGISTRY = "desktops.json"
 # Every producer here stamps its output `%Y-%m-%d…`: `deployment/2026-09-11T0008.json`,
@@ -580,6 +1215,12 @@ def cmd_triage(a: TriageArgs) -> int:
     st = instance_state()
     if st.unconfigured:
         return route_unconfigured("triage", a.json, st)
+    if a.check is not None:
+        return _passthrough(
+            [sys.executable, str(BIN / "gb-triage-check.py"), a.check]
+            + (["--json"] if a.json else []),
+            budget_s=300, label="triage-check",
+        )
     proc = run([sys.executable, str(BIN / "gb-surface-gate.py"), "--json"], timeout_s=180, cwd=ROOT)
     if not (proc.out or "").strip():
         print("gb: the gate produced no output — run `gb doctor --scope gate`", file=sys.stderr)
@@ -1437,6 +2078,17 @@ def _measure(label: str, pre: Dict[str, str], apply: bool, plat: Platform) -> Li
 
 def cmd_setup(a: SetupArgs) -> int:
     """Zero to measured: preflight, register this desktop, take the first measurements, verify."""
+    if a.list_personas or a.persona:
+        # Persona walk composes AFTER machine setup (it assumes a measured instance)
+        # but runs standalone: gb-setup-persona.py discovers personas/*.json itself.
+        argv: List[str] = [sys.executable, str(BIN / "gb-setup-persona.py")]
+        if a.list_personas:
+            argv.append("--list")
+        else:
+            argv += ["--persona", str(a.persona)]
+        if a.json:
+            argv.append("--json")
+        return _passthrough(argv, budget_s=120, label="setup persona")
     label, bad = _device_label(a.device)
     if label is None:
         print(f"gb: {bad}", file=sys.stderr)
@@ -1755,7 +2407,16 @@ def cmd_validate(a: ValidateArgs) -> int:
              "mcp": ["gb-mcp-validate.py"],
              "types": ["gb-typecheck.py", "--dry-run"],
              "platform": ["gb", "platform", "--selftest"],
-             "fixtures": ["gb-surface-gate.py", "--selftest"]}
+             "fixtures": ["gb-surface-gate.py", "--selftest"],
+             "coverage": ["gb-coverage.py", "--json"],
+             "surface": ["gb-surface-snapshot.py", "--json"],
+             "archive": ["gb-context-archive.py", "--json"],
+             "discovery": ["gb-discover.py", "--json"],
+             "gaps": ["gb-gaps.py", "--json"],
+             "market": ["gb-market-snapshot.py", "--json"],
+             "usecases": ["gb-usecases.py", "--json"],
+             "utilization": ["gb-utilization.py", "--json"],
+             "whatchanged": ["gb-whatchanged.py", "--json"]}
     if a.thing not in known:
         print(f"gb: cannot validate {a.thing!r}. Known: {', '.join(known)}\n"
               f"    try: gb validate plugin", file=sys.stderr)
@@ -1936,6 +2597,35 @@ def cmd_completion(a: CompletionArgs) -> int:
     return EXIT_OK
 
 
+def cmd_monitor(a: MonitorArgs) -> int:
+    """Pass through to `bin/gb-monitor.py`, relaying its contract unchanged.
+
+    The producer owns the thresholds and their justification; this verb only makes them
+    reachable. Its exit codes are returned verbatim rather than remapped, including the one
+    that matters most: ANY unmeasured threshold exits 3, dominating a BREACH's 1. That ordering
+    is the board's own severity lattice — "I could not measure it" outranks "I measured it and
+    it is bad", because a threshold you cannot read is not a threshold you passed.
+    """
+    argv: List[str] = [sys.executable, str(BIN / "gb-monitor.py")]
+    if a.watch:
+        argv += ["--watch", "--interval", str(a.interval)]
+    if a.budget_pct is not None:
+        argv += ["--budget-pct", str(a.budget_pct)]
+    if a.max_age_days is not None:
+        argv += ["--max-age-days", str(a.max_age_days)]
+    if a.dry_run:
+        argv.append("--dry-run")
+    if a.json:
+        argv.append("--json")
+    # --watch has no finite budget by construction; everything else is one gate child (~0.3s).
+    proc = run(argv, timeout_s=86400 if a.watch else 300, cwd=ROOT)
+    if proc.out:
+        print(proc.out, end="" if proc.out.endswith("\n") else "\n")
+    if proc.err:
+        print(proc.err, end="" if proc.err.endswith("\n") else "\n", file=sys.stderr)
+    return int(proc.code)
+
+
 def cmd_mine(a: MineArgs) -> int:
     """Pass through to `bin/gb-mine.py`.
 
@@ -1967,20 +2657,811 @@ def cmd_mine(a: MineArgs) -> int:
         print(proc.out, end="" if proc.out.endswith("\n") else "\n")
     if proc.err:
         print(proc.err, end="" if proc.err.endswith("\n") else "\n", file=sys.stderr)
-    return proc.code
+    return int(proc.code)
+
+def _passthrough(argv: List[str], *, budget_s: int, label: str) -> int:
+    """Relay a producer verbatim: its stdout, its stderr, its exit code.
+
+    The dispatcher must not translate a producer's contract. `gb templates validate` has to
+    exit 1 on a bad template exactly as `gb-templates.py validate` does, or the verb is a
+    different tool wearing the same name.
+
+    ONE EXCEPTION, added 2026-09-12: a producer that is not on disk. Measured in a public
+    clone, NINE verbs reached this line with a missing script and CPython answered for us —
+    `can't open file '.../bin/gb-bot.py'`, exit 2. That is wrong twice. The exit code says
+    USAGE, blaming the operator's command line, when this tool's own published table reserves
+    3 for ENVIRONMENT, "missing producer or toolchain". And the message names a path the
+    reader did not choose and cannot fix.
+
+    Relaying a contract is right; relaying CPython's argv handling is not a contract, it is
+    the absence of one. `gb export` is the permanent case: the publisher cannot ship itself,
+    because its own leak-scanner patterns contain the client identifiers they hunt, so a
+    clone will always lack it and should say so plainly.
+    """
+    script = pathlib.Path(argv[1]) if len(argv) > 1 else None
+    if script is not None and script.suffix in (".py", ".sh") and not script.exists():
+        print(
+            f"gb {label}: this build does not ship {script.name} — the verb is registered but "
+            f"its producer is absent, so it cannot run here. Run it from a full checkout.",
+            file=sys.stderr,
+        )
+        return EXIT_ENVIRONMENT
+    proc = run(argv, timeout_s=budget_s, cwd=ROOT)
+    if proc.timed_out:
+        print(f"gb: {label} exceeded its {budget_s}s budget", file=sys.stderr)
+        return EXIT_ENVIRONMENT
+    if proc.out:
+        print(proc.out, end="" if proc.out.endswith("\n") else "\n")
+    if proc.err:
+        print(proc.err, end="" if proc.err.endswith("\n") else "\n", file=sys.stderr)
+    return int(proc.code)
+
+
+def cmd_templates(a: TemplatesArgs) -> int:
+    """Pass through to `bin/gb-templates.py` — the proposed Bot templates and their rules.
+
+    `deploy` was registered in the producer and NOT here, so `gb templates deploy` answered
+    `invalid choice` while every commit message and every hand-off cited it as the one-touch
+    path. Measured 2026-09-11 by the dogfood audit — a verb documented but never once invoked
+    through the CLI it was documented against. That is the exact failure the dogfooding rule
+    exists to catch, and it caught its author.
+    """
+    argv: List[str] = [sys.executable, str(BIN / "gb-templates.py"), a.action]
+    if a.action in ("show", "deploy", "publish"):
+        if not a.id:
+            print(
+                f"gb: `templates {a.action}` needs an id — try `gb templates list`",
+                file=sys.stderr,
+            )
+            return EXIT_USAGE
+        argv.append(a.id)
+    if a.apply:
+        if a.action not in ("deploy", "publish"):
+            print("gb: --apply only means something for `templates deploy|publish`", file=sys.stderr)
+            return EXIT_USAGE
+        argv.append("--apply")
+    if a.action == "publish" and a.apply:
+        if not a.screened:
+            print("gb: `templates publish --apply` needs --screened (human reviewed the charter)",
+                  file=sys.stderr)
+            return EXIT_USAGE
+        argv.append("--screened")
+    if a.action == "publish":
+        if a.source:
+            argv += ["--source", a.source]
+        if a.force:
+            argv.append("--force")
+    if a.path:
+        argv += ["--path", a.path]
+    if a.json:
+        argv.append("--json")
+    # deploy/publish talk to the live account; give them the producer's own budget.
+    return _passthrough(argv, budget_s=600 if a.action in ("deploy", "publish") else 120, label="templates")
+
+
+def cmd_walk(a: WalkArgs) -> int:
+    """Pass through to `bin/gb-walk.py` — the guided tour of the CLI and the Bot templates."""
+    argv: List[str] = [sys.executable, str(BIN / "gb-walk.py")]
+    if a.paste:
+        argv += ["bots", "--paste", a.paste]
+    else:
+        argv.append(a.track)
+        if a.step:
+            argv.append("--step")
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=300, label="walk")
+
+
+def cmd_daily(a: DailyArgs) -> int:
+    """Pass through to `bin/gb-daily.sh` — the daily tick.
+
+    Weekly was the wrong clock. Measured 2026-09-11: the whole docs.x.ai surface carries ONE
+    lastmod and rebuilds inside the week, GitHub showed 270 repos pushed in a day, and the X
+    firehose is hourly. A weekly poll against a daily surface reports yesterday's world.
+    """
+    argv: List[str] = [str(BIN / "gb-daily.sh")]
+    if a.no_fetch:
+        argv.append("--no-fetch")
+    for k in a.kind:
+        argv += ["--kind", k]
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=3600, label="the daily tick")
+
+
+def cmd_digest(a: DigestArgs) -> int:
+    """Pass through to `bin/gb-digest.py` — the only human-readable surface in the repo.
+
+    Its exit code carries a verdict: 1 means BROKE (a source is stale, or a diff is UNMEASURED),
+    which must never be softened into "nothing changed".
+    """
+    argv: List[str] = [sys.executable, str(BIN / "gb-digest.py")]
+    if a.json:
+        argv.append("--json-out")
+    return _passthrough(argv, budget_s=600, label="digest")
+
+
+def cmd_mirror(a: MirrorArgs) -> int:
+    """Pass through to `bin/gb-mirror.py` — the only verb that works on a STRANGER's machine.
+
+    Tier A needs no token, no network and no repo artifact: it reads the desktop client's own
+    state off disk. `--deep` adds the read-only RPC reads for routines, memory and usage.
+    """
+    argv: List[str] = [sys.executable, str(BIN / "gb-mirror.py")]
+    if a.deep:
+        argv.append("--deep")
+    # `--save --since latest` is valid and ordered: the producer diffs against the PREVIOUS
+    # reading, then saves, so a before/after in one command compares the right pair.
+    if a.save:
+        argv.append("--save")
+    if a.since:
+        argv += ["--since", a.since]
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=300, label="mirror")
+
+
+def cmd_blast(a: BlastArgs) -> int:
+    """Pass through to `bin/gb-blast.py` — write-shaped MCP reach per Bot and per connector,
+    with the account-level scope named as the amplifier it is.
+
+    In a clone this refuses with exit 3, and that is correct: blast radius is a property of
+    YOUR account, not of this repository. `deployment/` is deliberately not exported, and the
+    refusal names the command that produces the input.
+    """
+    argv: List[str] = [sys.executable, str(BIN / "gb-blast.py")]
+    if a.selftest:
+        argv.append("--selftest")
+    elif a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=120, label="blast")
+
+
+def cmd_demand(a: DemandArgs) -> int:
+    """Pass through to `bin/gb-demand.py` — integrations builders want that nothing serves."""
+    argv: List[str] = [sys.executable, str(BIN / "gb-demand.py"), a.action]
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=300, label="demand")
+
+
+def cmd_galaxy(a: GalaxyArgs) -> int:
+    """Pass through to `bin/gb-galaxy.py` — baseline/diff across the Sep 15-17 livestream."""
+    argv: List[str] = [sys.executable, str(BIN / "gb-galaxy.py"), a.action]
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=600, label="galaxy")
+
+
+def cmd_fleet(a: FleetArgs) -> int:
+    """Pass through to `bin/gb-fleet.py` — the live account surface.
+
+    This verb exists because its absence was measured: the same three RPCs were hand-rolled as
+    inline scripts six times in one evening, and each copy got something wrong — the numeric id
+    where the automations read demands a UUID, a roster read off the per-machine cache that
+    reported a live Bot as deleted, and an `updatedAtMs` that arrives as a str on one path.
+    """
+    if a.action in ("rebuild", "rollback"):
+        # --plan is the default (producer plans when --apply is absent); --apply is explicit
+        # only. Rollback deletes exactly manifest["created"] by new_numeric_id, nothing else.
+        # Annotated HERE, at the first binding, because the fall-through path below used to
+        # carry the annotation and a later-added branch turned that into a redefinition.
+        argv: List[str] = [sys.executable, str(BIN / "gb-rebuild-fleet.py")]
+        if a.action == "rollback":
+            if not a.manifest:
+                print("gb: fleet rollback needs a manifest path", file=sys.stderr)
+                return EXIT_USAGE
+            return _passthrough(argv + ["--rollback", a.manifest], budget_s=600, label="fleet rollback")
+        if a.only:
+            argv += ["--only", a.only]
+        if a.spec:
+            argv += ["--spec", a.spec]
+        if a.apply:
+            argv.append("--apply")
+        return _passthrough(argv, budget_s=600, label="fleet rebuild")
+    argv = [sys.executable, str(BIN / "gb-fleet.py"), a.action]
+    if a.bot:
+        argv += ["--bot", a.bot]
+    if a.text:
+        argv += ["--text", a.text]
+    if a.yes:
+        argv.append("--yes")
+    if a.json:
+        argv.append("--json-out")
+    return _passthrough(argv, budget_s=600, label="fleet")
+
+
+def cmd_corpus(a: CorpusArgs) -> int:
+    """Pass through to `bin/gb-corpus.py` — corpus figures, single-sourced.
+
+    Exists because the same statistics were recomputed by throwaway python every time anyone
+    asked, by different agents, with different denominators — which is how two correct answers
+    (625 over the 487 rows with text, 557 including the 158 zeros) looked like a disagreement.
+    """
+    argv: List[str] = [sys.executable, str(BIN / "gb-corpus.py"), a.action]
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=300, label="corpus")
+
+
+def cmd_dogfood(a: DogfoodArgs) -> int:
+    """Pass through to `bin/gb-dogfood.py` — capability `gb` cannot reach.
+
+    Ratchets: the gap baseline may shrink freely and may only grow with a recorded acceptance.
+    It found two live breaks on its first run, both of which had shipped.
+    """
+    argv: List[str] = [sys.executable, str(BIN / "gb-dogfood.py"), a.action]
+    if a.accept:
+        argv += ["--accept", a.accept]
+    if a.why:
+        argv += ["--why", a.why]
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=600, label="dogfood")
+
+
+def cmd_gatesdoc(a: GatesdocArgs) -> int:
+    """Pass through to `bin/gb-gatesdoc.py` — GATES.md versus the producer it documents."""
+    argv: List[str] = [sys.executable, str(BIN / "gb-gatesdoc.py")]
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=300, label="gatesdoc")
+
+
+def cmd_readme(a: ReadmeArgs) -> int:
+    """Pass through to `bin/gb-readme.py` — the public README's factual half, derived.
+
+    Bare `gb readme` CHECKS and exits 1 when stale, rather than silently regenerating. A
+    generator whose default action is to rewrite the file cannot be used as a gate, because
+    running the check would make the check pass.
+    """
+    argv: List[str] = [sys.executable, str(BIN / "gb-readme.py")]
+    if a.selftest:
+        argv.append("--selftest")
+    elif a.write:
+        argv.append("--write")
+    elif a.json:
+        argv.append("--json")
+    else:
+        argv.append("--check")
+    # It runs every producer's selftest to build the table, so the budget is the sum of them.
+    return _passthrough(argv, budget_s=1800, label="readme")
+
+
+def cmd_advise(a: AdviseArgs) -> int:
+    """Pass through to `bin/gb-advise.py` — what to do next, ranked, with its evidence.
+
+    Every ranked action carries the GATES.md row that justifies it. Evidence recovery was
+    18 of 25 checks until tonight — seven actions were being emitted with nothing behind them —
+    and the payload now reports `gates_evidence` in BOTH the normal and the blind envelope, so
+    a consumer cannot KeyError its way into believing coverage is fine.
+    """
+    argv: List[str] = [sys.executable, str(BIN / "gb-advise.py")]
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=600, label="advise")
+
+
+def cmd_x(a: XArgs) -> int:
+    """Pass through to `bin/gb-x-sweep.py` — the practitioner corpus, ranked by authors.
+
+    Defaults to `reclassify`, the OFFLINE action, on purpose: the default invocation of a verb
+    should not be able to spend a rate-limited allowance. `collect` is the live one and honours
+    `--max-calls`; a sweep that hits its ceiling reports the ceiling rather than silently
+    returning a short corpus, because `has_more=True` on every query means no run here has ever
+    seen the population.
+    """
+    argv: List[str] = [sys.executable, str(BIN / "gb-x-sweep.py"), a.action]
+    if a.action == "reclassify":
+        # SELECT BY MEASUREMENT, NOT BY FILENAME. Two heuristics were tried and both were
+        # wrong, in opposite directions:
+        #
+        #   "newest"  -> x/2026-09-12T0024.json, reporting 453 uses / 415 authors
+        #   "largest" -> x/2026-09-12T0024.json again (1,401 posts vs the corpus's 1,356)
+        #   measured  -> x/2026-09-11T1753.json, reporting 487 uses / 448 authors
+        #
+        # The newest AND larger artifact yields FEWER uses, because it is a daily link harvest
+        # whose queries were not hunting use descriptions. No property of a filename or a byte
+        # count can see that. So the verb RUNS the offline classifier on each candidate — zero
+        # search calls, ~1s apiece — and picks the pair that actually yields the most
+        # use-describing posts, then prints the whole table so the loser is visible too.
+        #
+        # This is the fifth time tonight a derived read beat the measurement and lost.
+        art = sorted(ROOT.glob("x/*.json"))
+        plain = [p for p in art if ".sweep." not in p.name]
+        sweeps = [p for p in art if ".sweep." in p.name]
+        if not plain or not sweeps:
+            print(
+                "gb x reclassify: needs one plain and one .sweep. artifact under x/ — "
+                "run `gb x collect` first",
+                file=sys.stderr,
+            )
+            return 3
+        sweep = sweeps[-1]
+        scored: List[Tuple[int, pathlib.Path]] = []
+        for cand in plain:
+            probe = subprocess.run(
+                [
+                    sys.executable,
+                    str(BIN / "gb-x-sweep.py"),
+                    "reclassify",
+                    "--first-pass",
+                    str(cand),
+                    "--sweep",
+                    str(sweep),
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            uses = 0
+            try:
+                env = json.loads(probe.stdout or "{}")
+                uses = int(
+                    (env.get("result") or env).get("combined", {}).get("total_uses") or 0
+                )
+            except (ValueError, AttributeError, TypeError):
+                uses = 0  # an unparseable probe scores zero; it does not win by accident
+            scored.append((uses, cand))
+        scored.sort()
+        for uses, cand in scored:
+            mark = "->" if cand is scored[-1][1] else "  "
+            print(f"  {mark} {cand.name}  {uses} use(s)", file=sys.stderr)
+        best = scored[-1][1]
+        print(
+            f"gb x: joining {best.name} + {sweep.name} — chosen by MEASURED uses, "
+            f"not by date or size",
+            file=sys.stderr,
+        )
+        argv += ["--first-pass", str(best), "--sweep", str(sweep)]
+    if a.action == "fetch":
+        # gb-x.py is a different producer from gb-x-sweep.py behind this verb:
+        # quota is spent by default, the artifact is written only with --apply.
+        fargv: List[str] = [sys.executable, str(BIN / "gb-x.py"), "collect"]
+        if not a.apply:
+            fargv.append("--dry-run")
+        if a.max_calls is not None:
+            fargv += ["--max-calls", str(a.max_calls)]
+        if a.json:
+            fargv.append("--json")
+        return _passthrough(fargv, budget_s=900, label="x fetch")
+        argv += ["--max-calls", str(a.max_calls)]
+    if a.dry_run:
+        argv.append("--dry-run")
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=3600, label="x")
+
+
+def cmd_post(a: PostArgs) -> int:
+    """Pass through to `bin/gb-post.py` — the only surface here that publishes anything.
+
+    Budget is generous because `draft` RUNS every claim's command, and some of those are live
+    account reads. That cost is the product: a post nobody verified is worth less than no post.
+    """
+    argv: List[str] = [sys.executable, str(BIN / "gb-post.py"), a.action]
+    if a.action == "record":
+        if not a.ids:
+            print(
+                "gb post record: pass --ids id1,id2 — recording is opt-in per claim, never a "
+                "bulk publish of whatever happened to verify",
+                file=sys.stderr,
+            )
+            return 2
+        argv += ["--ids", *[s.strip() for s in a.ids.split(",") if s.strip()]]
+    if a.limit is not None:
+        argv += ["--limit", str(a.limit)]
+    if a.out:
+        argv.append("--out")
+    if a.include_published:
+        argv.append("--include-published")
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=1800, label="post")
+
+
+def cmd_roadmap(a: RoadmapArgs) -> int:
+    """Pass through to `bin/gb-gaps.py` — what is still open, re-proved every run.
+
+    Exit 1 means open gaps exist, which is the normal state of a live product and not an
+    error. Exit 2 means at least one PROBE could not decide — a broken probe is a defect in
+    the ledger, and it ranks above any gap it was meant to measure.
+    """
+    argv: List[str] = [sys.executable, str(BIN / "gb-gaps.py")]
+    if a.detail:
+        argv.append("--detail")
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=1200, label="roadmap")
+
+
+def cmd_mcp(a: McpArgs) -> int:
+    """Pass through to `bin/gb-mcp.py` — the MCP in-app half, receipted."""
+    argv: List[str] = [sys.executable, str(BIN / "gb-mcp.py")]
+    if a.json:
+        argv.append("--json")
+    argv.append(a.action)
+    if a.action == "add":
+        if not a.target:
+            print("gb: mcp add needs a URL", file=sys.stderr)
+            return EXIT_USAGE
+        argv.append(a.target)
+        if a.name:
+            argv += ["--name", a.name]
+    elif a.action in ("tools", "allowlist"):
+        if not a.target:
+            print(f"gb: mcp {a.action} needs a server name", file=sys.stderr)
+            return EXIT_USAGE
+        argv.append(a.target)
+        if a.action == "allowlist":
+            # gbargs has no variadic positional: `gb mcp allowlist srv k1 k2`
+            # lands k1/k2 in tool/args_json, so fold them into keep here.
+            positional = [k for k in (a.tool, a.args_json) if k]
+            if not positional and not a.keep:
+                print("gb: mcp allowlist with nothing kept disables everything — "
+                      "pass tools positionally or via --keep", file=sys.stderr)
+                return EXIT_USAGE
+            argv += positional
+            for k in a.keep:
+                argv += ["--keep-flag", k]
+            if a.note:
+                argv += ["--note", a.note]
+    elif a.action == "call":
+        if not (a.target and a.tool and a.args_json):
+            print("gb: mcp call needs <server> <tool> '<json-args>'", file=sys.stderr)
+            return EXIT_USAGE
+        argv += [a.target, a.tool, a.args_json]
+        if a.agent:
+            argv += ["--agent", a.agent]
+    elif a.action == "list":
+        pass
+    return _passthrough(argv, budget_s=300, label="mcp")
+
+def cmd_bot(a: BotArgs) -> int:
+    """Pass through to `bin/gb-bot.py` — Bot turns and readbacks, receipted."""
+    argv: List[str] = [sys.executable, str(BIN / "gb-bot.py")]
+    if a.json:
+        argv.append("--json")
+    if a.action == "send":
+        if not (a.target and a.text):
+            print("gb: bot send needs <bot> '<text>'", file=sys.stderr)
+            return EXIT_USAGE
+        argv += ["send", a.target, a.text]
+    elif a.action == "read":
+        if not a.target:
+            print("gb: bot read needs <bot>", file=sys.stderr)
+            return EXIT_USAGE
+        argv += ["read", a.target]
+    elif a.action == "resolve":
+        if not a.target:
+            print("gb: bot resolve needs <bot>", file=sys.stderr)
+            return EXIT_USAGE
+        argv += ["resolve", a.target]
+    elif a.action == "log":
+        if not a.target:
+            print("gb: bot log needs <bot>", file=sys.stderr)
+            return EXIT_USAGE
+        argv += ["log", a.target, "--limit", str(a.limit)]
+    elif a.action == "ask":
+        if not (a.target and a.text):
+            print("gb: bot ask needs <bot> '<text>'", file=sys.stderr)
+            return EXIT_USAGE
+        argv += ["ask", a.target, a.text, "--timeout", str(a.timeout)]
+        if a.expect:
+            argv += ["--expect", a.expect]
+    # int, not float: `_passthrough` takes an int budget and `a.timeout` is a float, so the
+    # sum widens. Truncating is correct here — the value is a deadline in seconds, and a
+    # fractional second of process budget is not a distinction any caller can use.
+    budget = 300 + int(a.timeout if a.action == "ask" else 0)
+    return _passthrough(argv, budget_s=budget, label="bot")
+def cmd_handover(a: HandoverArgs) -> int:
+    """Pass through to `bin/gb-handover.py` — dry run unless --send (turns spend allowance)."""
+    argv: List[str] = [sys.executable, str(BIN / "gb-handover.py")]
+    if a.bot:
+        argv += ["--bot", a.bot]
+    if a.send:
+        argv.append("--send")
+    return _passthrough(argv, budget_s=300, label="handover")
+
+def cmd_record(a: RecordArgs) -> int:
+    """Pass through to `bin/gb-record-inventory.py` — the structured hand record."""
+    argv: List[str] = [sys.executable, str(BIN / "gb-record-inventory.py")]
+    if a.device:
+        argv += ["--device", a.device]
+    if a.root:
+        argv += ["--root", a.root]
+    if a.validate:
+        argv += ["--validate", a.validate]
+    elif a.list:
+        argv.append("--list")
+    elif a.template:
+        argv.append("--template")
+        if a.no_roster:
+            argv.append("--no-roster")
+    elif a.no_roster:
+        argv.append("--no-roster")
+    return _passthrough(argv, budget_s=120, label="record")
+
+def cmd_matrix(a: MatrixArgs) -> int:
+    """Pass through to `bin/gb-feature-matrix.py` — entitlements joined to gates."""
+    argv: List[str] = [sys.executable, str(BIN / "gb-feature-matrix.py")]
+    if a.root:
+        argv += ["--root", a.root]
+    if a.id:
+        argv += ["--id", a.id]
+    if a.todo:
+        argv.append("--todo")
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=120, label="matrix")
+
+def cmd_export(a: ExportArgs) -> int:
+    """Pass through to `bin/gb-export-public.py` — split the publishable tool out.
+
+    REFUSES an unset directory rather than stringifying it. `a.out` is Optional, and with no
+    DIR the old line passed the literal "None" through, producing
+    "…/grokbot/None overlaps the repo" — an error that blames the repo layout for a missing
+    argument. An argument that reaches the producer as the string "None" is one nobody
+    validated, and the message it produces sends the reader to the wrong file.
+    """
+    if not a.out:
+        print(
+            "gb export: needs a target directory — `gb export /tmp/gb-public`. It must be "
+            "OUTSIDE this repo; the exporter refuses to overlap its own tree.",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+    argv: List[str] = [sys.executable, str(BIN / "gb-export-public.py"), "--out", a.out]
+    if a.force:
+        argv.append("--force")
+    if a.no_git:
+        argv.append("--no-git")
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=300, label="export")
+
+def cmd_gates(a: GatesArgs) -> int:
+    """Pass through to `bin/gb-capabilities.py` — entitlements by family (`capabilities` is taken)."""
+    argv: List[str] = [sys.executable, str(BIN / "gb-capabilities.py")]
+    if a.family:
+        argv += ["--family", a.family]
+    if a.markdown:
+        argv.append("--markdown")
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=120, label="gates")
+
+def cmd_bench(a: BenchArgs) -> int:
+    """Pass through to `bin/gb-bench.py` — latency baseline. Measures only."""
+    argv: List[str] = [sys.executable, str(BIN / "gb-bench.py")]
+    for v in a.verb:
+        argv += ["--verb", v]
+    if a.repeat != 5:
+        argv += ["--repeat", str(a.repeat)]
+    if a.dry_run:
+        argv.append("--dry-run")
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=3600, label="bench")
+
+def cmd_findings(a: FindingsArgs) -> int:
+    """Pass through to `bin/gb-findings.py` — measured claims with reproduce commands."""
+    argv: List[str] = [sys.executable, str(BIN / "gb-findings.py")]
+    if a.json:
+        argv.append("--json")
+    if a.no_write:
+        argv.append("--no-write")
+    if a.verify_commands:
+        argv.append("--verify-commands")
+    return _passthrough(argv, budget_s=1800 if a.verify_commands else 300, label="findings")
+
+def cmd_inventory(a: InventoryArgs) -> int:
+    """Pass through to `bin/gb-inventory.py` — account surface reads — or pull a fresh
+    per-device inventory via `bin/gb-pull-inventory.py` (dry run unless --apply writes)."""
+    if a.read == "pull":
+        if not a.device:
+            print("gb: inventory pull needs --device <label from desktops.json>", file=sys.stderr)
+            return EXIT_USAGE
+        argv: List[str] = [sys.executable, str(BIN / "gb-pull-inventory.py"),
+                           "--device", a.device]
+        if not a.apply:
+            argv.append("--dry-run")
+        if a.json:
+            argv.append("--json")
+        return _passthrough(argv, budget_s=600, label="inventory pull")
+    argv = [sys.executable, str(BIN / "gb-inventory.py"), a.read]
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=300, label="inventory")
+
+def cmd_goldens(a: GoldensArgs) -> int:
+    """Pass through to `bin/gb-goldens.py` — capture or verify CLI goldens."""
+    argv = [sys.executable, str(BIN / "gb-goldens.py"), "--" + a.action]
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=600, label="goldens")
+
+def cmd_spend(a: SpendArgs) -> int:
+    """Pass through to `bin/gb-spend-ledger.py` — per-Bot spend, read-only."""
+    argv: List[str] = [sys.executable, str(BIN / "gb-spend-ledger.py")]
+    if a.out != "spend":
+        argv += ["--out", a.out]
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=300, label="spend")
+def cmd_teach(a: TeachArgs) -> int:
+    """Pass through to `bin/gb-teach.py` — teaching-post forms, measured offline."""
+    argv: List[str] = [sys.executable, str(BIN / "gb-teach.py"), a.action]
+    if a.write:
+        argv.append("--write")
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=300, label="teach")
+
+def cmd_deployment(a: DeploymentArgs) -> int:
+    """Pass through to `bin/gb-deployment-audit.py` — offline unless --live."""
+    argv: List[str] = [sys.executable, str(BIN / "gb-deployment-audit.py")]
+    if a.live:
+        argv.append("--live")
+    if a.label:
+        argv += ["--label", a.label]
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=300, label="deployment audit")
+
+def cmd_feeds(a: FeedsArgs) -> int:
+    """Pass through to `bin/gb-feeds.py` — probe plans, collect fetches."""
+    argv: List[str] = [sys.executable, str(BIN / "gb-feeds.py"), a.action]
+    if a.retired:
+        argv.append("--retired")
+    if a.root:
+        argv += ["--root", a.root]
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=600, label="feeds")
+
+def cmd_github(a: GithubArgs) -> int:
+    """Pass through to `bin/gb-github.py` — dry run unless --apply writes."""
+    argv: List[str] = [sys.executable, str(BIN / "gb-github.py"), a.action]
+    if not a.apply:
+        argv.append("--dry-run")
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=600, label="github")
+
+def cmd_links(a: LinksArgs) -> int:
+    """Pass through to `bin/gb-links.py` — probe plans only, collect fetches."""
+    argv: List[str] = [sys.executable, str(BIN / "gb-links.py"), a.action]
+    if a.limit is not None:
+        argv += ["--limit", str(a.limit)]
+    if a.max_age is not None:
+        argv += ["--max-age", str(a.max_age)]
+    if a.refusals:
+        argv.append("--refusals")
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=900, label="links")
+
+def cmd_sources(a: SourcesArgs) -> int:
+    """Pass through to `bin/gb-sources.py` — velocity reads, collect fetches."""
+    argv: List[str] = [sys.executable, str(BIN / "gb-sources.py"), a.action]
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=600, label="sources")
+
+def cmd_store(a: StoreArgs) -> int:
+    argv: List[str] = [sys.executable, str(BIN / "gb-store.py"), a.action]
+    for k in a.kind:
+        argv += ["--kind", k]
+    if a.limit is not None:
+        argv += ["--limit", str(a.limit)]
+    if a.json_out:
+        argv.append("--json-out")
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=600, label="store")
+def cmd_skill_coverage(a: SkillCoverageArgs) -> int:
+    """Pass through to `bin/gb-skill-coverage.py` — operations × skills matrix."""
+    argv = [sys.executable, str(BIN / "gb-skill-coverage.py")]
+    if a.top != 10:
+        argv += ["--top", str(a.top)]
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=300, label="skill-coverage")
+def cmd_group(a: GroupArgs) -> int:
+    """Pass through to `bin/gb-group.py` — rooms, dry run unless --yes (no delete RPC)."""
+    argv: List[str] = [sys.executable, str(BIN / "gb-group.py")]
+    if a.json:
+        argv.append("--json")
+    argv.append(a.action)
+    if a.action == "create":
+        if a.text:
+            argv += ["--description", a.text]
+        if a.members:
+            argv += ["--members", a.members]
+        if a.yes:
+            argv.append("--yes")
+        # create takes name positionally in the producer
+        if a.target:
+            argv.append(a.target)
+    elif a.action in ("members", "send"):
+        if not a.target:
+            print(f"gb: group {a.action} needs a room", file=sys.stderr)
+            return EXIT_USAGE
+        argv.append(a.target)
+        if a.action == "members":
+            if not a.set:
+                print("gb: group members needs --set (full-set replace)", file=sys.stderr)
+                return EXIT_USAGE
+            argv += ["--set", a.set]
+        else:
+            if not a.text:
+                print("gb: group send needs message text", file=sys.stderr)
+                return EXIT_USAGE
+            argv.append(a.text)
+            if a.mention:
+                argv += ["--mention", a.mention]
+        if a.yes:
+            argv.append("--yes")
+    return _passthrough(argv, budget_s=300, label="group")
+
+def cmd_dm(a: DmArgs) -> int:
+    """Pass through to `bin/gb-group.py dm` — Bot-to-Bot nudge wire."""
+    if not (a.from_bot and a.to_bot and a.text):
+        print("gb: dm needs <from> <to> '<text>'", file=sys.stderr)
+        return EXIT_USAGE
+    argv: List[str] = [sys.executable, str(BIN / "gb-group.py"), "dm",
+                       a.from_bot, a.to_bot, a.text]
+    if a.yes:
+        argv.append("--yes")
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=300, label="dm")
+
+
+
+
 
 
 HANDLERS: Dict[str, Callable[[Any], int]] = {
-    "setup": cmd_setup, "platform": cmd_platform, "mine": cmd_mine,
+    "setup": cmd_setup, "platform": cmd_platform, "mine": cmd_mine, "monitor": cmd_monitor,
+    "templates": cmd_templates, "walk": cmd_walk, "daily": cmd_daily, "digest": cmd_digest,
+    "mirror": cmd_mirror, "demand": cmd_demand, "galaxy": cmd_galaxy, "fleet": cmd_fleet,
+    "blast": cmd_blast,
+    "corpus": cmd_corpus, "dogfood": cmd_dogfood, "gatesdoc": cmd_gatesdoc,
+    "readme": cmd_readme,
+    "advise": cmd_advise,
+    "x": cmd_x,
+    "post": cmd_post, "findings": cmd_findings, "teach": cmd_teach,
+    "roadmap": cmd_roadmap,
     "triage": cmd_triage, "work": cmd_work, "doctor": cmd_doctor, "health": cmd_health,
-    "repair": cmd_repair,
+    "repair": cmd_repair, "mcp": cmd_mcp, "bot": cmd_bot,
+    "group": cmd_group, "dm": cmd_dm,
+    "handover": cmd_handover, "record": cmd_record, "matrix": cmd_matrix,
+    "export": cmd_export, "gates": cmd_gates, "bench": cmd_bench,
+    "links": cmd_links, "sources": cmd_sources, "store": cmd_store,
+    "skill-coverage": cmd_skill_coverage,
+    "inventory": cmd_inventory, "spend": cmd_spend, "goldens": cmd_goldens,
+    "deployment": cmd_deployment, "feeds": cmd_feeds, "github": cmd_github,
     "validate": cmd_validate, "audit": cmd_audit, "why": cmd_why,
     "capabilities": cmd_capabilities, "robot-docs": cmd_robot_docs, "quickstart": cmd_quickstart,
     "examples": cmd_examples, "info": cmd_info, "help": cmd_help, "completion": cmd_completion,
 }
 
-
 def body() -> int:
+    # `--version` is handled BEFORE parse_sub, because the subcommand parser treats a bare
+    # flag as an unknown argument: `gb --version` answered "unrecognized arguments" until
+    # 2026-09-12. A tool that cannot say what it is cannot be caught being out of date, and
+    # that is exactly how a published mirror sat at 18 of 57 verbs with nobody noticing.
+    if any(a in ("--version", "-V") for a in sys.argv[1:]):
+        print(f"gb {VERSION} build {build_stamp()} ({len(COMMANDS)} verbs)")
+        print(
+            "  the build stamp is DERIVED from the producers on disk, not declared — two "
+            "exports of different trees cannot agree on it"
+        )
+        return EXIT_OK
     name, args = parse_sub(
         COMMANDS,
         prog="gb",
@@ -1988,7 +3469,17 @@ def body() -> int:
             "gb — operate a live Grok Bot deployment: measure the vendor surface and your own "
             "account, judge both, and act on what is wrong."
         ),
-        epilog="start with:  gb triage\nagent?        gb robot-docs\nmachine?      gb capabilities --json",
+        # `gb mirror` FIRST, corrected 2026-09-12. This said "start with: gb triage" everywhere,
+        # and on a fresh clone triage REFUSES (exit 3) and routes onward to a write
+        # (`gb setup --apply`). `gb mirror` answers read-only in 0.24s with ranked findings
+        # about the reader's own Bots, needs no token and no network, and was recommended by
+        # nothing. Measured in a clean export: three steps to a refusal versus one to an answer.
+        epilog=(
+            "start with:   gb mirror        (read-only, no token, no network — your own fleet)\n"
+            "then:         gb triage        (needs gb setup first)\n"
+            "agent?        gb robot-docs\n"
+            "machine?      gb capabilities --json"
+        ),
     )
     return HANDLERS[name](args)
 

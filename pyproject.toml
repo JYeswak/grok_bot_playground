@@ -39,9 +39,32 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-# `bin/gb-pull-inventory.py` decrypts the desktop's own safeStorage v10 blob (AES-CBC, which
-# the standard library does not provide) to read the local inventory replica. The import lives
-# inside `decrypt()`, so nothing else in the tool notices its absence — including `gb` itself.
+# `bin/gbrpc.py` decrypts the desktop client's own safeStorage v10 blob (AES-CBC, which the
+# standard library does not provide) to read the access token, and `bin/gb-pull-inventory.py`
+# does the same for the local inventory replica.
+#
+# THE LINE THAT USED TO STAND HERE WAS FALSE, and a real install said so. It read: "the import
+# lives inside `decrypt()`, so nothing else in the tool notices its absence — including `gb`
+# itself." Measured 2026-09-12 by invoking all 54 advertised verbs for real against a bare
+# `pip install` of this tree, TWO of them notice it by crashing rather than refusing:
+#
+#   gb fleet     ModuleNotFoundError: No module named 'cryptography'  (bin/gbrpc.py:99), relayed
+#                as a traceback with exit 1 instead of ENVIRONMENT
+#   gb mcp list  NameError: name 'fail' is not defined (bin/gb-mcp.py:398) — the handler that
+#                exists to report "no client session" is itself dead, so the credential failure
+#                is reported by a second crash
+#
+# Isolated, not guessed: the same two verbs both exited 0 on an install of this same tree with
+# the extra (`pip install '.[inventory]'`), so the cause was the deferred import and not the
+# payload. `gb inventory` was the one caller that already caught it and reported exit 3 with
+# the module named, which is the shape the other two owed the operator.
+#
+# BOTH ARE FIXED IN THE PRODUCERS, same day, and re-measured here: a fresh export installed
+# bare now answers `gb fleet` with "reading the desktop's own credential needs the optional
+# `cryptography` package ... install it with `pip install 'grok-bot-ops[inventory]'`" and
+# `gb mcp list` with `no client session: No module named 'cryptography'` at exit 3. Zero of the
+# 57 advertised verbs answer with a traceback. The comment stays because the FALSE claim is
+# what it guards against: the import being deferred is not the same fact as nothing noticing.
 inventory = ["cryptography"]
 
 [project.scripts]
@@ -50,15 +73,33 @@ inventory = ["cryptography"]
 gb = "grok_bot_ops.cli:main"
 
 [tool.setuptools]
-packages = ["grok_bot_ops", "grok_bot_ops.bin"]
 include-package-data = false
 
+# THE PAYLOAD IS DECLARED ONCE — BY THIS MAPPING — AND THE MODULE LIST IS DERIVED FROM IT.
+#
+# A hand-written module list used to sit above this table, naming `grok_bot_ops` and
+# `grok_bot_ops.bin` a second time. Two statements of one fact, and the one that decides what a
+# wheel CONTAINS is the mapping: a name in the list with no mapping ships nothing, and a mapping
+# missing from the list is silently dropped. setuptools >= 61 reads a `package-dir` whose keys
+# are not `""` as an EXPLICIT layout and walks each mapped directory to derive the list itself
+# (`setuptools.discovery.ConfigDiscovery._analyse_explicit_layout`). MEASURED, not assumed, on
+# 2026-09-12 against the same export tree built twice: the two wheels' file lists are identical
+# — 72 entries each, 64 of them payload at that time — and the only difference anywhere is the
+# two deliberately planted files described below. Verified at the declared floor too: built
+# under `setuptools==61.0.0` in a clean venv, not only under the latest.
 [tool.setuptools.package-dir]
+"grok_bot_ops" = "grok_bot_ops"
 # The top-level `bin/` IS the payload. Mapping it in place keeps one copy of every producer:
 # the file a contributor edits after `git clone` is the file pip installs.
 "grok_bot_ops.bin" = "bin"
 
 [tool.setuptools.package-data]
-# `*.py` producers come along because `grok_bot_ops.bin` is a package. `gb` itself is
-# extensionless and `gb-weekly.sh` is shell, so both need naming explicitly.
-"grok_bot_ops.bin" = ["gb", "*.sh"]
+# `*`, AND NOT A SUFFIX LIST, because a suffix list is a guess about the future that fails
+# green. `["gb", "*.sh"]` stood here and shipped the right files only because every producer
+# added since happened to end in `.py` — the extensionless `gb` already had to be named by
+# hand, and the next extensionless producer, or any data file a producer reads, would have been
+# left out of the wheel by a build that reported success. Demonstrated as a known-bad before
+# this line changed: with the suffix list, a planted `bin/gb-thing` and `bin/gb-thing.json` are
+# absent from the wheel while every `.py` beside them ships. `bin/` in the exported tree holds
+# nothing but the tool, so `*` has no wider blast radius than the list it replaces.
+"grok_bot_ops.bin" = ["*"]

@@ -26,13 +26,13 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from gbtypes import atomic_write_text  # noqa: E402
-import importlib.util  # noqa: E402
 
-_spec = importlib.util.spec_from_file_location(
-    "gbpull", pathlib.Path(__file__).resolve().parent / "gb-pull-inventory.py"
-)
-_pull = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_pull)  # type: ignore[union-attr]
+# TRANSPORT IS A LIBRARY (gbrpc.py) since 2026-09-12. This used to dynamically import
+# bin/gb-pull-inventory.py by path to borrow SUPPORT/access_token/rpc — a library dependency
+# wearing a producer's clothes, which made `gb dogfood audit` count this file as one more
+# hand-roller of that producer's read and forced the python 3.9.6 `sys.modules` dance on
+# every borrower. `rpc` takes `service=` so the DashboardService reads below still work.
+import gbrpc as _pull  # noqa: E402
 
 DASH = "aiserver.v1.DashboardService"
 
@@ -82,7 +82,7 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
-    token = _pull.access_token()
+    token = _pull.access_token(_pull.SUPPORT)
     st_p, plugins = _pull.rpc(token, "ListMarketplacePlugins", {}, service=DASH)
     st_m, market = _pull.rpc(token, "ListPublicGrokBotMarketplaceListings", {})
     st_t, mine = _pull.rpc(token, "ListGrokBotTemplates", {})

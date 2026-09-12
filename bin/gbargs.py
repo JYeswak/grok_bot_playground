@@ -177,6 +177,15 @@ def _kwargs_for(
         kwargs["metavar"] = spec.metavar or "{" + ",".join(e.value for e in tp) + "}"
     if spec.required and not spec.positional:
         kwargs["required"] = True
+    # A POSITIONAL WITH A DEFAULT MUST BE OPTIONAL, or it is not a default — it is a demand.
+    # Measured 2026-09-11: `gb templates deploy <id>` was documented in commit messages and in
+    # the hand-off, and could not be typed, because a second positional had no way to be
+    # omitted; `id` was therefore a flag, and the documented shape errored with
+    # "unrecognized arguments". argparse expresses this as nargs="?" and gbargs simply never
+    # emitted it, so every derived CLI silently forced `verb thing` even where `verb` alone is
+    # the common case.
+    if spec.positional and (optional or f.default is not dataclasses.MISSING):
+        kwargs["nargs"] = "?"
     if f.default is not dataclasses.MISSING and f.default is not None:
         kwargs["default"] = f.default
     elif optional or f.default is None:

@@ -73,6 +73,7 @@ CHECKS = [
     "g22-durable-io",
     "g23-types-ratcheted",
     "g24-cli-contract",
+    "g25-routine-liveness",
 ]
 
 MAX_RUN_GAP_DAYS = 9  # one day of slack past g3's 8-day snapshot ceiling
@@ -325,6 +326,9 @@ def g6_capability_delta_reviewed(
             GREEN,
             f"capability set unchanged ({len(cur_names)} enabled, basis={basis})",
         )
+    # Determinism-exempt: display-only fallback. Reached only when snap is None;
+    # the stamp names the findings file inside RED detail text and never feeds a
+    # verdict comparison, so the wall clock cannot move a verdict here.
     stamp = snap.name[:10] if snap else dt.date.today().isoformat()
     return result(
         c,
@@ -405,6 +409,9 @@ def g11_tunable_delta_reviewed(
             f"{len(cur_d)} tunables unchanged ({cur_t.get('named', 0)} named, "
             f"{cur_t.get('distinct_param_keys', 0)} distinct params)",
         )
+    # Determinism-exempt: display-only fallback. Reached only when snap is None;
+    # the stamp names the findings file inside RED detail text and never feeds a
+    # verdict comparison, so the wall clock cannot move a verdict here.
     stamp = snap.name[:10] if snap else dt.date.today().isoformat()
     return result(
         c,
@@ -419,18 +426,34 @@ def g11_tunable_delta_reviewed(
 
 
 def g12_ondemand_spend_bounded(root: pathlib.Path, now: dt.date) -> dict:
-    """Money cannot leave without a recorded decision about the ceiling.
+    """This period is not on pace to bill past the included allowance.
 
-    `onDemandSettings.enabled` means Bots keep working — and keep billing — past the included
-    allowance. Combined with what this repo already measured (notifications reaching nobody by
-    default, routines a Bot can schedule for itself, agentic purchasing live on the account), an
-    unbounded on-demand setting is the one lever here that spends real money unattended.
+    REWRITTEN 2026-09-11, because the previous premise was false. It read: "the account can
+    bill without limit and nobody has written down that they meant it", and it went RED unless
+    a hand-maintained `spend-decision.json` existed. Two measurements killed that:
 
-    The check does not have an opinion about the number. It refuses the state where the account
-    can bill without limit and nobody has written down that they meant it: `spend-decision.json`
-    carries `{on_demand: "enabled"|"disabled", ceiling_usd, decided_at, why}`. Enabled with a
-    recorded, non-stale decision is GREEN; a ceiling of null with on-demand ON is still a decision
-    if someone dated it, and the gate says so rather than pretending it is bounded.
+      1. The operator sets a spend cap INSIDE the app, to whatever they choose, and can change
+         it at any time. "Can bill without limit" was simply not true.
+      2. The vendor's usage object publishes `period_start`, `next_reset`, `usage_percent`,
+         `has_available_usage`, `plan_label`, `on_demand_enabled`, `on_demand_eligible` and a
+         dashboard URL — and NO cap, and NO dollar figure. `usage_percent` is a fraction of the
+         included allowance, not money.
+
+    So the old check asked the operator to hand-maintain a local mirror of a mutable in-app
+    setting that this tool cannot read back. That file is stale the moment they change the cap
+    in the app, and a gate cannot verify it — it can only verify that somebody typed something.
+    Gating a shared tool on one person's billing preference is the error; a fresh installer
+    would have gotten a RED board about a file they had never heard of.
+
+    What IS measurable from published data is the question that actually matters: at the
+    current pace, will this period cross the included allowance at all? Crossing it is the
+    precondition for any on-demand charge, whatever the cap is set to. Below the allowance the
+    cap is irrelevant; above it, the cap is the operator's business and the vendor enforces it.
+
+    GREEN when on-demand is off (it cannot bill), or when the projection stays inside the
+    allowance. RED only when on-demand is ON and the period is genuinely on pace to exceed
+    100%. The projection is the same shape `gb-monitor.py` uses, and both read the same fields,
+    so the gate and the monitor cannot disagree about the pace.
     """
     c = "g12-ondemand-spend-bounded"
     have = inventories(root)
@@ -455,42 +478,59 @@ def g12_ondemand_spend_bounded(root: pathlib.Path, now: dt.date) -> dict:
             if isinstance(pct, (int, float))
             else "on-demand spending off",
         )
-    dec = load(root / "spend-decision.json")
-    if not dec or not dec.get("decided_at"):
-        return result(
-            c,
-            RED,
-            f"on-demand spending is ENABLED ({pct:.1f}% of the included allowance "
-            f"used, resets {usage.get('next_reset', '?')[:10]}) and no ceiling decision is "
-            f"recorded — write spend-decision.json or turn it off at "
-            f"{usage.get('dashboard_url', 'the dashboard')}"
-            if isinstance(pct, (int, float))
-            else "on-demand spending is ENABLED and no ceiling decision is recorded",
-        )
-    try:
-        age = (now - dt.date.fromisoformat(str(dec["decided_at"])[:10])).days
-    except ValueError:
+    if not isinstance(pct, (int, float)):
         return result(
             c,
             ERROR,
-            f"spend-decision.json decided_at {dec['decided_at']!r} is not an ISO date",
+            "on-demand is enabled but usage_percent is absent — the pace cannot be computed, "
+            "which is not the same as being inside the allowance",
         )
-    if age > MAX_INVENTORY_AGE_DAYS:
+
+    # Project to period end. A raw percentage read late in a window reports a number that can
+    # no longer move; read early it hides a burn that will obviously overshoot.
+    start, reset = usage.get("period_start"), usage.get("next_reset")
+    elapsed = None
+    if isinstance(start, str) and isinstance(reset, str):
+        try:
+            t0 = dt.datetime.fromisoformat(start.replace("Z", "+00:00"))
+            t1 = dt.datetime.fromisoformat(reset.replace("Z", "+00:00"))
+            span = (t1 - t0).total_seconds()
+            if span > 0:
+                # The gate's clock is the --now date (FIXTURE_NOW under --selftest),
+                # never the wall clock: a fixture that is RED at generation must
+                # still be RED at check time. Midnight UTC, like every sibling check.
+                now_utc = dt.datetime(
+                    now.year, now.month, now.day, tzinfo=dt.timezone.utc
+                )
+                elapsed = max(0.0, min(1.0, (now_utc - t0).total_seconds() / span))
+        except ValueError:
+            elapsed = None
+
+    # Below a tenth of the window, dividing by the elapsed fraction amplifies rounding into a
+    # forecast. Fall back to the raw figure, which under-alerts rather than inventing a number.
+    projected = pct / elapsed if (elapsed is not None and elapsed >= 0.10) else pct
+    basis = "projected" if (elapsed is not None and elapsed >= 0.10) else "raw"
+    window = (
+        f", {elapsed * 100:.1f}% of the window elapsed" if elapsed is not None else ""
+    )
+    if projected > 100.0:
         return result(
             c,
             RED,
-            f"on-demand spending is ENABLED and the ceiling decision is {age}d old "
-            f"(ceiling {MAX_INVENTORY_AGE_DAYS}d) — re-confirm it",
+            f"on pace to exceed the included allowance: {projected:.1f}% {basis} "
+            f"({pct:.1f}% used{window}), and on-demand is ENABLED so the overage bills. "
+            f"Adjust the cap or turn on-demand off at "
+            f"{usage.get('dashboard_url', 'the spending dashboard')}",
+            projected_percent=round(projected, 1),
+            basis=basis,
         )
-    cap = dec.get("ceiling_usd")
     return result(
         c,
         GREEN,
-        f"on-demand ENABLED with a decision dated {str(dec['decided_at'])[:10]} "
-        f"(ceiling {'$' + str(cap) if cap is not None else 'none set — deliberate'}); "
-        f"{pct:.1f}% of the included allowance used"
-        if isinstance(pct, (int, float))
-        else "on-demand ENABLED with a recorded decision",
+        f"on-demand enabled and inside the allowance: {projected:.1f}% {basis} "
+        f"({pct:.1f}% used{window}); the in-app cap governs anything past 100%",
+        projected_percent=round(projected, 1),
+        basis=basis,
     )
 
 
@@ -1599,6 +1639,85 @@ def g8_desktop_inventory(root: pathlib.Path, now: dt.date) -> dict:
     )
 
 
+def g25_routine_liveness(root: pathlib.Path, now: dt.date) -> dict:
+    """A routine that is enabled and past due, with ZERO runs, is a dead scheduler.
+
+    WHY THIS EXISTS, measured 2026-09-11. `g9-routine-health` reported GREEN on this account
+    while 0 of 2 routines had ever fired. It is not a bug in g9 — g9 asks whether a routine is
+    FAILING or silently paused, and branches on `runs is None` (not read) and on "enabled and
+    every recent run failed". A routine whose `recent_runs` is the EMPTY LIST matches neither:
+    it has never failed, because it has never run. The most important question about an
+    always-on agent — did the schedule ever actually fire — had no check at all.
+
+    Liveness, not health. The distinction earns its keep: a Bot can be perfectly healthy and
+    completely inert, and only one of those two words was being measured.
+
+    GREEN   every enabled routine has either run, or is not yet due
+    RED     an enabled routine is past its own `next_run_at_ms` and still has zero runs
+    ERROR   nothing has been read, so liveness is UNMEASURED — never reported as fine
+    """
+    c = "g25-routine-liveness"
+    have = inventories(root)
+    if not have:
+        return result(c, ERROR, "no inventory to read routine liveness from (see g8)")
+
+    now_ms = int(
+        dt.datetime(now.year, now.month, now.day, tzinfo=dt.timezone.utc).timestamp()
+        * 1000
+    )
+    dead: list[str] = []
+    waiting = 0
+    alive = 0
+    seen: set[tuple] = set()
+
+    # Routines are ACCOUNT-level: every desktop's artifact carries the same set, so they must be
+    # deduped or a two-Mac fleet double-counts. But dedupe order is load-bearing and the obvious
+    # `sorted(have.items())` is WRONG — it takes whichever LABEL sorts first ("brain" < "studio"),
+    # not whichever READ is freshest. Measured here: Brain's older artifact said `recent_runs: []`
+    # for `CFS morning check-in` while Studio's fresher one said `['ok']`, and this check reported
+    # "0 routine(s) have run" about a routine that had demonstrably run. Newest artifact wins.
+    def _freshness(item: tuple) -> str:
+        _label, (path, _doc) = item
+        return path.name
+
+    for _label, (_f, doc) in sorted(have.items(), key=_freshness, reverse=True):
+        for b in doc.get("bots") or []:
+            for r in b.get("routines") or []:
+                ident = (b.get("name"), r.get("name"))
+                if ident in seen:
+                    continue
+                seen.add(ident)
+                if not r.get("enabled"):
+                    continue
+                runs = r.get("recent_runs")
+                if runs is None:
+                    continue  # "not read" is g9's finding, not liveness
+                if runs:
+                    alive += 1
+                    continue
+                due = r.get("next_run_at_ms")
+                if isinstance(due, (int, float)) and due < now_ms:
+                    dead.append(
+                        f"{b.get('name')}/{r.get('name')}: enabled, due, zero runs"
+                    )
+                else:
+                    waiting += 1
+    if dead:
+        return result(
+            c,
+            RED,
+            f"{len(dead)} routine(s) enabled and past due with no run ever: "
+            + "; ".join(sorted(dead)[:4]),
+        )
+    if not seen:
+        return result(c, ERROR, "no routines recorded at all — liveness is UNMEASURED")
+    return result(
+        c,
+        GREEN,
+        f"{alive} routine(s) have run, {waiting} enabled and not yet due, none dead",
+    )
+
+
 def g9_routine_health(root: pathlib.Path, now: dt.date) -> dict:
     """No routine is silently failing, of unknown run state, or paused without a decision.
 
@@ -1644,15 +1763,27 @@ def g9_routine_health(root: pathlib.Path, now: dt.date) -> dict:
                 ):
                     rev = reviewed.get(ident)
                     if not rev:
+                        # DOES NOT CLAIM AUTHORSHIP, corrected 2026-09-12. This message used to
+                        # read "created by the Bot itself (provenance=untrusted)". That was an
+                        # INFERENCE from two routines on a freshly rebuilt Bot, and a live test
+                        # killed it: a Bot asked in chat to schedule itself produced
+                        # provenance="user". So `untrusted` does NOT mean Bot-authored, and
+                        # nothing recorded anywhere says who wrote a routine.
+                        #
+                        # The check still earns its place on what IS measured — enabled, zero
+                        # runs, never reviewed, and a provenance nobody can attribute is a
+                        # scheduler no human has signed off. The wording had already propagated
+                        # the false claim into gb-findings.py, which cited THIS LINE as its
+                        # authority, which is how one stale message becomes two public claims.
                         bad.append(
-                            f"{name}: created by the Bot itself (provenance=untrusted), enabled, "
-                            f"never run and never reviewed — confirm or delete it"
+                            f"{name}: provenance=untrusted (authorship is NOT recorded), "
+                            f"enabled, never run and never reviewed — confirm or delete it"
                         )
                     else:
                         try:
                             if now > dt.date.fromisoformat(rev.get("review_by", "")):
                                 bad.append(
-                                    f"{name}: self-created routine accepted {rev.get('acked_at')} but "
+                                    f"{name}: unattributed routine accepted {rev.get('acked_at')} but "
                                     f"review_by {rev.get('review_by')} has passed — re-confirm"
                                 )
                             else:
@@ -1853,6 +1984,7 @@ def run(root: pathlib.Path, now: dt.date, disabled: set[str]) -> dict:
         g22_durable_io(root),
         g23_types_ratcheted(root),
         g24_cli_contract(root),
+        g25_routine_liveness(root, now),
     ]
     results = [r for r in results if r["check"] not in disabled]
     verdict = GREEN
@@ -1924,7 +2056,14 @@ FIXTURE_EXPECT = {
     "bad-discovery-empty": ERROR,
     "bad-mcp-unreachable": RED,
     "bad-mcp-tools-shrank": RED,
+    # RESTORED 2026-09-12: an edit adding the g25 row silently DISPLACED this one, and the
+    # suite still reported 54/54 because the total is driven by the table's own length — the
+    # count cannot notice an entry that left. A fixture expectation that vanishes takes its
+    # check's proof with it, which is the same class of defect g25 had in the first place.
     "bad-mcp-credential-rejected": RED,
+    # g25-routine-liveness had NO fixture: disabling the check still produced 54/54, which
+    # means nothing proved it. This corpus is enabled + past due + zero runs.
+    "bad-routine-never-fired": RED,
     "bad-idle-credentialed-bot": RED,
     "known-good-new-bot-in-grace": GREEN,
     "bad-archive-stale": RED,
@@ -2058,6 +2197,9 @@ def main() -> int:
     if args.selftest:
         return selftest(root_default, disabled, args.json)
 
+    # Legitimate wall-clock entry point: a live run defaults --now to today
+    # (UTC); --selftest never reaches this line (FIXTURE_NOW is pinned). Every
+    # verdict-affecting read below uses this `now`, never the wall clock.
     now = (
         dt.date.fromisoformat(args.now)
         if args.now

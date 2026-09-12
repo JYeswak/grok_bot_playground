@@ -11,7 +11,13 @@ executable counter-example, so each test here has BOTH legs:
 A test whose known-bad leg cannot be made to fail is reported as INCONCLUSIVE, never as a pass.
 That is the difference between a proof and a green tick.
 
+The two expensive proofs (t5, t8) run on worker threads beside the cheap ones. Concurrency
+changes no assertion here: the same legs fire against the same OS, and the transcript is
+printed in canonical t1..t8 order however the threads interleave. What it does change is the
+obligation to clean up — see `_spawn` below.
+
 exit: 0 all proven · 1 a claim failed · 2 a known-bad leg never fired (test is vacuous)
+      130 cancelled — no proof was reached, which is not the same as a failure
 """
 
 from __future__ import annotations
@@ -23,8 +29,20 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
-from typing import List, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    TypeVar,
+    cast,
+)
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -32,12 +50,168 @@ sys.path.insert(0, str(HERE))
 import gbtypes as G  # noqa: E402
 
 PASS, FAIL, VACUOUS = "PASS", "FAIL", "VACUOUS"
+
+# One lock for the two pieces of state workers share: the result rows and the child registry.
+# Both are touched for microseconds, neither is ever held across a wait, and nesting is
+# impossible because nothing under this lock calls anything that takes it.
+_LOCK = threading.Lock()
 rows: List[Tuple[str, str, str]] = []
 
 
 def record(name: str, verdict: str, detail: str) -> None:
-    rows.append((name, verdict, detail))
-    print(f"[{verdict:<7}] {name}: {detail}")
+    """Collect a verdict. Printing is deferred to `_report` so the transcript is in proof
+    order rather than in whatever order the threads happened to finish."""
+    with _LOCK:
+        rows.append((name, verdict, detail))
+
+
+# ---------------------------------------------------------------------------------------------
+# Child processes, and the obligation that comes with running proofs concurrently
+#
+# Sequentially, a cancel unwinds through the one `subprocess` call in flight and that call's own
+# cleanup runs. With workers in flight there is no such unwind: the main thread is where a
+# signal is delivered, and the workers are somewhere else entirely. So every child this file
+# starts is registered here, and the main thread reaps the registry before it exits.
+#
+# This is not theoretical. Measured on the sequential version, 2026-09-11: SIGINT delivered
+# during t5 left an orphaned writer looping on 2 MB writes forever, because `_interrupt_writer`
+# spawned a child and then slept with no `finally`. Adding threads without this registry would
+# have widened that leak; adding the registry closes it.
+# ---------------------------------------------------------------------------------------------
+_CHILDREN: Set["subprocess.Popen[str]"] = set()
+# Set once, by the main thread, the instant a cancel is observed. A one-shot reap is not enough
+# on its own: measured 2026-09-11, SIGINT at 0.15s reaped the children that existed and then the
+# still-running t5 worker spawned its NEXT writer into a process that was already exiting, which
+# orphaned it. The flag closes that window — after a cancel, `_spawn` refuses.
+_CANCELLED = threading.Event()
+
+
+def _spawn(
+    argv: Sequence[str],
+    *,
+    cwd: Optional[str] = None,
+    env: Optional[Dict[str, str]] = None,
+    capture: bool = True,
+) -> "subprocess.Popen[str]":
+    """The only place this file starts a process. Refuses after a cancel; registered otherwise."""
+    if _CANCELLED.is_set():
+        raise G.Cancelled(signal.SIGINT)
+    proc = subprocess.Popen(  # noqa: S603 - argv is a list, never a shell string
+        [str(a) for a in argv],
+        stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        cwd=cwd,
+        env=env,
+        text=True,
+    )
+    with _LOCK:
+        _CHILDREN.add(proc)
+    if (
+        _CANCELLED.is_set()
+    ):  # lost the race with the reap: undo it here rather than leak it
+        proc.kill()
+        with _LOCK:
+            _CHILDREN.discard(proc)
+        proc.wait(timeout=5)
+        raise G.Cancelled(signal.SIGINT)
+    return proc
+
+
+def _settle(proc: "subprocess.Popen[str]", timeout_s: float) -> Tuple[int, str, str]:
+    """Wait with a deadline, kill on overrun, deregister whatever happens."""
+    try:
+        out, err = proc.communicate(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        out, err = proc.communicate()
+    finally:
+        with _LOCK:
+            _CHILDREN.discard(proc)
+    code = proc.returncode if proc.returncode is not None else -1
+    return code, out or "", err or ""
+
+
+def _call(
+    argv: Sequence[str],
+    *,
+    timeout_s: float,
+    cwd: Optional[str] = None,
+    env: Optional[Dict[str, str]] = None,
+    capture: bool = True,
+) -> Tuple[int, str, str]:
+    """Spawn and settle in one step, for the calls that do not need the handle in between."""
+    return _settle(_spawn(argv, cwd=cwd, env=env, capture=capture), timeout_s)
+
+
+def _reap_all() -> int:
+    """Stop new spawns, then kill every registered child. Returns how many there were.
+
+    Order matters: the flag first, so a worker racing us cannot register a child after the
+    registry has been drained; the kills second.
+    """
+    _CANCELLED.set()
+    with _LOCK:
+        victims = list(_CHILDREN)
+        _CHILDREN.clear()
+    for proc in victims:
+        try:
+            proc.kill()
+        except OSError:
+            pass  # already gone between the registry read and the kill
+    for proc in victims:
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+    return len(victims)
+
+
+_T = TypeVar("_T")
+_R = TypeVar("_R")
+
+
+def _start(fns: Sequence[Callable[[], None]]) -> List[threading.Thread]:
+    """Daemon threads on purpose: on cancel the main thread reaps the children and exits, and
+    a worker blocked on a dead child must not be able to hold the interpreter open."""
+    threads = [threading.Thread(target=fn, daemon=True) for fn in fns]
+    for thread in threads:
+        thread.start()
+    return threads
+
+
+def _join(threads: Sequence[threading.Thread]) -> None:
+    """Join in slices. A signal is only ever delivered to the main thread, so the main thread
+    must keep reaching a checkpoint where the interpreter can raise it."""
+    for thread in threads:
+        while thread.is_alive():
+            thread.join(0.05)
+
+
+def _map_parallel(
+    fn: Callable[[_T], _R], items: Sequence[_T], *, width: int
+) -> List[_R]:
+    """`map` on daemon threads: input order preserved, first failure re-raised, never swallowed."""
+    slots: List[Any] = [None] * len(items)
+    errors: List[BaseException] = []
+    cursor = iter(range(len(items)))
+
+    def worker() -> None:
+        while True:
+            with _LOCK:
+                index = next(cursor, -1)
+            if index < 0:
+                return
+            try:
+                slots[index] = fn(items[index])
+            except BaseException as exc:  # a worker that died must never read as a pass
+                with _LOCK:
+                    errors.append(exc)
+                return
+
+    _join(_start([worker] * max(1, min(width, len(items)))))
+    if errors:
+        raise errors[0]
+    return [cast(_R, slot) for slot in slots]
 
 
 # -- T1: a verdict cannot be a bare string ----------------------------------------------------
@@ -163,7 +337,7 @@ import json, os, pathlib, sys, time
 sys.path.insert(0, %(here)r)
 import gbtypes as G
 
-mode, target = sys.argv[1], pathlib.Path(sys.argv[2])
+mode, target, ready = sys.argv[1], pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
 payload = {"rows": [{"i": i, "pad": "y" * 512} for i in range(4000)]}   # ~2 MB serialized
 body = json.dumps(payload, indent=1) + "\n"
 
@@ -173,15 +347,19 @@ def once():
     else:
         target.write_text(body)          # the known-bad: truncate-then-write, interruptible
 
+def loop():
+    once()
+    ready.write_text("inside the write loop\n")   # the handshake; see `_interrupt_writer`
+    while True:
+        once()
+
 if mode == "atomic":
     def run() -> int:
-        while True:
-            once()
+        loop()
         return 0
     G.main(run)
 else:
-    while True:
-        once()
+    loop()
 """ % {"here": str(HERE)}
 
 # A child that dies at the WORST possible instant, deterministically. No race, no sleep, no luck:
@@ -222,11 +400,10 @@ def _crash_writer(mode: str, workdir: pathlib.Path) -> Tuple[bool, str]:
     target.write_text(original)
     child = workdir / f"crashchild_{mode}.py"
     child.write_text(CRASH_CHILD)
-    subprocess.run(
+    _call(
         [sys.executable, str(child), mode, str(target)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        timeout=60,
+        timeout_s=60,
+        capture=False,
     )
     raw = target.read_text(errors="replace")
     try:
@@ -238,27 +415,42 @@ def _crash_writer(mode: str, workdir: pathlib.Path) -> Tuple[bool, str]:
     )
 
 
-def _interrupt_writer(mode: str, workdir: pathlib.Path) -> Tuple[bool, int, int]:
-    """Run a writer in a loop, SIGINT it mid-flight, and report (artifact_intact, rc, tmp_left)."""
+def _interrupt_writer(
+    mode: str, workdir: pathlib.Path, attempt: int
+) -> Tuple[bool, int, int]:
+    """Run a writer in a loop, SIGINT it mid-flight, and report (artifact_intact, rc, tmp_left).
+
+    The child says when it is inside the write loop; before this it was a blind
+    `time.sleep(0.45)`. The sleep was a guess in BOTH directions. Too short on a loaded machine
+    and the signal lands before the child has written anything — a leg that proves nothing
+    while still reporting PASS, which is the exact failure mode this file exists to refuse. Too
+    long on an idle one and every attempt pays ~0.4s waiting for something already done.
+    Waiting for the child to SAY it completed a write is strictly stronger and strictly faster:
+    the signal still arrives asynchronously at an arbitrary point of an infinite write loop, so
+    what is being proven has not changed.
+    """
     target = workdir / f"{mode}.json"
     original = {"original": True}
     target.write_text(json.dumps(original, indent=1) + "\n")
     child = workdir / f"child_{mode}.py"
     child.write_text(CHILD)
+    ready = workdir / f"ready_{mode}_{attempt}"
 
-    proc = subprocess.Popen(
-        [sys.executable, str(child), mode, str(target)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
+    proc = _spawn(
+        [sys.executable, str(child), mode, str(target), str(ready)], capture=False
     )
-    time.sleep(0.45)  # let it get well inside the write loop
+    deadline = time.monotonic() + 30.0
+    while not ready.exists():
+        if proc.poll() is not None or time.monotonic() > deadline:
+            _rc, _out, err = _settle(proc, 5)
+            raise RuntimeError(
+                f"the {mode} writer never reported reaching its write loop "
+                f"({err.strip()[:120] or 'no diagnostics'}) — the signal leg never ran, so "
+                f"a PASS here would be vacuous"
+            )
+        time.sleep(0.002)
     proc.send_signal(signal.SIGINT)
-    try:
-        _, _err = proc.communicate(timeout=15)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.communicate()
-    rc = proc.returncode if proc.returncode is not None else -1
+    rc, _out, _err = _settle(proc, 15)
 
     raw = target.read_bytes()
     try:
@@ -321,7 +513,7 @@ def t5_cancel_correctness() -> None:
         # Leg 3 (signals): cancel semantics — exit 130, artifact whole, no temp residue.
         attempts = 4
         for i in range(attempts):
-            intact, rc, tmp_left = _interrupt_writer("atomic", work)
+            intact, rc, tmp_left = _interrupt_writer("atomic", work, i)
             if not intact:
                 record(
                     "t5-cancel-correctness",
@@ -536,6 +728,13 @@ def t8_cli_contract() -> None:
       exit codes      a usage error is 2, a red board is 1 — not both 1, not both 0
       no ANSI         nothing emits escapes under NO_COLOR/CI/TERM=dumb
       intent          a one-edit typo returns the corrected command, not a list dump
+
+    The invocations run concurrently and each distinct argv runs ONCE, its result reused by
+    every property that asks about it. That is a change of schedule, not of evidence: the same
+    argvs are executed against the same binary and every assertion below still runs, in order.
+    It is sound because every verb here is a READ — the one `repair` is dry-run unless
+    `--apply` is passed, and `gb`'s producers write through `atomic_write_*` — so no two of
+    these calls can observe each other half-finished.
     """
     gb = HERE / "gb"
     if not gb.is_file():
@@ -554,25 +753,61 @@ def t8_cli_contract() -> None:
     env = {k: v for k, v in os.environ.items() if k != "GB_IN_DOCTOR"}
     env.update({"NO_COLOR": "1", "CI": "true", "TERM": "dumb"})
 
-    def call(args: List[str]) -> subprocess.CompletedProcess:
-        return subprocess.run(
+    def call(args: List[str]) -> Tuple[int, str, str]:
+        return _call(
             [str(gb), *args],
+            timeout_s=300,
             cwd=str(HERE.parent),
             env=env,
-            capture_output=True,
-            text=True,
-            timeout=300,
         )
 
-    for verb in (
+    json_verbs = [
         ["capabilities"],
         ["info"],
         ["triage", "--json"],
         ["doctor", "--scope", "gate", "--json"],
         ["validate", "plugin", "--json"],
         ["repair", "--scope", "fixtures", "--json"],
-    ):
-        out = call(verb).stdout
+    ]
+    codes = [
+        (["nosuchverb"], 2, "unknown verb"),
+        (["doctor", "--scope", "nope"], 2, "unknown scope"),
+        (["repair"], 2, "repair with no scope"),
+        (["help", "nope"], 2, "unknown help topic"),
+        (["capabilities"], 0, "a clean read"),
+    ]
+    # `doctor` is scoped here on purpose: the unscoped fan-out re-enters this very
+    # selftest through its spine subsystem, which measured 8.3s of pure recursion
+    # depth for a check that only looks for escape bytes in the output.
+    human = [
+        ["triage"],
+        ["doctor", "--scope", "gate"],
+        ["quickstart"],
+        ["examples"],
+        ["robot-docs"],
+    ]
+    typos = [
+        ("dctor", "gb doctor"),
+        ("healht", "gb health"),
+        ("capabilites", "gb capabilities"),
+        ("triage--json", "gb triage --json"),
+    ]
+
+    plan: List[List[str]] = []
+    for argv in [
+        *json_verbs,
+        *[a for a, _c, _w in codes],
+        *human,
+        *[[t] for t, _c in typos],
+    ]:
+        if argv not in plan:
+            plan.append(argv)
+    # Width 8: enough that the two slowest calls (`doctor --scope gate`, ~0.25s) overlap
+    # everything else, low enough that the machine is not measuring its own contention.
+    answers = dict(zip((tuple(a) for a in plan), _map_parallel(call, plan, width=8)))
+
+    for verb in json_verbs:
+        out = answers[tuple(verb)][1]
         try:
             json.loads(out)
         except ValueError as exc:
@@ -584,80 +819,98 @@ def t8_cli_contract() -> None:
             )
             return
 
-    for args, want, why in (
-        (["nosuchverb"], 2, "unknown verb"),
-        (["doctor", "--scope", "nope"], 2, "unknown scope"),
-        (["repair"], 2, "repair with no scope"),
-        (["help", "nope"], 2, "unknown help topic"),
-        (["capabilities"], 0, "a clean read"),
-    ):
-        rc = call(args).returncode
-        if rc != want:
+    for args, want_code, why in codes:
+        rc = answers[tuple(args)][0]
+        if rc != want_code:
             record(
                 "t8-cli-contract",
                 FAIL,
-                f"{why}: `gb {' '.join(args)}` exited {rc}, expected {want}",
+                f"{why}: `gb {' '.join(args)}` exited {rc}, expected {want_code}",
             )
             return
 
-    # `doctor` is scoped here on purpose: the unscoped fan-out re-enters this very
-    # selftest through its spine subsystem, which measured 8.3s of pure recursion
-    # depth for a check that only looks for escape bytes in the output.
-    for verb in (
-        ["triage"],
-        ["doctor", "--scope", "gate"],
-        ["quickstart"],
-        ["examples"],
-        ["robot-docs"],
-    ):
-        r = call(verb)
-        if "\x1b[" in r.stdout or "\x1b[" in r.stderr:
+    # Every invocation is checked for escapes, not just the five human verbs: the answers are
+    # already in hand, so the wider claim costs nothing and a `--json` verb that coloured its
+    # output would corrupt the data channel rather than merely look wrong.
+    for argv in plan:
+        _rc, out, err = answers[tuple(argv)]
+        if "\x1b[" in out or "\x1b[" in err:
             record(
                 "t8-cli-contract",
                 FAIL,
-                f"`gb {verb[0]}` emitted ANSI escapes under NO_COLOR/CI/TERM=dumb",
+                f"`gb {' '.join(argv)}` emitted ANSI escapes under NO_COLOR/CI/TERM=dumb",
             )
             return
 
-    for typo, want in (
-        ("dctor", "gb doctor"),
-        ("healht", "gb health"),
-        ("capabilites", "gb capabilities"),
-        ("triage--json", "gb triage --json"),
-    ):
-        r = call([typo])
-        if r.returncode != 2 or want not in r.stderr:
+    for typo, want_fix in typos:
+        rc, _out, err = answers[(typo,)]
+        if rc != 2 or want_fix not in err:
             record(
                 "t8-cli-contract",
                 FAIL,
-                f"typo {typo!r} did not return the correction {want!r} "
-                f"(rc={r.returncode}); an agent that mistypes learns nothing",
+                f"typo {typo!r} did not return the correction {want_fix!r} "
+                f"(rc={rc}); an agent that mistypes learns nothing",
             )
             return
 
     record(
         "t8-cli-contract",
         PASS,
-        "6 --json verbs emit whole documents on stdout; 5 exit codes correct; 5 human verbs "
-        "ANSI-free under NO_COLOR/CI; 4 typos each answered with the corrected command",
+        f"{len(plan)} distinct invocations, concurrent: 6 --json verbs emit whole documents on "
+        f"stdout; 5 exit codes correct; all {len(plan)} ANSI-free under NO_COLOR/CI; 4 typos "
+        f"each answered with the corrected command",
     )
 
 
-def main() -> int:
-    for test in (
-        t1_typed_verdict,
-        t2_bounded_read,
-        t3_deadline,
-        t4_bounded_capture,
-        t5_cancel_correctness,
-        t6_typed_argv,
-        t7_severity_lattice,
-        t8_cli_contract,
-    ):
+# Each proof, its canonical row name, and whether it is worth a thread. `slow` is measured, not
+# guessed: t5 and t8 are ~95% of the suite's wall clock and spend nearly all of it waiting on
+# child processes, while the other six together cost under a second. Running the two big ones
+# beside the cheap ones bounds the suite at max(proof) instead of sum(proofs).
+TESTS: Tuple[Tuple[str, Callable[[], None], bool], ...] = (
+    ("t1-typed-verdict", t1_typed_verdict, False),
+    ("t2-bounded-read", t2_bounded_read, False),
+    ("t3-deadline", t3_deadline, False),
+    ("t4-bounded-capture", t4_bounded_capture, False),
+    ("t5-cancel-correctness", t5_cancel_correctness, True),
+    ("t6-typed-argv", t6_typed_argv, False),
+    ("t7-severity-lattice", t7_severity_lattice, False),
+    ("t8-cli-contract", t8_cli_contract, True),
+)
+
+
+def _guarded(name: str, test: Callable[[], None]) -> None:
+    try:
+        test()
+    except G.Cancelled:
+        # A cancel is not a failed proof, it is the ABSENCE of a proof. Recording it as a FAIL
+        # would be a lie in one direction and swallowing it would be a lie in the other: the
+        # suite must stop and say 130. (The sequential version caught this with a bare
+        # `except Exception`, and `Cancelled` is an Exception.)
+        raise
+    except Exception as exc:  # a crashing proof is a failed proof
+        record(name, FAIL, f"raised {type(exc).__name__}: {exc}")
+
+
+def _worker(name: str, test: Callable[[], None]) -> Callable[[], None]:
+    """Wrap a proof for a thread. A cancel reaches a worker only as a refused spawn, and the
+    main thread already owns the exit code — so the worker just stops, without a thread
+    traceback that would bury the one line the operator needs to read."""
+
+    def go() -> None:
         try:
-            test()
-        except Exception as exc:  # a crashing proof is a failed proof
-            record(test.__name__, FAIL, f"raised {type(exc).__name__}: {exc}")
+            _guarded(name, test)
+        except G.Cancelled:
+            pass
+
+    return go
+
+
+def _report(elapsed_s: float) -> int:
+    order = {name: i for i, (name, _fn, _slow) in enumerate(TESTS)}
+    for name, verdict, detail in sorted(
+        rows, key=lambda r: order.get(r[0], len(order))
+    ):
+        print(f"[{verdict:<7}] {name}: {detail}")
     bad = [r for r in rows if r[1] == FAIL]
     vac = [r for r in rows if r[1] == VACUOUS]
     print(
@@ -665,9 +918,33 @@ def main() -> int:
         f"{len(rows) - len(bad) - len(vac)}/{len(rows)} proven"
         + (f", {len(vac)} inconclusive" if vac else "")
         + (f", {len(bad)} failed" if bad else "")
+        + f" in {elapsed_s:.2f}s"
     )
     return 1 if bad else (2 if vac else 0)
 
 
+def _body() -> int:
+    started = time.monotonic()
+    workers = _start([_worker(n, fn) for n, fn, slow in TESTS if slow])
+    try:
+        for name, test, slow in TESTS:
+            if not slow:
+                _guarded(name, test)
+        _join(workers)
+    except BaseException:
+        # The main thread is the only one a signal reaches, so it is the only one that can
+        # honour it. Kill the registry before unwinding: the daemon workers are about to be
+        # torn down mid-wait and their children would otherwise outlive this process.
+        killed = _reap_all()
+        print(
+            f"reaped {killed} child process(es); {len(rows)}/{len(TESTS)} proofs had answered",
+            file=sys.stderr,
+        )
+        raise
+    return _report(time.monotonic() - started)
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    # `G.main` is the same entry point every other producer here uses: a cancel exits 130 with
+    # a stated reason instead of a traceback, which is what `gb doctor` and `gb-weekly.sh` read.
+    G.main(_body)

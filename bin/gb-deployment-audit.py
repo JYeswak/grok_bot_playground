@@ -14,6 +14,10 @@ NAMES and byte lengths and nothing else.
 
 Usage:
   gb-deployment-audit.py [--out FILE] [--app PATH] [--support DIR] [--no-decode] [--json]
+  gb-deployment-audit.py --live [--out FILE]   # also read the server with the client's own
+    # session (routines, skills, plugins, effective MCP config, usage). Auth is the desktop
+    # client's bearer token decrypted in memory, or runtime-supplied GB_TOKEN; no credential is
+    # ever written to the artifact — names, counts and flags only.
 """
 
 from __future__ import annotations
@@ -22,7 +26,9 @@ import argparse
 import base64
 import datetime as dt
 import hashlib
+import importlib.util
 import json
+import os
 import pathlib
 import platform as platform_mod
 import plistlib
@@ -31,7 +37,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from gblib import load, platform_refusal, platform_support, unb32  # noqa: E402
+from gblib import load, platform_refusal, platform_support, unavailable, unb32  # noqa: E402
 from gbtypes import atomic_write_text  # noqa: E402
 
 DEFAULT_APP = "/Applications/Grok Bot.app"
@@ -285,6 +291,294 @@ def roster(support: pathlib.Path) -> list[dict]:
     )
 
 
+# Methods the bead's RPC list named that the server does not serve, classified per convention
+# 16 (measured 2026-09-11 on both GrokBotService and DashboardService: 404 Route-not-found, i.e.
+# genuinely absent — not a wrong call). Recorded as BLOCKED with reason, never as empty.
+ABSENT_METHODS = (
+    "ListSandAutomations",
+    "GetAutomationMemory",
+)
+
+GB_SERVICE = "aiserver.v1.GrokBotService"
+DASH_SERVICE = "aiserver.v1.DashboardService"
+
+
+def _pull_module():
+    """The authenticated reader, borrowed — never copied — from gb-pull-inventory.py.
+
+    That module is this repo's measured account-surface reader (NE-8/NE-9); re-implementing its
+    rpc/token helpers here would be the fourth copy convention 14 forbids (gb-market-snapshot.py
+    loads it the same way). Loaded lazily so the default offline audit never touches it.
+    """
+    here = pathlib.Path(__file__).resolve().parent / "gb-pull-inventory.py"
+    spec = importlib.util.spec_from_file_location("gbpull_live", here)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def live_census(support: pathlib.Path, plat) -> dict:
+    """Authenticated read-only census: routines, skills, plugins, MCP config, usage.
+
+    Every method called starts with List/Get (the reader refuses anything else). Auth is the
+    desktop client's own bearer token decrypted in memory, or runtime-supplied GB_TOKEN. The
+    artifact carries names, counts and flags only — skill bodies contribute char counts,
+    routine records contribute schedule/status fields, the effective MCP config contributes
+    server names; no token, cookie, URL credential or free-text instruction is recorded.
+    """
+    rpc_status: dict = {}
+    blocked = [
+        {
+            "facet": m,
+            "reason": "404 Route POST not found on GrokBotService and DashboardService "
+            "(measured 2026-09-11, convention 16): no read path exists",
+        }
+        for m in ABSENT_METHODS
+    ]
+    empty = {
+        "routines": None,
+        "skills": None,
+        "plugins": None,
+        "mcp": None,
+        "usage": None,
+    }
+    cap = unavailable(plat, "credential_read")
+    if cap is not None or support is None:
+        return {
+            **empty,
+            "live": {
+                "attempted": True,
+                "auth": None,
+                "rpcs": {},
+                "blocked": blocked
+                + [
+                    {
+                        "facet": "client session",
+                        "reason": "credential_read unavailable on this platform; "
+                        "supply GB_TOKEN at runtime",
+                    }
+                ],
+            },
+        }
+    try:
+        pull = _pull_module()
+    except Exception as e:
+        return {
+            **empty,
+            "live": {
+                "attempted": True,
+                "auth": None,
+                "rpcs": {},
+                "blocked": blocked
+                + [{"facet": "reader load", "reason": f"{type(e).__name__}"}],
+            },
+        }
+    supplied = os.environ.get("GB_TOKEN")
+    try:
+        token = supplied or pull.access_token(support)
+        auth = (
+            "runtime-supplied (GB_TOKEN)"
+            if supplied
+            else "client-session (in memory only)"
+        )
+    except Exception as e:
+        return {
+            **empty,
+            "live": {
+                "attempted": True,
+                "auth": None,
+                "rpcs": {},
+                "blocked": blocked
+                + [
+                    {
+                        "facet": "auth",
+                        "reason": f"no usable session: {type(e).__name__}",
+                    }
+                ],
+            },
+        }
+
+    def call(method: str, body: dict | None = None, service: str = GB_SERVICE):
+        st, resp = pull.rpc(token, method, body or {}, service=service)
+        rpc_status[f"{service.split('.')[-1]}/{method}"] = st
+        return st, resp
+
+    # --- routines: the answerable read is ListGrokBotAgentAutomations (per-Bot uuid) ---------
+    durable = pull.durable_index(token)
+    routine_bots = []
+    for uuid_key in sorted(durable, key=lambda u: str(durable[u].get("name") or "")):
+        st, resp = call("ListGrokBotAgentAutomations", {"agent_id": uuid_key})
+        autos = (
+            resp.get("automations") if st == 200 and isinstance(resp, dict) else None
+        ) or []
+        rows = []
+        for a in autos:
+            try:
+                rec = json.loads(a["recordJson"])
+            except Exception:
+                continue
+            rows.append(
+                {
+                    "name": rec.get("name"),
+                    "enabled": bool(rec.get("isEnabled")),
+                    "schedule": rec.get("schedule")
+                    or f"trigger:{(rec.get('trigger') or {}).get('type')}",
+                    "trigger": (rec.get("trigger") or {}).get("type"),
+                    "last_run_at_ms": rec.get("lastRunAt"),
+                    "next_run_at_ms": rec.get("nextRunAt"),
+                    "recent_runs": [
+                        str(r.get("status", "unknown")) for r in (rec.get("runs") or [])
+                    ],
+                    "provenance": rec.get("provenance"),
+                }
+            )
+        routine_bots.append(
+            {
+                "uuid": uuid_key,
+                "name": durable[uuid_key].get("name"),
+                "routines": rows,
+            }
+        )
+    n_routines = sum(len(b["routines"]) for b in routine_bots)
+    routines = {
+        "source": "GrokBotService/ListGrokBotAgentAutomations (per-Bot uuid; ListSandAutomations "
+        "has no read path — see live.blocked)",
+        "bots": routine_bots,
+        "summary": {
+            "bots_checked": len(routine_bots),
+            "bots_with_routines": sum(1 for b in routine_bots if b["routines"]),
+            "total": n_routines,
+            "enabled": sum(
+                1 for b in routine_bots for r in b["routines"] if r["enabled"]
+            ),
+        },
+    }
+
+    # --- per-Bot skills (census; bodies contribute lengths, never text) ----------------------
+    skill_bots = []
+    for uuid_key in sorted(durable, key=lambda u: str(durable[u].get("name") or "")):
+        st, resp = call("ListGrokBotAgentSkills", {"agent_id": uuid_key})
+        got = (
+            resp.get("skills") if st == 200 and isinstance(resp, dict) else None
+        ) or []
+        skill_bots.append(
+            {
+                "uuid": uuid_key,
+                "name": durable[uuid_key].get("name"),
+                "skills": [
+                    {
+                        "name": s.get("name"),
+                        "description_chars": len(s.get("description") or ""),
+                        "body_chars": len(s.get("body") or ""),
+                    }
+                    for s in got
+                ],
+            }
+        )
+    st, managed = call("GetManagedSkills", {}, service=DASH_SERVICE)
+    skills = {
+        "source": "GrokBotService/ListGrokBotAgentSkills (per-Bot) + "
+        "DashboardService/GetManagedSkills (catalog)",
+        "bots": skill_bots,
+        "managed_ids": [s.get("id") for s in ((managed or {}).get("skills") or [])]
+        if st == 200 and isinstance(managed, dict)
+        else None,
+    }
+
+    # --- plugins (user-level installs; per-Agent reads 404 resource — inventory owns that note) -
+    st, installs = call("ListUserPluginInstalls", {}, service=DASH_SERVICE)
+    plugins = {
+        "source": "DashboardService/ListUserPluginInstalls (user-level)",
+        "installs": [
+            {
+                "name": (i.get("plugin") or {}).get("name"),
+                "enabled": i.get("isEnabled"),
+                "status": (i.get("plugin") or {}).get("status"),
+            }
+            for i in ((installs or {}).get("installs") or [])
+        ]
+        if st == 200 and isinstance(installs, dict)
+        else None,
+    }
+
+    # --- effective MCP config: account settings + DashboardService effective config + tools -----
+    st_s, settings = call("GetGrokBotUserMcpSettings", {})
+    s = (settings or {}).get("settings") or {} if st_s == 200 else {}
+    st_e, eff = call("GetEffectiveMcpConfigForUser", {}, service=DASH_SERVICE)
+    eff_names: list | None = None
+    if st_e == 200 and isinstance(eff, dict):
+        try:
+            eff_names = sorted(
+                (json.loads(eff.get("configJson") or "{}").get("mcpServers") or {})
+            )
+        except Exception:
+            eff_names = []
+    st_t, tools = call("ListSandMcpTools", {}, service=DASH_SERVICE)
+    servers = (
+        tools.get("servers") if st_t == 200 and isinstance(tools, dict) else None
+    ) or []
+    mcp = {
+        "source": "GrokBotService/GetGrokBotUserMcpSettings (account servers) + "
+        "DashboardService/GetEffectiveMcpConfigForUser (effective config) + "
+        "DashboardService/ListSandMcpTools (tool census)",
+        "servers": [
+            {
+                "server_id": x.get("serverIdentifier"),
+                "status": x.get("status"),
+                "tool_count": len(x.get("tools") or []),
+                "tool_names": sorted(
+                    str(t.get("name")) for t in (x.get("tools") or []) if t.get("name")
+                ),
+            }
+            for x in servers
+        ]
+        if st_t == 200
+        else None,
+        "effective_server_names": eff_names,
+        "account_server_ids": sorted(
+            str(x.get("serverId"))
+            for x in (s.get("servers") or [])
+            if x.get("serverId")
+        )
+        if st_s == 200
+        else None,
+        "scope_note": "GetEffectiveMcpConfigForUser answers account-level (no per-Bot scope "
+        "in the returned config); recorded as-is rather than split per Bot",
+    }
+
+    # --- usage / spend position (direct call so its status is honestly recorded) ---------------
+    st_u, spend = call("GetSandUsageStatus", {}, service=DASH_SERVICE)
+    od = (spend or {}).get("onDemandSettings") or {}
+    usage = (
+        {
+            "source": "DashboardService/GetSandUsageStatus",
+            "period_start": spend.get("currentPeriodStart"),
+            "next_reset": spend.get("nextResetTimestampUtc"),
+            "usage_percent": spend.get("usagePercent"),
+            "has_available_usage": spend.get("hasAvailableUsage"),
+            "plan_label": spend.get("grokPlanLabel"),
+            "on_demand_enabled": od.get("enabled"),
+            "on_demand_eligible": od.get("eligible"),
+        }
+        if st_u == 200 and isinstance(spend, dict)
+        else None
+    )
+
+    return {
+        "routines": routines,
+        "skills": skills,
+        "plugins": plugins,
+        "mcp": mcp,
+        "usage": usage,
+        "live": {
+            "attempted": True,
+            "auth": auth,
+            "rpcs": rpc_status,
+            "blocked": blocked,
+        },
+    }
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     root = pathlib.Path(__file__).resolve().parents[1]
@@ -301,6 +595,12 @@ def main() -> int:
     )
     ap.add_argument(
         "--no-decode", action="store_true", help="skip djb2 gate-name recovery (fast)"
+    )
+    ap.add_argument(
+        "--live",
+        action="store_true",
+        help="read the server with the client's own session (routines, skills, plugins, "
+        "effective MCP config, usage); default is fully offline. Auth in memory only.",
     )
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
@@ -351,6 +651,14 @@ def main() -> int:
             "undecoded_enabled": 0,
         },
         "account": {},
+        # Populated only by --live. Absent keys read as UNMEASURED in gb-coverage.py — an
+        # offline audit must never masquerade as a live census.
+        "routines": None,
+        "skills": None,
+        "plugins": None,
+        "mcp": None,
+        "usage": None,
+        "live": {"attempted": False, "reason": "offline by default; pass --live"},
     }
 
     boot = load(support / "sand-statsig-bootstrap.json")
@@ -403,15 +711,25 @@ def main() -> int:
             "is_enterprise_trial_user": custom.get("isEnterpriseTrialUser"),
         }
 
+    if args.live:
+        # Opt-in only: the default audit stays fully offline (convention 2 keeps the JUDGE
+        # offline; this PRODUCER may read the server when asked, with the client's session).
+        audit.update(live_census(support, plat))
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(out_path, json.dumps(audit, indent=1) + "\n")
     if args.json:
+        live = audit.get("live") or {}
         print(
             json.dumps(
                 {
                     "audit": str(out_path),
                     "bots": len(audit["bots"]),
                     "gates_enabled": audit["gates"]["enabled"],
+                    "live_attempted": live.get("attempted", False),
+                    "routines_total": (
+                        (audit.get("routines") or {}).get("summary") or {}
+                    ).get("total"),
                 }
             )
         )

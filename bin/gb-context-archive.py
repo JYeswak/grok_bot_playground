@@ -32,7 +32,7 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from gblib import DEFAULT_SUPPORT, dated_children, load, unb32  # noqa: E402
+from gblib import dated_children, load, support_dir, unb32  # noqa: E402
 from gbtypes import atomic_write_text  # noqa: E402
 
 ARCHIVE_ROOT = pathlib.Path(os.path.expanduser("~/.local/state/grokbot-archive"))
@@ -59,7 +59,11 @@ def lineage(root: pathlib.Path) -> dict[str, dict]:
 def main() -> int:
     root = pathlib.Path(__file__).resolve().parents[1]
     ap = argparse.ArgumentParser()
-    ap.add_argument("--support", default=DEFAULT_SUPPORT)
+    # gblib never exported DEFAULT_SUPPORT; this ImportError made the file unrunnable —
+    # including `--help` — while it was scheduled WEEKLY by gb-weekly.sh and shipped to the
+    # public mirror. support_dir() is the one definition five scripts already share, and it
+    # returns None on a platform with no desktop client rather than inventing a path.
+    ap.add_argument("--support", default=support_dir())
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 

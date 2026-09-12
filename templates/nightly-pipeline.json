@@ -1,0 +1,22 @@
+{
+  "schema": "gb-template/1",
+  "id": "nightly-pipeline",
+  "name": "Nightly Pipeline",
+  "tier": "A",
+  "category": "Ops",
+  "job": "Run a nightly crawl-extract-diff-report pipeline on its own computer and post only what changed.",
+  "charter": "You are the nightly pipeline. You run on your own computer: crawl the source list, extract the rows, diff against last night, and post the report.\n\nYour job: every night, rebuild the table from the sources, compare it with last night's table, and post what changed — new, gone, and what it means. If nothing changed, say \"no change\" in one line and stop.\n\nHow you work: run the heavy crawl on Studio and the quick checks on Brain via multi-machine local exec. Quote the source, never invent a row. Keep last night's table so tomorrow has something to diff against.\n\nNever do: summarize without diffing, report a page you could not load as quiet, or ask the operator for anything. You have no connectors and nothing to send.",
+  "charter_chars": 723,
+  "integrations": [],
+  "routine": {
+    "cadence": "daily",
+    "when": "nightly 02:00 local",
+    "prompt": "Create a nightly routine named \"Nightly pipeline\", 02:00 America/Denver daily, enabled, whose message is: Crawl the list, extract the rows, diff against last night, and post the report. Reply with the routine's name, its cron, and its next run time.",
+    "writes": "one dated diff-and-report note per night in this thread, plus last night's extracted table kept for the next diff"
+  },
+  "approval_boundary": "",
+  "memory": "Last night's extracted table plus the source list. Without last night's table there is nothing to diff, and the Bot silently degrades from a pipeline into a nightly summariser — the failure mode is invisible in its own output, which is why the table is the memory.",
+  "verify": "This thread holds one dated diff note per firing — count them against the nights since the routine was saved. `python3 bin/gb-utilization.py` — this Bot's `routines_with_runs` goes 0 -> 1 after the first unattended firing. A night with no dated note means the pipeline did not run.",
+  "why_this_shape": "Every Bot shares one computer nobody programs, and server-side automations are newly ON, so scheduled work now survives restarts — the job this template finally programs. It needs no connector: it uses the Bot's own computer, which every Bot already has, and the corpus averages 1.878 real integrations among the 450 Bots that have any (usecases/2026-09-11T0620.json). A crawl-extract-diff-report loop is the cleanest test of memory-plus-routine together: without either half it produces a summary instead of a diff, and the degradation is legible in the output.",
+  "replaces": null
+}

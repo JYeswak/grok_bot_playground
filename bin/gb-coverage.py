@@ -185,6 +185,35 @@ FACETS = [
         "-",
         "advisory only",
     ),
+    # --- live census (audit --live): the oracle gap closing --------------------------------
+    (
+        "routines census per Bot (live)",
+        "audit",
+        lambda a: (a.get("routines") or {}).get("bots"),
+        "g9",
+        "GrokBotService/ListGrokBotAgentAutomations; --live",
+    ),
+    (
+        "per-Bot skills census (live)",
+        "audit",
+        lambda a: (a.get("skills") or {}).get("bots"),
+        "g8",
+        "GrokBotService/ListGrokBotAgentSkills + DashboardService/GetManagedSkills",
+    ),
+    (
+        "installed plugins (live)",
+        "audit",
+        lambda a: (a.get("plugins") or {}).get("installs"),
+        "g15",
+        "DashboardService/ListUserPluginInstalls",
+    ),
+    (
+        "effective MCP config (live)",
+        "audit",
+        lambda a: (a.get("mcp") or {}).get("servers"),
+        "g18",
+        "GetGrokBotUserMcpSettings + DashboardService/GetEffectiveMcpConfigForUser",
+    ),
     # --- account controls --------------------------------------------------------------------
     (
         "Auto-review enabled",
@@ -373,6 +402,13 @@ BLOCKED_FACETS = [
         "per-Bot plugin attachment",
         "GetGrokBotAgentPlugins returns resource-404 for every Bot; only the "
         "user-level install list is answerable.",
+    ),
+    (
+        "ListSandAutomations / GetAutomationMemory as named",
+        "the bead's RPC list named ListSandAutomations and GetAutomationMemory, but both answer "
+        "404 Route-not-found on GrokBotService AND DashboardService (measured 2026-09-11, "
+        "convention 16). The answerable routine read is ListGrokBotAgentAutomations, recorded "
+        "per Bot by audit --live. Re-probe only if the client bundle names a new automation path.",
     ),
     (
         "the 962 unnamed capabilities",

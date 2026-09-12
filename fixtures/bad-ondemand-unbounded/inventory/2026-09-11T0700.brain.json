@@ -5,9 +5,9 @@
  "recorded_at": "2026-09-11T07:00:00+00:00",
  "app_version": "0.47.0",
  "usage": {
-  "period_start": "2026-09-05T18:22:04Z",
-  "next_reset": "2026-09-12T02:17:01Z",
-  "usage_percent": 2.7,
+  "period_start": "2026-09-09T00:00:00Z",
+  "next_reset": "2026-09-14T00:00:00Z",
+  "usage_percent": 45.0,
   "has_available_usage": true,
   "plan_label": "Grok Bot Plan",
   "on_demand_enabled": true,
@@ -48,7 +48,8 @@
       "ok",
       "ok"
      ],
-     "provenance": "user"
+     "provenance": "user",
+     "next_run_at_ms": null
     }
    ]
   }

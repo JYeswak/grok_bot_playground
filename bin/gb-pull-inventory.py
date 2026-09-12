@@ -47,101 +47,43 @@ from gbtypes import atomic_write_text  # noqa: E402
 import urllib.error
 import urllib.request
 
-HOST = "api2.cursor.sh"
-SERVICE = "aiserver.v1.GrokBotService"
+# THE TRANSPORT MOVED TO `gbrpc.py` on 2026-09-12 and is RE-EXPORTED here, verbatim, because
+# fifteen files name this producer by path to borrow it. Keeping the names bound here means none
+# of them changed; new code should `from gbrpc import access_token, rpc` and skip the
+# `spec_from_file_location` dance (and its python 3.9.6 `sys.modules` trap) entirely.
+#
+# Why it had to move: `gb dogfood audit` scored this file 172, the largest gap of 54, on
+# `importers=9` — and the score could only RISE, because a library dependency living inside a
+# PRODUCER is indistinguishable, to the detector, from nine files hand-rolling the same read.
+# Four of them had in fact re-implemented `rpc`, and with it four copies of the read-only
+# refusal that caught `gb fleet send` tonight.
+from gbrpc import (  # noqa: E402
+    HOST,
+    KEYCHAIN,
+    PLATFORM,
+    READ_ONLY_PREFIXES,
+    SERVICE,
+    SUPPORT,
+    access_token,
+    decrypt,
+    rpc,
+    safestorage_key,
+)
+
 EXIT_ENVIRONMENT = 3
-# Resolved once, at import, so every read below and the refusal above them agree on one answer.
-PLATFORM = platform_support()
-SUPPORT = PLATFORM.support_dir
-KEYCHAIN = ("Grok Bot Safe Storage", "Grok Bot Key")
-READ_ONLY_PREFIXES = ("List", "Get")
 
-
-def safestorage_key() -> bytes:
-    """The Electron safeStorage password, hardened into the AES key. macOS only, by nature.
-
-    The platform gate is a PRECONDITION, checked by `main` before anything runs, not here:
-    raising out of a helper is how a "not implemented on this operating system" turns into a
-    traceback the operator has to decode. This function is therefore only ever reached where
-    `security` is the right tool, and it still refuses rather than returning an empty key —
-    an empty credential that decrypts nothing would be reported upstream as an empty account.
-    """
-    r = subprocess.run(
-        [
-            "security",
-            "find-generic-password",
-            "-w",
-            "-s",
-            KEYCHAIN[0],
-            "-a",
-            KEYCHAIN[1],
-        ],
-        capture_output=True,
-        text=True,
-        timeout=180,
-    )
-    if r.returncode != 0 or not r.stdout.strip():
-        raise SystemExit(
-            "could not read the safeStorage password from the keychain — a human must "
-            "click Allow on the macOS prompt, then re-run"
-        )
-    return hashlib.pbkdf2_hmac(
-        "sha1", r.stdout.strip().encode(), b"saltysalt", 1003, 16
-    )
-
-
-def decrypt(value: str, key: bytes) -> str:
-    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-
-    raw = base64.b64decode(value)
-    if raw[:3] != b"v10":
-        raise ValueError("not a safeStorage v10 blob")
-    d = Cipher(algorithms.AES(key), modes.CBC(b" " * 16)).decryptor()
-    out = d.update(raw[3:]) + d.finalize()
-    return out[: -out[-1]].decode("utf-8", "replace")
-
-
-def access_token(support: pathlib.Path) -> str:
-    """The desktop client's own bearer token, decrypted in memory and never written anywhere.
-
-    `support` is passed rather than read off the module constant so that the one caller that
-    has already cleared the platform gate is the only thing that can reach the keychain — the
-    directory cannot be None here, and the type says so.
-    """
-    key = safestorage_key()
-    secrets = json.loads((support / "sand-secrets.json").read_text())
-    accounts = json.loads(secrets["cursor-accounts"])
-    return decrypt(accounts["accounts"][accounts["active"]]["cursor-access-token"], key)
-
-
-def rpc(
-    token: str,
-    method: str,
-    body: dict | None = None,
-    timeout: float = 45.0,
-    service: str = SERVICE,
-) -> tuple[int, dict | str]:
-    if not method.startswith(READ_ONLY_PREFIXES):
-        raise SystemExit(
-            f"refusing to call {method}: this tool is read-only by contract"
-        )
-    req = urllib.request.Request(
-        f"https://{HOST}/{service}/{method}",
-        data=json.dumps(body or {}).encode(),
-        headers={
-            "authorization": f"Bearer {token}",
-            "content-type": "application/json",
-            "connect-protocol-version": "1",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return r.status, json.loads(r.read().decode("utf-8", "replace") or "{}")
-    except urllib.error.HTTPError as e:
-        return e.code, (e.read().decode("utf-8", "replace") if e.fp else "")
-    except Exception as e:
-        return 0, f"{type(e).__name__}: {e}"
+__all__ = [
+    "HOST",
+    "KEYCHAIN",
+    "PLATFORM",
+    "READ_ONLY_PREFIXES",
+    "SERVICE",
+    "SUPPORT",
+    "access_token",
+    "decrypt",
+    "rpc",
+    "safestorage_key",
+]
 
 
 def newest_audit_or_die(root: pathlib.Path) -> dict:
@@ -281,14 +223,23 @@ def durable_index(token: str) -> dict[str, dict]:
     if st != 200 or not isinstance(resp, dict):
         return {}
     got = resp.get("agents", [])
-    # Measured 2026-09-11 (NE-5): this response is CAPPED AT 10, newest first, and the request has
-    # no paging field. After the rebuild it stopped returning Claudey, which still exists
-    # (ListGrokBotAgentSessions answers 200 for it). A full set therefore cannot be assumed —
-    # api_addressable=False on a Bot beyond the cap means "not shown", not "not writable".
-    if len(got) >= 10:
+    # NE-5 SUPERSEDED 2026-09-11T20:5xZ: the claim "CAPPED AT 10, newest first" is FALSIFIED.
+    # A live call returned THIRTEEN agents, including the two Bots created minutes earlier
+    # (Template 2465406, Routine Proof 2467454). Whatever stopped Claudey appearing after the
+    # rebuild, it was not a hard cap of 10. The warning is kept but re-aimed: it now fires only
+    # as a reminder that this response has no paging field, so a SHRINK is still suspicious.
+    #
+    # THE REAL BLIND SPOT, and it is ours: the `bots` list in the written artifact is sourced
+    # from the LOCAL roster blob in sand-client-persistence, which is a per-machine CACHE. A Bot
+    # created through the API is absent from it until that desktop syncs — measured: Routine
+    # Proof was live in ListGrokBotAgents and in the app on another Mac while this machine's
+    # artifact omitted it, so a reader concluded the Bot had been deleted. For a tool whose
+    # product is DEPLOYING Bots, the roster must come from the API and the cache must only
+    # enrich it. Until that is fixed, never conclude absence from the artifact alone.
+    if len(got) < 10:
         print(
-            f"WARNING ListGrokBotAgents returned {len(got)} — at or above the measured cap of 10; "
-            f"addressability for Bots outside the newest 10 is UNKNOWN, not false",
+            f"NOTE ListGrokBotAgents returned {len(got)} — fewer than the 13 measured on "
+            f"2026-09-11; this response has no paging field, so a shrink is unexplained",
             file=sys.stderr,
         )
     return {a["legacyAgentId"]: a for a in got if a.get("legacyAgentId")}
@@ -342,10 +293,15 @@ def routine_rows(token: str, bots: list[dict], durable: dict[str, dict]) -> list
                     "last_run_at_ms": rec.get("lastRunAt"),
                     "next_run_at_ms": rec.get("nextRunAt"),
                     "recent_runs": runs,
-                    # Measured 2026-09-11: routines can be created by the BOT, not the user, and the
-                    # record marks them provenance="untrusted". Two appeared on a freshly built Chief
-                    # of Staff with no run history and a next run already scheduled. g9 treats an
-                    # enabled untrusted routine as a finding until a human has looked at it.
+                    # CORRECTED 2026-09-11T20:57Z by direct experiment. The previous comment
+                    # claimed routines "can be created by the BOT ... and the record marks them
+                    # provenance='untrusted'" — an INFERENCE from two routines on a freshly
+                    # rebuilt Chief of Staff, written here as if measured. Both halves are now
+                    # tested: a Bot WAS asked in chat to schedule itself, it DID create
+                    # "Weekly receipt" (cron CRON_TZ=America/Denver 45 7 * * 1, isEnabled true),
+                    # and that record carries provenance="user", NOT "untrusted". So chat IS a
+                    # real create path for routines, and `untrusted` means something else we
+                    # have not identified. g9 still treats enabled+untrusted as a finding.
                     "provenance": rec.get("provenance"),
                 }
             )
@@ -354,6 +310,11 @@ def routine_rows(token: str, bots: list[dict], durable: dict[str, dict]) -> list
             {
                 "name": b["name"],
                 "uuid": b["id"],
+                # Which population this Bot came from: the server's durable index, the local
+                # cache, or both. Carried through because a reader must be able to tell a
+                # server-only Bot (new, or this desktop has not synced) from a cache-only one
+                # (mid-delete, or the server list is short) instead of seeing a silent union.
+                "roster_source": b.get("roster_source"),
                 # The write contract: numeric id present => UpdateGrokBotAgent / SetGrokBotAgentPlugins
                 # / SetGrokBotAgentVisibility / DeleteGrokBotAgent are callable for this Bot.
                 "api_addressable": d is not None,
@@ -532,7 +493,33 @@ def main() -> int:
         }
         for a in sorted(durable.values(), key=lambda a: a.get("name") or "")
     ]
-    bots = routine_rows(token, audit.get("bots") or [], durable)
+    # THE ROSTER SPINE IS THE SERVER, corrected 2026-09-11. This line used to read
+    # `audit.get("bots")` — the deployment audit's list, which is derived from the LOCAL
+    # sand-client-persistence roster blob. That blob is a per-machine cache: measured tonight at
+    # 13 Bots on the server against 10 in the artifact, and it reported a Bot that was live in
+    # the API and visible on another Mac as though it had been deleted. Four separate wrong
+    # conclusions in one session came from reading it, including "the deploy must have made a
+    # phantom" about a Bot that was fine.
+    #
+    # So: the SERVER's durable index is the spine, and the cache only enriches. A Bot the server
+    # knows is always present, carrying its routines. A Bot only the cache knows is still kept —
+    # it is either mid-delete or the server list is short — but it is marked so a reader can
+    # tell the two populations apart instead of silently unioning them.
+    audit_bots = {b.get("id"): b for b in (audit.get("bots") or []) if b.get("id")}
+    spine: list[dict] = []
+    for uuid_key, rec in durable.items():
+        row = dict(audit_bots.get(uuid_key) or {})
+        row["id"] = uuid_key
+        row["name"] = rec.get("name") or row.get("name")
+        row["roster_source"] = "server" if uuid_key in audit_bots else "server-only"
+        spine.append(row)
+    for uuid_key, rec in audit_bots.items():
+        if uuid_key not in durable:
+            row = dict(rec)
+            row["roster_source"] = "cache-only"
+            spine.append(row)
+    spine.sort(key=lambda b: str(b.get("name") or ""))
+    bots = routine_rows(token, spine, durable)
 
     computers = {
         c["hello"]["label"]: c for c in (comps.get("computers") or []) if c.get("hello")

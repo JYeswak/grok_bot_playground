@@ -135,15 +135,198 @@ jobs:
 
       - name: the installed console script answers
         run: |
-          gb --help
           gb capabilities --json > capabilities.json
+          gb dogfood --json > dogfood.json
           python -c "
           import json
           d = json.load(open('capabilities.json'))
-          assert 'platform' in d['commands'], sorted(d['commands'])
           assert len(d['exit_codes']) >= 5, d['exit_codes']
           print('capabilities: %d verbs, %d exit codes' % (len(d['commands']), len(d['exit_codes'])))
           "
+
+      - name: the wheel carries every producer the CLI dispatches
+        # WHY THIS STEP EXISTS, and why the step above it was worth nothing on its own. Until
+        # 2026-09-12 that step asserted `'platform' in d['commands']` and stopped there — a
+        # condition the PUBLISHED wheel satisfied while carrying 18 of 54 verbs. Measured that
+        # day: `pip install git+https://github.com/JYeswak/grok_bot_playground` into a throwaway
+        # venv produced a `gb` reporting version 1.0.0 with 18 commands and 32 payload files
+        # instead of 64, and nothing anywhere said so. An assertion a 36-verb shortfall passes
+        # is a probe that cannot fail.
+        #
+        # THE MAP IS NOT RE-DERIVED HERE. `gb dogfood` resolves verb -> producer from `bin/gb`'s
+        # own AST — 54 verbs, 70 dispatch edges, and six that do NOT follow `gb-<verb>.py`
+        # (`gb roadmap` -> `gb-gaps.py`, `gb gates` -> `gb-capabilities.py`, `gb matrix` ->
+        # `gb-feature-matrix.py`, `gb record` -> `gb-record-inventory.py`, `gb spend` ->
+        # `gb-spend-ledger.py`, `gb deployment` -> `gb-deployment-audit.py`). A second mapping
+        # written in this file would be free to drift from the dispatcher it is checking.
+        run: |
+          cat > payload-check.py <<'PY'
+          import json, pathlib, sys
+          import grok_bot_ops
+
+          # `gb-export-public.py` can never ship, and this is not an oversight to fix: its own
+          # leak-scanner patterns contain the client identifiers they hunt, so publishing the
+          # publisher publishes the secrets. The verb stays registered and `bin/gb`'s
+          # `_passthrough` refuses it with exit 3 — asserted by the verb sweep below.
+          CANNOT_SHIP = {"gb-export-public.py"}
+
+          payload = pathlib.Path(grok_bot_ops.__file__).resolve().parent / "bin"
+          dispatch = json.load(open("dogfood.json"))["dispatch"]
+          advertised = set(json.load(open("capabilities.json"))["commands"])
+          shipped = {p.name for p in payload.iterdir() if p.is_file()}
+          absent = {
+              verb: [p for p in producers if p not in shipped and p not in CANNOT_SHIP]
+              for verb, producers in dispatch.items()
+          }
+          absent = {verb: missing for verb, missing in absent.items() if missing}
+          print("payload %d file(s); %d verb(s); %d dispatch edge(s)"
+                % (len(shipped), len(dispatch), sum(len(p) for p in dispatch.values())))
+
+          bad = []
+          if advertised != set(dispatch):
+              bad.append("advertised set != dispatch set: advertised-only=%s dispatched-only=%s"
+                         % (sorted(advertised - set(dispatch)), sorted(set(dispatch) - advertised)))
+          if absent:
+              bad.append("verbs whose producer this build does not carry: %r" % absent)
+          # The exception list is a ratchet in BOTH directions: a producer that must never ship
+          # and suddenly does is a leak, not a fix.
+          for name in sorted(CANNOT_SHIP & shipped):
+              bad.append("%s is in the wheel and must never be" % name)
+          for line in bad:
+              print("PAYLOAD INCOMPLETE:", line, file=sys.stderr)
+          sys.exit(1 if bad else 0)
+          PY
+          python payload-check.py
+          python - <<'PY'
+          import pathlib, subprocess, sys
+          import grok_bot_ops
+          # MUTATION CONTROL. A green payload check is evidence only if a subset payload turns
+          # it red, so hide one producer and require the failure. Done in Python rather than
+          # `mv` because the Windows cell's payload path is a backslash path in git-bash.
+          producer = pathlib.Path(grok_bot_ops.__file__).parent / "bin" / "gb-triage-check.py"
+          hidden = producer.with_suffix(".py.hidden")
+          producer.rename(hidden)
+          try:
+              code = subprocess.run([sys.executable, "payload-check.py"]).returncode
+          finally:
+              hidden.rename(producer)
+          if code == 0:
+              sys.exit("the payload check passed with gb-triage-check.py removed — "
+                       "it is not wired to the payload it claims to check")
+          print("mutation control held: hiding one producer turns the check RED")
+          PY
+
+      - name: every advertised verb is invoked FOR REAL
+        # NOT `--help`. argparse answers `--help` without ever spawning the producer, which is
+        # exactly how nine dead verbs stayed green in a public clone on 2026-09-12: `gb <verb>
+        # --help` passed for all 52 verbs while nine of them could not run at all.
+        #
+        # The bar is NOT exit 0. A runner has no artifacts, no desktop client and no account, so
+        # most verbs correctly refuse. The bar is that THE TOOL answers: an uncaught traceback,
+        # or CPython's `can't open file`, means this build advertised something it cannot run.
+        run: |
+          cat > verb-sweep.py <<'PY'
+          import json, os, subprocess, sys, tempfile
+
+          DEADLINE = 45.0
+          TMP = tempfile.gettempdir()
+
+          # Verbs whose parser demands an operand before the producer is ever reached. Each
+          # value is read-shaped and taken from that verb's own refusal text, so the row
+          # exercises the producer instead of argparse. `repair` runs without `--apply`, which
+          # this tool defines as a dry run that writes nothing.
+          ARGS = {
+              "bot": ["log"], "mcp": ["list"], "why": ["g24-cli-contract"],
+              "validate": ["types"], "help": ["exit-codes"], "record": ["--list"],
+              "repair": ["--scope", "types"], "completion": ["zsh"],
+              "export": [os.path.join(TMP, "gb-export-probe")],
+          }
+
+          # THE RAW LIST IS EMPTY, AND IT WAS NOT EMPTY WHEN THIS STEP WAS WRITTEN. That is the
+          # only reason to keep this comment: on 2026-09-12 the first run of this sweep against
+          # a real install found TWO verbs answering with a stack trace where a sentence
+          # belongs, both on a bare install without the `[inventory]` extra —
+          #
+          #   gb fleet     bare `from cryptography...` in bin/gbrpc.py:99, relayed as a
+          #                traceback with exit 1
+          #   gb mcp list  bin/gb-mcp.py:398 called `fail(...)`, which that file never defines,
+          #                so the handler that exists to report a credential failure crashed
+          #                while reporting it
+          #
+          # Isolated before either was reported: both exited 0 on the same tree installed as
+          # `.[inventory]`, so the cause was the deferred import and not the payload. Both are
+          # fixed in the producers now — `gb fleet` names the extra and the install command,
+          # `gb mcp` refuses with ENVIRONMENT — and this sweep is what found them, so the list
+          # stays here at zero rather than being deleted.
+          #
+          # THE RATCHET HAS TWO DIRECTIONS AND ONLY ONE IS PORTABLE. A raw row that is NOT
+          # listed here fails this step anywhere, and with an empty list that means ANY raw row
+          # fails it — that direction is unconditional. Requiring a LISTED row to still be raw
+          # is only meaningful where the credential path can be reached at all; on Linux and
+          # Windows `gb platform` reports NOT_IMPLEMENTED and these verbs refuse honestly long
+          # before `gbrpc` is imported, which is a pass, not a fix. So the second direction is
+          # asked only when the tool itself says the path is reachable — measured from
+          # `gb platform --json`, not inferred from the runner label. It fired for real on
+          # 2026-09-12: with `{"fleet", "mcp"}` still listed, the step went RED with "KNOWN_RAW
+          # is stale — these no longer crash and must be deleted from the list: ['mcp']".
+          KNOWN_RAW = set()
+
+          caps = json.loads(subprocess.run(["gb", "capabilities", "--json"], check=True,
+                                           capture_output=True, text=True).stdout)
+          verbs = sorted(caps["commands"])
+          rows = {}
+          for verb in verbs:
+              argv = ["gb", verb] + ARGS.get(verb, [])
+              try:
+                  p = subprocess.run(argv, capture_output=True, text=True, timeout=DEADLINE)
+              except subprocess.TimeoutExpired:
+                  rows[verb] = ("slow", None, ">%.0fs" % DEADLINE)
+                  continue
+              out = (p.stderr or "") + (p.stdout or "")
+              first = next((ln for ln in (p.stderr or p.stdout or "").splitlines() if ln.strip()), "")
+              if "Traceback (most recent call last)" in out or "can't open file" in out:
+                  kind = "raw"
+              elif p.returncode == 0:
+                  kind = "works"
+              elif first.strip():
+                  kind = "honest"
+              else:
+                  kind = "silent"
+              rows[verb] = (kind, p.returncode, first[:110])
+
+          by = {}
+          for verb, (kind, code, msg) in sorted(rows.items()):
+              by.setdefault(kind, []).append(verb)
+              if kind != "works":
+                  print("  %-7s exit=%-5s %-16s %s" % (kind, code, verb, msg))
+          print("sweep: " + ", ".join("%s=%d" % (k, len(v)) for k, v in sorted(by.items())))
+
+          bad = []
+          raw = set(by.get("raw", ()))
+          plat = json.loads(subprocess.run(["gb", "platform", "--json"], check=True,
+                                           capture_output=True, text=True).stdout)
+          credential_path_reachable = plat["status"] == "SUPPORTED" and plat["support_dir_exists"]
+          print("credential path reachable here: %s (%s, support_dir_exists=%s)"
+                % (credential_path_reachable, plat["status"], plat["support_dir_exists"]))
+          if raw - KNOWN_RAW:
+              bad.append("verbs that answered with a traceback instead of a refusal: %s"
+                         % sorted(raw - KNOWN_RAW))
+          if credential_path_reachable and KNOWN_RAW - raw:
+              bad.append("KNOWN_RAW is stale — these no longer crash and must be deleted from "
+                         "the list: %s" % sorted(KNOWN_RAW - raw))
+          if by.get("silent"):
+              bad.append("verbs that failed with no message at all: %s" % by["silent"])
+          # The one verb whose producer can never ship must refuse with ENVIRONMENT and name it.
+          e = subprocess.run(["gb", "export", os.path.join(TMP, "gb-export-probe")],
+                             capture_output=True, text=True)
+          if e.returncode != 3 or "does not ship gb-export-public.py" not in e.stderr:
+              bad.append("gb export should refuse with exit 3 naming the absent producer; "
+                         "got exit %s: %r" % (e.returncode, e.stderr[:160]))
+          for line in bad:
+              print("VERB SWEEP:", line, file=sys.stderr)
+          sys.exit(1 if bad else 0)
+          PY
+          python verb-sweep.py
 
       - name: this runner classifies itself correctly
         # THE MEASUREMENT THIS FILE EXISTS FOR. Everything else here is regression cover; this

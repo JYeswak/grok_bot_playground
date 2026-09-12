@@ -17,8 +17,20 @@ client author a valid blob; swap that share_id into fleet-spec.json and the seed
 
 What a rebuild carries and what it does NOT:
   carries      name, title, avatar, description
-  does NOT     conversation history, learned memory, routines, per-Bot skills, connector logins
-               (routines have no create RPC — rebuild them in the UI)
+  does NOT     conversation history, learned memory, per-Bot skills, connector logins
+  routines     NOT carried by the create, and NOT manual either: no create RPC exists, but a
+               Bot asked in ONE chat turn schedules itself. `gb templates deploy <id> --apply`
+               does both halves and CONFIRMS the routine by reading it back from the server.
+               This line said "rebuild them in the UI" until 2026-09-12, and the same false
+               sentence printed directly above a "ROUTINE CONFIRMED" line in one run's output
+               — the tool contradicting itself on screen, seconds apart, in one terminal.
+  DELETE       measured 2026-09-12: `DeleteGrokBotAgent` removes the Bot and NOT its routine
+               record. After two rollbacks `ListGrokBotAgentAutomations` still returned 200
+               with one automation per deleted uuid, while `ListGrokBotAgents` no longer
+               carried the name. So "the manifest deletes exactly what that run created" is
+               true of the BOT and false of the ROUTINE, and a routine read is never proof
+               that its Bot exists. Whether an orphaned routine can still fire is UNKNOWN:
+               nothing was observed either way and nothing is claimed either way.
 
   gb-rebuild-fleet.py --plan                 # what would be created
   gb-rebuild-fleet.py --apply [--only NAME]  # instantiate + shape; skips names already present
@@ -36,24 +48,17 @@ import uuid
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from gbtypes import atomic_write_text  # noqa: E402
-from importlib import import_module
-
-_pull = (
-    import_module("gb-pull-inventory".replace("-", "_")) if False else None
-)  # see _load below
 
 
+# TRANSPORT IS A LIBRARY (gbrpc.py) since 2026-09-12. This used to dynamically import
+# bin/gb-pull-inventory.py by path to borrow access_token/rpc — a library dependency
+# wearing a producer's clothes, which made `gb dogfood audit` count this file as one
+# more hand-roller and forced the python 3.9.6 sys.modules dance on every borrower.
 def _load():
-    """Reuse the puller's session + transport instead of re-deriving them."""
-    import importlib.util
+    """The transport, imported normally. Kept as a function so call sites are unchanged."""
+    import gbrpc
 
-    spec = importlib.util.spec_from_file_location(
-        "gb_pull_inventory",
-        pathlib.Path(__file__).resolve().parent / "gb-pull-inventory.py",
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    return gbrpc
 
 
 def rpc_write(mod, token: str, method: str, body: dict):
@@ -87,19 +92,30 @@ def main() -> int:
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--only", default=None, help="rebuild just this source Bot name")
     ap.add_argument("--rollback", default=None, metavar="MANIFEST")
+    ap.add_argument(
+        "--spec",
+        default=None,
+        metavar="PATH",
+        help=(
+            "read the Bot list from PATH instead of fleet-spec.json. Added so "
+            "`gb templates deploy` can instantiate ONE proposed template without editing the "
+            "reviewed roster — the deploy mechanism stays this file, single-sourced, rather "
+            "than being reimplemented against the RPCs a second time."
+        ),
+    )
     args = ap.parse_args()
 
     mod = _load()
-    spec_path = root / "fleet-spec.json"
+    spec_path = pathlib.Path(args.spec) if args.spec else root / "fleet-spec.json"
     if not spec_path.is_file():
         raise SystemExit(
-            "fleet-spec.json is missing — it is the reviewed text, not a derived file"
+            f"{spec_path} is missing — the spec is reviewed text, not a derived file"
         )
     spec = json.loads(spec_path.read_text())
 
     if args.rollback:
         man = json.loads(pathlib.Path(args.rollback).read_text())
-        token = mod.access_token()
+        token = mod.access_token(mod.SUPPORT)
         for row in man["created"]:
             st, r = rpc_write(
                 mod, token, "DeleteGrokBotAgent", {"id": row["new_numeric_id"]}
@@ -127,7 +143,7 @@ def main() -> int:
         )
         return 0
 
-    token = mod.access_token()
+    token = mod.access_token(mod.SUPPORT)
     seed = (spec.get("seed") or {}).get("share_id")
     if not seed:
         raise SystemExit(
@@ -201,7 +217,7 @@ def main() -> int:
     atomic_write_text(out, json.dumps(manifest, indent=1) + "\n")
     print(f"\nmanifest {out}")
     print(f"rollback with: bin/gb-rebuild-fleet.py --rollback {out}")
-    print("NEXT (not automatable): rebuild routines in the UI, then hide the old Bot.")
+    print("NEXT: confirm the routine took — gb fleet routines --bot <name>")
     return 0
 
 

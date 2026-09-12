@@ -94,6 +94,7 @@ from typing import (
     Mapping,
     Optional,
     Sequence,
+    TextIO,
     Tuple,
 )
 
@@ -627,16 +628,43 @@ def main(fn: Callable[[], int]) -> None:
     A cancelled producer exits 130/143 — the shell convention the scheduler and `gb-weekly.sh`
     already read — instead of a traceback and exit 1, which is indistinguishable from a real
     failure and would be recorded in the tick as one.
+
+    TWO DEFECTS FIXED 2026-09-11, both measured independently by two producers against a real
+    closed pipe on fd1+fd2:
+
+    1. The cancellation notice is printed to stderr INSIDE `except Cancelled`. When stderr is
+       also a closed pipe that print raises BrokenPipeError, and the `except BrokenPipeError`
+       arm is a SIBLING — it cannot catch an exception raised inside its own try's handler. A
+       cancelled run exited 1 instead of 130/143: safe (never 0) but a scheduled tick could not
+       tell "the operator stopped it" from "it broke". The print is now guarded; a closed pipe
+       may lose the MESSAGE, never the CODE.
+
+    2. The BrokenPipeError arm exited 0 UNCONDITIONALLY, which erased a verdict. Measured: a
+       producer whose `fn` returned 1 for a failing selftest reported success to anything that
+       piped it. A pipe closing during ordinary output is still not a failure (exit 0), but if
+       the EPIPE happened while REPORTING a cancellation, `__context__` carries that Cancelled
+       and its code is the honest answer. We never invent a code for an unexplained EPIPE.
     """
+
+    def _quiet(stream: "TextIO") -> None:
+        """Point a stream at /dev/null so the interpreter's shutdown flush cannot complain."""
+        try:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), stream.fileno())
+        except (OSError, ValueError):
+            pass
+
     try:
         with cancel_scope():
             sys.exit(fn())
     except Cancelled as c:
-        print(f"cancelled: {c} — no partial artifact written", file=sys.stderr)
-        sys.exit(c.exit_code)
-    except BrokenPipeError:
-        # `| head` closed the pipe. Not a failure of the producer.
         try:
-            sys.stdout.close()
-        finally:
-            sys.exit(0)
+            print(f"cancelled: {c} — no partial artifact written", file=sys.stderr)
+        except BrokenPipeError:
+            _quiet(sys.stderr)
+        sys.exit(c.exit_code)
+    except BrokenPipeError as e:
+        # `| head` closed the pipe. Not a failure of the producer — unless the pipe broke while
+        # we were reporting a cancellation, in which case that code is the truth.
+        _quiet(sys.stdout)
+        ctx = e.__context__
+        sys.exit(ctx.exit_code if isinstance(ctx, Cancelled) else 0)

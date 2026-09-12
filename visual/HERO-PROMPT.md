@@ -10,7 +10,7 @@ candidate is the documented drift signal, and that candidate is rejected.
 ## What this repo is, so the scene means something
 
 `gb` is a one-touch CLI for operating a live Grok Bot deployment: it measures the vendor's
-surface and the operator's own account, judges both against 24 checks, and reports what is wrong
+surface and the operator's own account, judges both against 25 checks, and reports what is wrong
 and what to run about it. The emotional truth of the tool is **a calm operator with one screen
 that already knows the answer** — not a dashboard sprawl, not an alert storm.
 

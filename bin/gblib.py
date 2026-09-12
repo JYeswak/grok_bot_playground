@@ -48,10 +48,34 @@ def dated_children(d: pathlib.Path, suffix: str = "") -> List[pathlib.Path]:
 def newest_audit(
     root: pathlib.Path,
 ) -> Tuple[Optional[pathlib.Path], Optional[Dict[str, Any]]]:
-    """The most recent deployment audit, as (path, parsed). (None, None) when there is none —
-    callers decide whether that is an ERROR, because for some of them it is."""
+    """The most recent USABLE deployment audit, as (path, parsed). (None, None) when there is
+    none — callers decide whether that is an ERROR, because for some of them it is.
+
+    NEWEST IS NOT BEST, corrected 2026-09-12. This used to return `rows[-1]` unconditionally.
+    `gb deployment audit` is OFFLINE BY DEFAULT, and an offline run writes a perfectly valid
+    artifact whose server-derived sections are empty — `routines.bots` came back 0 where the
+    previous live artifact had 13. Because every reader took the newest file, one read-only
+    audit silently blinded the whole chain: two findings rows lost their claims and the gate
+    board went from 1 RED to 4 RED, with nothing in any output naming the cause.
+
+    The writer was never dishonest — it records `live.attempted: false` and the reason. The
+    readers were, by treating a strictly poorer snapshot as a newer truth. So: prefer the
+    newest artifact that ATTEMPTED a live read, and fall back to the newest of any kind only
+    when no live one exists, because a fresh install legitimately has only offline audits.
+
+    Same defect class as four others measured the same week — a roster cache read instead of
+    the server, a stale artifact ranked by label instead of freshness, and `gb x` picking the
+    newest X corpus when the older one was the richer. "Newest" is a proxy for "best", and it
+    is wrong whenever a cheaper run can also be a more recent one.
+    """
     rows = dated_children(root / "deployment", ".json")
-    return (rows[-1], load(rows[-1])) if rows else (None, None)
+    if not rows:
+        return (None, None)
+    for path in reversed(rows):
+        doc = load(path)
+        if isinstance(doc, dict) and (doc.get("live") or {}).get("attempted") is True:
+            return (path, doc)
+    return (rows[-1], load(rows[-1]))
 
 
 # ---------------------------------------------------------------------------------------------
