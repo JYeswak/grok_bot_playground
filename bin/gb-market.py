@@ -29,8 +29,10 @@ BIN = ROOT / "bin"
 SCHEMA = "gb-market-bots/1"
 JOBS_SCHEMA = "gb-market-jobs/4"
 VERDICT_SCHEMA = "gb-market-verdict/1"
+DEPLOY_SCHEMA = "gb-market-deploy/1"
+SHARE_HOST = "https://x.ai/bot/"
 PREVIEW_ROWS = 20
-EXIT_OK, EXIT_USAGE, EXIT_ENVIRONMENT = 0, 2, 3
+EXIT_OK, EXIT_USAGE, EXIT_ENVIRONMENT, EXIT_REFUSED = 0, 2, 3, 5
 SOURCES = ("official", "corpus", "both")
 
 
@@ -647,6 +649,188 @@ def cmd_verdict(
     return EXIT_OK
 
 
+class DeployRefused(Exception):
+    """Usage or environment refuse while resolving a named share_id. Never invents one."""
+
+    def __init__(self, message: str, code: int) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def share_url(share_id: str) -> str:
+    """Official one-click URL. Full share_id, never a 16-char slice."""
+    return "%s%s" % (SHARE_HOST, share_id)
+
+
+def catalog_share_ids_with_prefix(bots: Sequence[dict], prefix: str) -> List[str]:
+    mdb = _market_db()
+    sid = mdb.real_share_id({"share_id": prefix})
+    if not sid:
+        return []
+    found = []
+    for row in bots:
+        got = mdb.real_share_id(row)
+        if got and got.startswith(sid):
+            found.append(got)
+    return sorted(set(found))
+
+
+def catalog_row_for_share_id(bots: Sequence[dict], share_id: str) -> Optional[dict]:
+    mdb = _market_db()
+    sid = mdb.real_share_id({"share_id": share_id})
+    if not sid:
+        return None
+    hits = [r for r in bots if mdb.real_share_id(r) == sid]
+    if not hits:
+        return None
+    hits.sort(key=lambda r: name_key(r.get("name")))
+    return hits[0]
+
+
+def resolve_deploy_share_id(
+    token: str,
+    bots: Sequence[dict],
+    store: pathlib.Path,
+    mb: Any,
+) -> str:
+    """Exact catalog or bandit hit, else a unique prefix across both. Never guesses."""
+    sid = mb.real_share_id({"share_id": token})
+    if not sid:
+        raise DeployRefused("gb market deploy: refuse — no share_id", EXIT_USAGE)
+    catalog_exact = catalog_row_for_share_id(bots, sid) is not None
+    bandit_hits = mb.list_share_ids_with_prefix(store, sid)
+    if catalog_exact or mb.latest_subject(store, sid) is not None:
+        if mb.latest_subject(store, sid) is not None:
+            resolved = mb.resolve_share_id(store, sid, kind="deploy")
+        else:
+            resolved = sid
+    else:
+        catalog_hits = catalog_share_ids_with_prefix(bots, sid)
+        matches = sorted(set(catalog_hits) | set(bandit_hits))
+        if not matches:
+            raise DeployRefused(
+                "gb market deploy: refuse — not in catalog (or not in store)",
+                EXIT_ENVIRONMENT,
+            )
+        if len(matches) > 1:
+            raise DeployRefused(
+                "gb market deploy: refuse — ambiguous share_id prefix",
+                EXIT_ENVIRONMENT,
+            )
+        resolved = matches[0]
+    if catalog_row_for_share_id(bots, resolved) is None:
+        raise DeployRefused(
+            "gb market deploy: refuse — not in catalog (or not in store)",
+            EXIT_ENVIRONMENT,
+        )
+    return resolved
+
+
+def deploy_card(row: dict) -> dict:
+    mdb = _market_db()
+    sid = mdb.real_share_id(row) or ""
+    return {
+        "category": row.get("category") or "",
+        "charter": str(row.get("charter") or ""),
+        "job": row.get("job") or "none",
+        "name": row.get("name") or "",
+        "origin": row.get("origin") or "",
+        "share_id": sid,
+        "share_url": share_url(sid),
+    }
+
+
+def print_deploy_human(cards: Sequence[dict]) -> None:
+    for i, card in enumerate(cards):
+        if i:
+            emit("")
+        emit("NAME       %s" % (card.get("name") or "-"))
+        emit("JOB        %s" % (card.get("job") or "none"))
+        emit("SHARE_URL  %s" % (card.get("share_url") or ""))
+        origin = card.get("origin") or "-"
+        category = card.get("category") or "-"
+        emit("ORIGIN     %s  category=%s" % (origin, category))
+        charter = card.get("charter") or ""
+        if charter:
+            emit("CHARTER")
+            emit(charter if charter.endswith("\n") else charter + "\n")
+        else:
+            emit("CHARTER MISSING")
+
+
+def cmd_deploy(
+    root: pathlib.Path,
+    share_ids: Sequence[str],
+    as_json: bool,
+    offline: bool = False,
+    apply: bool = False,
+) -> int:
+    if apply:
+        emit(
+            "gb market deploy: refuse — open the SHARE_URL "
+            "(do not call CreateGrokBot or templates)"
+        )
+        return EXIT_REFUSED
+    tokens = [str(t).strip() for t in share_ids if str(t).strip()]
+    if not tokens:
+        emit("gb market deploy: refuse — no share_id")
+        return EXIT_USAGE
+    if not offline:
+        cmd_refresh(True, quiet=as_json)
+    mdb = _market_db()
+    mb = _market_bandit()
+    path = root / "usecases" / mdb.DB_NAME
+    err = mdb.refuse_path(path)
+    if err:
+        emit(err.replace("gb-market-db:", "gb market deploy:", 1))
+        return EXIT_ENVIRONMENT
+    store = mb.store_path(root)
+    bandit_err = mb.refuse_path(store)
+    if bandit_err:
+        emit(bandit_err.replace("gb-market-bandit:", "gb market deploy:", 1))
+        return EXIT_ENVIRONMENT
+    try:
+        bots = mdb.load_bots(path)
+        cards = []
+        for token in tokens:
+            resolved = resolve_deploy_share_id(token, bots, store, mb)
+            row = catalog_row_for_share_id(bots, resolved)
+            if row is None:
+                raise DeployRefused(
+                    "gb market deploy: refuse — not in catalog (or not in store)",
+                    EXIT_ENVIRONMENT,
+                )
+            cards.append(deploy_card(row))
+    except DeployRefused as e:
+        emit(str(e))
+        return e.code
+    except mdb.CacheRefused as e:
+        emit(str(e).replace("gb-market-db:", "gb market deploy:", 1))
+        return EXIT_ENVIRONMENT
+    except mb.StoreRefused as e:
+        emit(str(e).replace("gb-market-bandit:", "gb market deploy:", 1))
+        return EXIT_ENVIRONMENT
+    payload = {
+        "rows": [
+            {
+                "charter": c.get("charter") or "",
+                "job": c.get("job"),
+                "name": c.get("name"),
+                "origin": c.get("origin"),
+                "share_id": c.get("share_id"),
+                "share_url": c.get("share_url"),
+            }
+            for c in cards
+        ],
+        "schema": DEPLOY_SCHEMA,
+    }
+    if as_json:
+        emit(dumps(payload))
+        return EXIT_OK
+    print_deploy_human(cards)
+    return EXIT_OK
+
+
 def cmd_new(root: pathlib.Path, as_json: bool, offline: bool = False) -> int:
     if not offline:
         cmd_refresh(True, quiet=as_json)
@@ -1231,10 +1415,339 @@ def selftest() -> int:
         check(
             "jobs-no-persona-flag",
             "--persona" not in help_txt
+            and "pack" not in help_txt
             and "jobs" in help_txt
             and "keep" in help_txt
             and "skip" in help_txt
-            and "ban" in help_txt,
+            and "ban" in help_txt
+            and "deploy" in help_txt,
+            help_txt,
+        )
+
+        deploy_root = root / "deploy-cache"
+        (deploy_root / "usecases").mkdir(parents=True)
+        long_sid = "ANv3NrqPfRcS9PdXku7h8"
+        long_prefix = long_sid[:16]
+        deploy_charter = "paste this charter for the long share desk"
+        mdb.rebuild(
+            deploy_root / "usecases" / mdb.DB_NAME,
+            [
+                mdb.canonicalize_row(
+                    {
+                        "name": "Long Share Desk",
+                        "category": "finance-ops",
+                        "share_id": long_sid,
+                        "from_shares": True,
+                        "origin": "shares",
+                        "charter": deploy_charter,
+                        "prompt_chars": len(deploy_charter),
+                    }
+                ),
+                mdb.canonicalize_row(
+                    {
+                        "name": "Empty Charter Desk",
+                        "category": "Ops",
+                        "share_id": "emptyShareXYZ",
+                        "from_shares": True,
+                        "origin": "shares",
+                        "charter": "",
+                    }
+                ),
+                mdb.canonicalize_row(
+                    {
+                        "name": "Aaa Personal",
+                        "category": "Personal",
+                        "share_id": "persShare",
+                        "origin": "both",
+                        "charter": "personal admin is job none",
+                    }
+                ),
+                mdb.canonicalize_row(
+                    {
+                        "name": "Prefix Twin A",
+                        "category": "Ops",
+                        "share_id": "prefixTwinAAA",
+                        "from_shares": True,
+                        "origin": "shares",
+                        "charter": "twin a",
+                    }
+                ),
+                mdb.canonicalize_row(
+                    {
+                        "name": "Prefix Twin B",
+                        "category": "Ops",
+                        "share_id": "prefixTwinBBB",
+                        "from_shares": True,
+                        "origin": "shares",
+                        "charter": "twin b",
+                    }
+                ),
+                mdb.canonicalize_row(
+                    {
+                        "name": "Aaa Shares",
+                        "category": "coding-shipping",
+                        "share_id": "aaaShare",
+                        "from_shares": True,
+                        "origin": "shares",
+                        "charter": "ship this",
+                    }
+                ),
+            ],
+            [],
+        )
+        mb.record_impression(
+            mb.store_path(deploy_root),
+            job="spend",
+            name_key="long share desk",
+            share_id=long_sid,
+        )
+        exact = _capture(
+            lambda: body(["deploy", long_sid, "--offline", "--root", str(deploy_root)])
+        )
+        exact_url = "https://x.ai/bot/%s" % long_sid
+        check(
+            "deploy-exact-id-prints-full-url-and-charter",
+            exact[0] == 0
+            and exact_url in exact[1]
+            and deploy_charter in exact[1]
+            and "Long Share Desk" in exact[1]
+            and "JOB        spend" in exact[1],
+            exact[1][:400],
+        )
+        pref = _capture(
+            lambda: body(
+                ["deploy", long_prefix, "--offline", "--root", str(deploy_root)]
+            )
+        )
+        check(
+            "deploy-unique-prefix",
+            pref[0] == 0 and exact_url in pref[1] and long_sid in pref[1],
+            pref[1][:400],
+        )
+        check(
+            "deploy-never-truncates-share-id",
+            exact_url in exact[1]
+            and exact_url in pref[1]
+            and all(
+                not line.strip().endswith("https://x.ai/bot/" + long_prefix)
+                for line in (exact[1] + pref[1]).splitlines()
+            ),
+            exact[1][:200] + pref[1][:200],
+        )
+        amb = _capture(
+            lambda: body(
+                ["deploy", "prefixTwin", "--offline", "--root", str(deploy_root)]
+            )
+        )
+        check(
+            "deploy-ambiguous-prefix-refused",
+            amb[0] == EXIT_ENVIRONMENT and "ambiguous" in amb[1].lower(),
+            amb[1],
+        )
+        missing = _capture(
+            lambda: body(
+                ["deploy", "noSuchShare", "--offline", "--root", str(deploy_root)]
+            )
+        )
+        check(
+            "deploy-missing-id-refused",
+            missing[0] == EXIT_ENVIRONMENT
+            and "not in catalog" in missing[1]
+            and "not in store" in missing[1],
+            missing[1],
+        )
+        nosid = _capture(
+            lambda: body(["deploy", "--offline", "--root", str(deploy_root)])
+        )
+        check(
+            "deploy-no-share-id-is-usage",
+            nosid[0] == EXIT_USAGE and "no share_id" in nosid[1],
+            nosid[1],
+        )
+        none_job = _capture(
+            lambda: body(
+                ["deploy", "persShare", "--offline", "--root", str(deploy_root)]
+            )
+        )
+        check(
+            "deploy-job-none-allowed-when-named",
+            none_job[0] == 0
+            and "JOB        none" in none_job[1]
+            and "https://x.ai/bot/persShare" in none_job[1],
+            none_job[1][:300],
+        )
+        empty_c = _capture(
+            lambda: body(
+                ["deploy", "emptyShareXYZ", "--offline", "--root", str(deploy_root)]
+            )
+        )
+        check(
+            "deploy-empty-charter-prints-missing-and-url",
+            empty_c[0] == 0
+            and "CHARTER MISSING" in empty_c[1]
+            and "https://x.ai/bot/emptyShareXYZ" in empty_c[1],
+            empty_c[1][:300],
+        )
+        applied = _capture(
+            lambda: body(
+                [
+                    "deploy",
+                    long_sid,
+                    "--apply",
+                    "--offline",
+                    "--root",
+                    str(deploy_root),
+                ]
+            )
+        )
+        check(
+            "deploy-apply-refuses-open-share-url",
+            applied[0] == EXIT_REFUSED
+            and "SHARE_URL" in applied[1]
+            and "CreateGrokBot" in applied[1]
+            and "templates" in applied[1]
+            and applied[1].count("\n") <= 2,
+            applied[1],
+        )
+        dj = _capture(
+            lambda: body(
+                [
+                    "deploy",
+                    long_sid,
+                    "persShare",
+                    "--offline",
+                    "--json",
+                    "--root",
+                    str(deploy_root),
+                ]
+            )
+        )
+        dpayload = json.loads(dj[1]) if dj[1].strip().startswith("{") else {}
+        drows = dpayload.get("rows") or []
+        check(
+            "deploy-json-schema-and-rows",
+            dj[0] == 0
+            and dpayload.get("schema") == DEPLOY_SCHEMA
+            and [r.get("share_id") for r in drows] == [long_sid, "persShare"]
+            and drows[0].get("share_url") == exact_url
+            and drows[0].get("charter") == deploy_charter
+            and drows[0].get("job") == "spend"
+            and set(drows[0]) == {
+                "charter",
+                "job",
+                "name",
+                "origin",
+                "share_id",
+                "share_url",
+            },
+            str(dpayload)[:400],
+        )
+        deploy_stale = root / "deploy-stale"
+        (deploy_stale / "usecases").mkdir(parents=True)
+        import sqlite3 as _sql_deploy
+
+        stale_db = deploy_stale / "usecases" / "market.sqlite"
+        conn = _sql_deploy.connect(str(stale_db))
+        try:
+            conn.executescript(mdb.SCHEMA_SQL)
+            conn.execute("PRAGMA user_version = 0")
+            conn.execute(
+                "INSERT INTO bots (name_key, name, origin, taxonomy, job, share_id) "
+                "VALUES ('x','X','both','ops','operate','sid')"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        dscode, dsout = _capture(
+            lambda: body(
+                ["deploy", "sid", "--offline", "--root", str(deploy_stale)]
+            )
+        )
+        check(
+            "deploy-offline-stale-version-refused",
+            dscode == EXIT_ENVIRONMENT and "user_version" in dsout,
+            dsout,
+        )
+        deploy_bad_bandit = root / "deploy-bandit-bad"
+        (deploy_bad_bandit / "usecases").mkdir(parents=True)
+        mdb.rebuild(
+            deploy_bad_bandit / "usecases" / mdb.DB_NAME,
+            [
+                mdb.canonicalize_row(
+                    {
+                        "name": "Zzz Weak",
+                        "category": "Ops",
+                        "share_id": "weakShare",
+                        "from_shares": True,
+                    }
+                )
+            ],
+            [],
+        )
+        (deploy_bad_bandit / "usecases" / mb.DB_NAME).write_bytes(
+            b"not a sqlite database\n"
+        )
+        dbbcode, dbbout = _capture(
+            lambda: body(
+                ["deploy", "weakShare", "--offline", "--root", str(deploy_bad_bandit)]
+            )
+        )
+        check(
+            "deploy-offline-bad-bandit-refused",
+            dbbcode == EXIT_ENVIRONMENT and "refuse" in dbbout,
+            dbbout,
+        )
+        called: List[Tuple[str, Tuple[Any, ...]]] = []
+        orig_run = subprocess.run
+        orig_call = subprocess.call
+        orig_popen = subprocess.Popen
+        orig_check_call = subprocess.check_call
+        orig_check_output = subprocess.check_output
+
+        def _track(name: str, orig: Any) -> Any:
+            def inner(*a: Any, **k: Any) -> Any:
+                called.append((name, a))
+                return orig(*a, **k)
+
+            return inner
+
+        subprocess.run = _track("run", orig_run)
+        subprocess.call = _track("call", orig_call)
+        subprocess.Popen = _track("popen", orig_popen)  # type: ignore[assignment]
+        subprocess.check_call = _track("check_call", orig_check_call)
+        subprocess.check_output = _track("check_output", orig_check_output)
+        try:
+            role_rc, role_out = _capture(
+                lambda: body(
+                    ["deploy", long_sid, "--offline", "--root", str(deploy_root)]
+                )
+            )
+        finally:
+            subprocess.run = orig_run
+            subprocess.call = orig_call
+            subprocess.Popen = orig_popen
+            subprocess.check_call = orig_check_call
+            subprocess.check_output = orig_check_output
+        role_blob = str(called) + role_out
+        import inspect as _inspect
+
+        deploy_src = (
+            _inspect.getsource(cmd_deploy)
+            + _inspect.getsource(resolve_deploy_share_id)
+            + _inspect.getsource(print_deploy_human)
+        )
+        check(
+            "deploy-does-not-invoke-gb-role",
+            role_rc == 0
+            and "gb-role" not in role_blob
+            and "gb-role" not in deploy_src
+            and "first-hour" not in deploy_src
+            and not any("gb-role" in str(c) for c in called),
+            role_blob[:300] + deploy_src[:200],
+        )
+        check(
+            "deploy-help-no-persona-or-pack",
+            "--persona" not in help_txt and "pack" not in help_txt,
             help_txt,
         )
 
@@ -1268,14 +1781,18 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "action",
         nargs="?",
-        choices=("refresh", "bots", "new", "jobs", "keep", "skip", "ban"),
+        choices=("refresh", "bots", "new", "jobs", "keep", "skip", "ban", "deploy"),
         default="bots",
-        help="refresh | bots | new | jobs | keep | skip | ban",
+        help="refresh | bots | new | jobs | keep | skip | ban | deploy",
     )
     ap.add_argument(
-        "share_id",
-        nargs="?",
-        help="keep/skip/ban: stored share_id, or a unique prefix of one",
+        "share_ids",
+        nargs="*",
+        default=[],
+        help=(
+            "deploy: one or more catalog share_ids or unique prefixes. "
+            "keep/skip/ban: one stored share_id or unique prefix"
+        ),
     )
     ap.add_argument(
         "--corpus",
@@ -1296,7 +1813,12 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--offline",
         action="store_true",
-        help="bots/new: stamps only; jobs: valid sqlite cache only",
+        help="bots/new: stamps only; jobs/deploy: valid catalog cache only",
+    )
+    ap.add_argument(
+        "--apply",
+        action="store_true",
+        help="deploy: refused — open the SHARE_URL (does not create Bots)",
     )
     ap.add_argument("--root", default="", help="artifact root (tests)")
     ap.add_argument("--selftest", action="store_true")
@@ -1315,8 +1837,25 @@ def body(argv: Optional[Sequence[str]] = None) -> int:
         return cmd_new(root, bool(args.json), bool(args.offline))
     if args.action == "jobs":
         return cmd_jobs(root, bool(args.json), bool(args.offline))
+    share_ids = list(getattr(args, "share_ids", None) or [])
+    if args.action == "deploy":
+        return cmd_deploy(
+            root,
+            share_ids,
+            bool(args.json),
+            bool(args.offline),
+            bool(getattr(args, "apply", False)),
+        )
     if args.action in ("keep", "skip", "ban"):
-        return cmd_verdict(root, args.action, args.share_id, bool(args.json))
+        if len(share_ids) > 1:
+            emit("gb market %s: refuse — one share_id" % args.action)
+            return EXIT_USAGE
+        return cmd_verdict(
+            root,
+            args.action,
+            share_ids[0] if share_ids else None,
+            bool(args.json),
+        )
     return cmd_bots(
         root,
         bool(args.json),
