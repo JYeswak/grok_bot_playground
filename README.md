@@ -17,14 +17,14 @@
 
 ## First hour — four commands
 
-Scan the live marketplace, deploy the Bots you name, swarm a persona pack,
-then read the stack before you copy a weak Bot. That is the on-ramp. There
-is no staged first-hour role.
+Scan the live marketplace, open a deploy card, pack a persona shortlist,
+then read the desk (skills + plugin install URLs + methods). That is the
+on-ramp. There is no staged first-hour role.
 
 ```sh
 gb market bots
-gb templates deploy <id> --apply
-gb swarm <persona>
+gb market deploy
+gb market pack
 gb stack
 ```
 
@@ -36,16 +36,20 @@ gb stack
    Curated `links` are URL finds, not pretend-deployable Bots (`--urls` dumps
    them). `--offline` reads stamps only. Not official-listings-only. Not a 101.
    A clone never needs a prior refresh; the scan is the pull.
-2. **Pick and deploy.** Name slugs. `gb templates deploy <id> --apply` creates
-   each Bot via CreateGrokBotAgentFromTemplate + Update. Repeat for each slug.
-   This path never redirects to `gb role "first hour"`.
-3. **Persona swarm.** `gb swarm founder-operator` plans that pack's Bot list
-   (13 templates in this tree). `--apply` walks the same deploy path. `gb swarm`
-   refuses `first-hour` and any pack whose list is exactly hello-computer +
-   first-file-desk + plugin-proof.
-4. **Stack.** `gb stack` reprints the plugin catalog total from the newest
-   market snapshot (same source as `gb plugins catalog`), lists attachable
-   skills on disk, and runs `gb x` methods ranked by distinct authors.
+2. **Pick and deploy.** Name a catalog `share_id`. `gb market deploy <id>`
+   prints the one-click card (name, job, official URL, INSTALL
+   `grokbot://app/v1/bot-template?id=`). `--apply` reprints the same card.
+   It does not call CreateGrokBot. This path never redirects to
+   `gb role "first hour"`.
+3. **Persona pack.** `gb market pack founder` (or engineer / seller) is a
+   shortlist of those Thompson draws for an explicit job list. `--apply`
+   reprints the cards including INSTALL. Not `gb swarm`.
+4. **Stack.** `gb stack founder` prints the first-hour desk: skills that
+   exist as `plugin/skills/<slug>/SKILL.md`, marketplace plugins with
+   INSTALL `grokbot://app/v1/plugin/add?id=`, and existing `gb` methods.
+   `--apply` reprints the same cards including INSTALL and does not call
+   an install RPC. No market snapshot required. hello-computer is a gate,
+   not a hook — it is not on the first-hour list.
 
 **Here for Grok Bot Galaxy (Sept 15-17)?** Pick your seat in
 [GALAXY.md](GALAXY.md) and paste that row's Bot.
@@ -70,19 +74,20 @@ curl -fsSL https://raw.githubusercontent.com/JYeswak/grok_bot_playground/main/in
 
 ```console
 $ gb market bots
-$ gb templates deploy <id> --apply
-$ gb swarm founder-operator
-$ gb stack
+$ gb market deploy
+$ gb market pack founder
+$ gb stack founder
 ```
 
 ### Honest limits
 
 Official marketplace rows often lack `share_id`. Live shares from
 awesome-grokbot carry the real `x.ai/bot` id through. `gb` does not invent
-share ids. Plugin install is
-still human: Settings → Plugins. There is no install RPC. `gb x` needs a
-collected X sweep; a clone without `x/*.json` refuses and names the missing
-input. `usecases/` is not that: it is a public-source refresh a clone can run.
+share ids. Plugin install is the grokbot:// tap
+(`grokbot://app/v1/plugin/add?id=`), not an install RPC. `gb x` needs a
+collected X sweep; a clone without `x/*.json` names the missing input
+instead of crashing. `usecases/` is not that: it is a public-source refresh
+a clone can run.
 
 Two paths create a Bot, and they are different. The paste path does not create one
 for you: you paste the charter into the app and the Bot is yours. The deploy path
@@ -119,7 +124,7 @@ schema-stamped envelope; exit codes are semantic, not cosmetic; `gb robot-docs` 
 written for a model rather than a human; and `gb capabilities --json` describes the whole
 surface so an agent can plan without reading `bin/`. Start with
 `gb market bots` (live official ∪ corpus ∪ shares),
-then `gb templates deploy`, `gb swarm`, and `gb stack`.
+then `gb market deploy`, `gb market pack`, and `gb stack`.
 
 **It refuses rather than guesses.** An unmeasured check is an error, never a pass. A verb with
 no data says which command produces it. Numbers ship with their denominators, and a claim whose
@@ -143,7 +148,7 @@ what it answered**, and removes only what it created on `--uninstall`. `bash ins
 prints the exact plan and touches nothing.
 
 New here? **[QUICKSTART.md](QUICKSTART.md)** is the five-minute path: scan
-the marketplace, deploy the Bots you name, swarm a persona, read the stack.
+the marketplace, open a deploy card, pack a persona, read the desk.
 
 Python 3.9 or newer. **No required runtime dependencies**: the tool is stdlib only, and the
 exporter that builds this tree resolves every import in it against the interpreter's standard
@@ -163,8 +168,8 @@ The difference is what is on disk around it. See [what it does not do](#limitati
 
 ```sh
 gb market bots
-gb templates deploy <id> --apply
-gb swarm <persona>
+gb market deploy
+gb market pack
 gb stack
 gb quickstart              # the orientation page
 gb robot-docs              # the same thing for an agent

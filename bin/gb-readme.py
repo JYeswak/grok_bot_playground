@@ -15,7 +15,7 @@ number. So the README has two halves, and only one of them is written by a perso
 
   HANDWRITTEN   the hero, "Build a Bot army", "What this is", "Install", "What it does not do" —
                 judgement, voice, and the promises a tool makes. The four-command
-                first hour (market scan, deploy, swarm, stack) lives HERE,
+                first hour (market bots, deploy, pack, stack) lives HERE,
                 never in the derived block. A generator has no business writing these,
                 and this file never touches them.
   DERIVED       the verbs, the exit codes, the oracles, the layout, the build stamp. Every one
@@ -82,10 +82,9 @@ EXIT_ENVIRONMENT = 3
 # Army pitch MUST stay in the handwritten head. A derive that moved it
 # into render() would replace the capability pitch with measurement tables.
 PITCH_NEEDLES = (
-    "gb market refresh",
     "gb market bots",
-    "gb templates deploy",
-    "gb swarm",
+    "gb market deploy",
+    "gb market pack",
     "gb stack",
     "official",
     "corpus",
@@ -603,10 +602,9 @@ def selftest() -> int:
 
     army_head = (
         "Scan is official + corpus + URLs.\n"
-        "gb market refresh --corpus\n"
         "gb market bots\n"
-        "gb templates deploy <id> --apply\n"
-        "gb swarm <persona>\n"
+        "gb market deploy\n"
+        "gb market pack\n"
         "gb stack\n"
     )
     check(
