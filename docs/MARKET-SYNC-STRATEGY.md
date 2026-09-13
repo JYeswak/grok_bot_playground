@@ -27,7 +27,7 @@ Engine is stock sqlite3 (Python stdlib). fsqlite is not involved.
 
 ## Versioning
 
-- DB marker: `PRAGMA user_version` (schema cookie). Bump on every DDL. Selftest fails if a row writes without the current version.
+- DB marker: `PRAGMA user_version` (schema cookie). Now 2 (taxonomy column). Bump on every DDL. A v1 cache is refused, then rebuilt from live catalogs.
 - JSONL/JSON marker: `schema` field `gb-usecases/1` until the sqlite layer ships `gb-usecases/2`.
 - Row identity: `name_key` (casefold collapsed space) plus optional `share_id`. share_id is passed through from the catalog, never invented.
 
@@ -48,9 +48,13 @@ Engine is stock sqlite3 (Python stdlib). fsqlite is not involved.
 
 1. integrity_check on a planted malformed file → refuse.
 2. Merge: directory charter wins; share_id fills in; name_key join only.
-3. Two taxonomies smashed (`Personal` vs `personal-admin`) stay labeled until a map ships; do not invent one category from a keyword.
-4. `gb market bots` first row must not be used as a persona pick list until that map exists.
+3. Upstream `category` is preserved. `taxonomy` is an explicit alias table only: Personal=personal-admin→personal, Sales=customer-sales→sales. Unknown → unmapped. Do not guess from charter text.
+4. `gb market bots` first row must not be used as a persona pick list until jobs sit on this taxonomy.
 
 ## Fail
 
 A tick that ships persona rank on top of smashed categories and missing share_id keys.
+
+## Taxonomy aliases (user_version 2)
+
+See `TAXONOMY_MAP` in `bin/gb-market-db.py`. Only those keys map. Everything else is `unmapped`.

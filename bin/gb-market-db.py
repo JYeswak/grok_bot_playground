@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from gbtypes import main as gbmain  # noqa: E402
 
-USER_VERSION = 1
+USER_VERSION = 2
 DB_NAME = "market.sqlite"
 LOCK_NAME = "market.sqlite.lock"
 
@@ -32,6 +32,7 @@ CREATE TABLE bots (
   name TEXT NOT NULL,
   category TEXT,
   category_src TEXT,
+  taxonomy TEXT NOT NULL,
   share_id TEXT,
   import_url TEXT,
   charter TEXT,
@@ -55,6 +56,36 @@ CREATE TABLE meta (
   v TEXT NOT NULL
 );
 """
+
+
+
+# Explicit aliases only. Upstream `category` is never overwritten.
+# Personal (directory) and personal-admin (shares) are the same drawer.
+# Sales and customer-sales are the same drawer.
+# Everything else keeps its own bucket. Unknown → unmapped (not guessed).
+TAXONOMY_MAP = {
+    "personal": "personal",
+    "personal-admin": "personal",
+    "productivity": "productivity",
+    "marketing": "marketing",
+    "ops": "ops",
+    "sales": "sales",
+    "customer-sales": "sales",
+    "success": "success",
+    "research-briefings": "research",
+    "teams-handoffs": "teams",
+    "content-publishing": "publishing",
+    "coding-shipping": "engineering",
+    "finance-ops": "finance",
+    "inbox-calendar": "calendar",
+    "uncategorised": "unmapped",
+    "uncategorized": "unmapped",
+}
+
+
+def taxonomy_of(category: Any) -> str:
+    key = " ".join(str(category or "").casefold().replace("_", "-").split())
+    return TAXONOMY_MAP.get(key, "unmapped")
 
 
 class CacheRefused(Exception):
@@ -90,6 +121,7 @@ def canonicalize_row(row: Dict[str, Any], *, origin_hint: str = "") -> Dict[str,
         "added_at": str(row.get("added_at") or "")[:10] or None,
         "category": row.get("category") or "Uncategorised",
         "category_src": row.get("category_src") or origin,
+        "taxonomy": taxonomy_of(row.get("category") or "Uncategorised"),
         "charter": charter,
         "charter_chars": len(charter),
         "contributor": row.get("contributor"),
@@ -205,7 +237,7 @@ def rebuild(
         tmp = pathlib.Path(raw)
         conn = sqlite3.connect(str(tmp))
         try:
-            apply_pragmas(conn)
+            apply_pragmas(conn, write=True)
             conn.executescript(SCHEMA_SQL)
             conn.execute("PRAGMA user_version = %d" % USER_VERSION)
             got = user_version(conn)
@@ -218,16 +250,17 @@ def rebuild(
                 conn.execute(
                     """
                     INSERT INTO bots (
-                      name_key, name, category, category_src, share_id, import_url,
+                      name_key, name, category, category_src, taxonomy, share_id, import_url,
                       charter, charter_chars, contributor, source, added_at, origin,
                       has_approval_language, prompt_chars, integrations_json
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     (
                         c["name_key"],
                         c["name"],
                         c["category"],
                         c["category_src"],
+                        c["taxonomy"],
                         c["share_id"],
                         c["import_url"],
                         c["charter"],
@@ -303,6 +336,7 @@ def load_bots(path: pathlib.Path) -> List[Dict[str, Any]]:
                     "added_at": row["added_at"],
                     "category": row["category"],
                     "category_src": row["category_src"],
+                    "taxonomy": row["taxonomy"],
                     "charter": row["charter"] or "",
                     "contributor": row["contributor"],
                     "has_approval_language": bool(row["has_approval_language"]),
@@ -449,7 +483,7 @@ def selftest() -> int:
             conn.executescript(SCHEMA_SQL)
             conn.execute("PRAGMA user_version = 0")
             conn.execute(
-                "INSERT INTO bots (name_key, name, origin) VALUES ('x','X','directory')"
+                "INSERT INTO bots (name_key, name, origin, taxonomy) VALUES ('x','X','directory','ops')"
             )
             conn.commit()
         finally:
@@ -459,6 +493,36 @@ def selftest() -> int:
             "stale-user-version-refused",
             msg is not None and "user_version" in msg,
             str(msg),
+        )
+
+        check(
+            "personal-aliases-same-taxonomy",
+            taxonomy_of("Personal") == "personal" and taxonomy_of("personal-admin") == "personal",
+            "%s %s" % (taxonomy_of("Personal"), taxonomy_of("personal-admin")),
+        )
+        check(
+            "sales-aliases-same-taxonomy",
+            taxonomy_of("Sales") == "sales" and taxonomy_of("customer-sales") == "sales",
+            "%s %s" % (taxonomy_of("Sales"), taxonomy_of("customer-sales")),
+        )
+        check(
+            "unknown-category-is-unmapped",
+            taxonomy_of("MadeUp Drawer") == "unmapped",
+            taxonomy_of("MadeUp Drawer"),
+        )
+        check(
+            "does-not-guess-from-charter",
+            taxonomy_of("Keeps a coding agent iterating") == "unmapped",
+            taxonomy_of("Keeps a coding agent iterating"),
+        )
+        loaded_tax = {r["name_key"]: r["taxonomy"] for r in loaded}
+        check("ops-maps-on-row", loaded_tax.get("alpha desk") == "ops", str(loaded_tax))
+        check("sales-maps-on-row", loaded_tax.get("gamma desk") == "sales", str(loaded_tax))
+        weird = canonicalize_row({"name": "Zed", "category": "Brand New Shelf", "from_shares": True})
+        check(
+            "upstream-category-preserved",
+            weird["category"] == "Brand New Shelf" and weird["taxonomy"] == "unmapped",
+            str(weird),
         )
 
         missing = refuse_path(root / "nope.sqlite")
