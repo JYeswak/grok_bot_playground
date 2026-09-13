@@ -1008,16 +1008,19 @@ def selftest() -> int:
         cset = candidates_for_job(planted_kept, rng=random.Random(seed))
         ids = [a.get("share_id") for a in cset]
         kept_counts.append(len(cset))
-        if KEPT_SID not in ids:
+        if KEPT_SID not in ids or len(cset) != 1 + CANDIDATE_COLD:
             kept_always = False
             break
     check(
         "kept-always-in-candidates",
-        kept_always and KEPT_SID in {a.get("share_id") for a in planted_kept},
+        kept_always
+        and KEPT_SID in {a.get("share_id") for a in planted_kept}
+        and kept_counts == [1 + CANDIDATE_COLD] * 20,
         str(kept_counts),
     )
 
-    # Seed 4: kept (α=3, β=1, pulls=2) wins ≥1 of 20 independent draws. Locked after cap.
+    # Locked window: Random(4) through Random(23). Old all-arm draw: 0/20.
+    # With the cap, the kept arm (α=3, β=1, pulls=2) wins ≥1 of those 20.
     KEPT_CAN_WIN_SEED = 4
     kept_wins = 0
     for i in range(20):
