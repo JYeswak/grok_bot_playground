@@ -27,7 +27,7 @@ from gbtypes import main as gbmain  # noqa: E402
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BIN = ROOT / "bin"
 SCHEMA = "gb-market-bots/1"
-JOBS_SCHEMA = "gb-market-jobs/2"
+JOBS_SCHEMA = "gb-market-jobs/3"
 PREVIEW_ROWS = 20
 EXIT_OK, EXIT_USAGE, EXIT_ENVIRONMENT = 0, 2, 3
 SOURCES = ("official", "corpus", "both")
@@ -97,6 +97,17 @@ def _market_db():
 
     path = pathlib.Path(__file__).resolve().parent / "gb-market-db.py"
     spec = importlib.util.spec_from_file_location("gb_market_db", path)
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _market_bandit():
+    import importlib.util
+
+    path = pathlib.Path(__file__).resolve().parent / "gb-market-bandit.py"
+    spec = importlib.util.spec_from_file_location("gb_market_bandit", path)
     mod = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(mod)
@@ -486,12 +497,12 @@ def print_jobs_human(payload: dict) -> None:
     blocked = list(payload.get("blocked") or [])
     sel = payload.get("selector") or {}
     emit(
-        "JOB ARMS  n=%d  blocked=%d  selector=%s"
+        "JOB ARMS  n=%d  blocked=%d  method=%s  pulls are recorded outcomes, not a rank"
         % (len(winners), len(blocked), sel.get("method") or "thompson")
     )
     emit(
-        "%-28s %-10s %-16s %-10s %5s %s"
-        % ("NAME", "JOB", "SHARE_ID", "ORIGIN", "CHARS", "ADDED")
+        "%-28s %-10s %-16s %5s %-10s %5s %s"
+        % ("NAME", "JOB", "SHARE_ID", "PULLS", "ORIGIN", "CHARS", "ADDED")
     )
     rows: List[Tuple[str, dict]] = [("win", w) for w in winners] + [
         ("block", b) for b in blocked
@@ -501,16 +512,17 @@ def print_jobs_human(payload: dict) -> None:
         job = str(row.get("job") or "-")
         if kind == "block":
             emit(
-                "%-28s %-10s %-16s %-10s %5s %s"
-                % ("-", job[:10], "BLOCKED", "-", "-", "-")
+                "%-28s %-10s %-16s %5s %-10s %5s %s"
+                % ("-", job[:10], "BLOCKED", "-", "-", "-", "-")
             )
             continue
         emit(
-            "%-28s %-10s %-16s %-10s %5s %s"
+            "%-28s %-10s %-16s %5s %-10s %5s %s"
             % (
                 str(row.get("name") or "-")[:28],
                 job[:10],
                 str(row.get("share_id") or "BLOCKED")[:16],
+                str(row.get("pulls") if row.get("pulls") is not None else 0),
                 str(row.get("origin") or "-")[:10],
                 str(row.get("prompt_chars") if row.get("prompt_chars") is not None else "-"),
                 str(row.get("added_at") or "-")[:10],
@@ -527,18 +539,28 @@ def cmd_jobs(root: pathlib.Path, as_json: bool, offline: bool = False) -> int:
     if not offline:
         cmd_refresh(True, quiet=as_json)
     mdb = _market_db()
+    mb = _market_bandit()
     path = root / "usecases" / mdb.DB_NAME
     err = mdb.refuse_path(path)
     if err:
         emit(err.replace("gb-market-db:", "gb market jobs:", 1))
         return EXIT_ENVIRONMENT
+    store = mb.store_path(root)
+    bandit_err = mb.refuse_path(store)
+    if bandit_err:
+        emit(bandit_err.replace("gb-market-bandit:", "gb market jobs:", 1))
+        return EXIT_ENVIRONMENT
     try:
         rows = mdb.load_bots(path)
-        picked = mdb.job_winners(rows, posteriors=mdb.load_posteriors(path))
+        picked = mb.pick_jobs(rows, store=store)
     except mdb.CacheRefused as e:
         emit(str(e).replace("gb-market-db:", "gb market jobs:", 1))
         return EXIT_ENVIRONMENT
+    except mb.StoreRefused as e:
+        emit(str(e).replace("gb-market-bandit:", "gb market jobs:", 1))
+        return EXIT_ENVIRONMENT
     payload = {
+        "bandit_user_version": mb.USER_VERSION,
         "blocked": picked.get("blocked") or [],
         "schema": JOBS_SCHEMA,
         "selector": picked.get("selector") or {},
@@ -840,6 +862,7 @@ def selftest() -> int:
         check("refresh-quiet-is-silent", rc_q == 0 and out_q.strip() == "", repr(out_q))
 
         mdb = _market_db()
+        mb = _market_bandit()
         jobs_root = root / "jobs-cache"
         (jobs_root / "usecases").mkdir(parents=True)
         planted = [
@@ -920,7 +943,7 @@ def selftest() -> int:
         )
         check(
             "jobs-selector-is-thompson",
-            "selector=thompson" in jout or "JOB ARMS" in jout,
+            "method=thompson" in jout and "JOB ARMS" in jout and "PULLS" in jout,
             jout,
         )
         check(
@@ -953,8 +976,9 @@ def selftest() -> int:
         check(
             "jobs-json-selector-envelope",
             (jpayload.get("selector") or {}).get("method") == "thompson"
-            and (jpayload.get("selector") or {}).get("predictor") == "linear"
-            and "name" not in ((jpayload.get("selector") or {}).get("features") or []),
+            and (jpayload.get("selector") or {}).get("prior") == "beta(1,1)"
+            and "weights" not in (jpayload.get("selector") or {})
+            and jpayload.get("bandit_user_version") == mb.USER_VERSION,
             str(jpayload.get("selector")),
         )
         ship_names = set()
@@ -1006,6 +1030,29 @@ def selftest() -> int:
             bcode == EXIT_ENVIRONMENT and "refuse" in bout,
             bout,
         )
+        bandit_bad = root / "jobs-bandit-bad"
+        (bandit_bad / "usecases").mkdir(parents=True)
+        mdb.rebuild(
+            bandit_bad / "usecases" / mdb.DB_NAME,
+            [
+                mdb.canonicalize_row(
+                    {
+                        "name": "Zzz Weak",
+                        "category": "Ops",
+                        "share_id": "weakShare",
+                        "from_shares": True,
+                    }
+                )
+            ],
+            [],
+        )
+        (bandit_bad / "usecases" / mb.DB_NAME).write_bytes(b"not a sqlite database\n")
+        bbcode, bbout = _capture(lambda: cmd_jobs(bandit_bad, False, offline=True))
+        check(
+            "jobs-offline-bad-bandit-refused",
+            bbcode == EXIT_ENVIRONMENT and "refuse" in bbout,
+            bbout,
+        )
         stamps_only = root / "jobs-stamps-only"
         (stamps_only / "usecases").mkdir(parents=True)
         (stamps_only / "usecases" / "2026-09-11T0600.json").write_text(json.dumps(corpus_cur) + "\n")
@@ -1056,7 +1103,7 @@ def _build_parser() -> argparse.ArgumentParser:
         nargs="?",
         choices=("refresh", "bots", "new", "jobs"),
         default="bots",
-        help="refresh | bots | new | jobs (Thompson-sampled deployable arm per job)",
+        help="refresh | bots | new | jobs (one Thompson draw per job; not a frozen rank)",
     )
     ap.add_argument(
         "--corpus",

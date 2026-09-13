@@ -11,12 +11,9 @@ See docs/MARKET-SYNC-STRATEGY.md.
 """
 from __future__ import annotations
 
-import datetime as dt
 import json
-import math
 import os
 import pathlib
-import random
 import sqlite3
 import sys
 import tempfile
@@ -25,25 +22,9 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from gbtypes import main as gbmain  # noqa: E402
 
-USER_VERSION = 4
+USER_VERSION = 3
 DB_NAME = "market.sqlite"
 LOCK_NAME = "market.sqlite.lock"
-
-# Documented linear predictor. Measured features only — not name, not charter words.
-# Recency is days since added_at, clipped to [0, RECENCY_CAP_DAYS]; missing added_at
-# is the cap (oldest). Weight is -1/cap so the feature stays on the same scale as
-# the 0/1 flags. This is a prior mean, not a frozen ranking: Thompson sampling
-# draws from N(mean, PRIOR_VARIANCE) until outcomes shrink the posterior.
-SCORE_WEIGHTS = {
-    "approval": 1.0,
-    "both": 1.0,
-    "log1p_prompt_chars": 0.2,
-    "recency_days": -1.0 / 365.0,
-}
-RECENCY_CAP_DAYS = 365
-PRIOR_VARIANCE = 4.0
-OBS_VARIANCE = 1.0
-SELECTOR_METHOD = "thompson"
 
 SCHEMA_SQL = """
 CREATE TABLE bots (
@@ -74,23 +55,6 @@ CREATE TABLE links (
 CREATE TABLE meta (
   k TEXT PRIMARY KEY,
   v TEXT NOT NULL
-);
-CREATE TABLE bandit_outcomes (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name_key TEXT NOT NULL,
-  job TEXT NOT NULL,
-  share_id TEXT NOT NULL,
-  reward REAL NOT NULL,
-  recorded_at TEXT NOT NULL
-);
-CREATE TABLE bandit_posterior (
-  name_key TEXT PRIMARY KEY,
-  job TEXT NOT NULL,
-  share_id TEXT NOT NULL,
-  mu REAL NOT NULL,
-  variance REAL NOT NULL,
-  pulls INTEGER NOT NULL DEFAULT 0,
-  reward_sum REAL NOT NULL DEFAULT 0
 );
 """
 
@@ -144,403 +108,13 @@ def job_of(taxonomy: Any) -> str:
     return JOB_FROM_TAXONOMY.get(str(taxonomy or ""), "none")
 
 
-def _real_share_id(row: Dict[str, Any]) -> Optional[str]:
+def real_share_id(row: Dict[str, Any]) -> Optional[str]:
+    """Pass through a catalog share_id. Never invent one."""
     sid = row.get("share_id")
     if sid in (None, ""):
         return None
     text = str(sid).strip()
     return text or None
-
-
-def _origin_both(row: Dict[str, Any]) -> int:
-    return 1 if str(row.get("origin") or "") == "both" else 0
-
-
-def _approval(row: Dict[str, Any]) -> int:
-    return 1 if row.get("has_approval_language") else 0
-
-
-def _prompt_chars(row: Dict[str, Any]) -> int:
-    try:
-        return int(row.get("prompt_chars") or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
-def _added_at(row: Dict[str, Any]) -> str:
-    return str(row.get("added_at") or "")
-
-
-def _row_name_key(row: Dict[str, Any]) -> str:
-    return str(row.get("name_key") or name_key(row.get("name")))
-
-
-def _parse_added_at(value: Any) -> Optional[dt.date]:
-    text = str(value or "").strip()[:10]
-    if len(text) != 10 or text[4] != "-" or text[7] != "-":
-        return None
-    try:
-        return dt.date.fromisoformat(text)
-    except ValueError:
-        return None
-
-
-def arm_features(row: Dict[str, Any], as_of: dt.date) -> Dict[str, float]:
-    """Measured features only. Name and charter words are not features."""
-    added = _parse_added_at(row.get("added_at"))
-    if added is None:
-        recency = float(RECENCY_CAP_DAYS)
-    else:
-        recency = float(min(max((as_of - added).days, 0), RECENCY_CAP_DAYS))
-    return {
-        "approval": float(_approval(row)),
-        "both": float(_origin_both(row)),
-        "log1p_prompt_chars": math.log1p(max(0, _prompt_chars(row))),
-        "recency_days": recency,
-    }
-
-
-def linear_score(features: Dict[str, float]) -> float:
-    return sum(float(SCORE_WEIGHTS[k]) * float(features[k]) for k in SCORE_WEIGHTS)
-
-
-def fold_outcomes(mu0: float, rewards: Sequence[float]) -> Tuple[float, float, int, float]:
-    """Gaussian conjugate update. Prior N(mu0, PRIOR_VARIANCE); obs var OBS_VARIANCE."""
-    mu = float(mu0)
-    var = float(PRIOR_VARIANCE)
-    n = 0
-    reward_sum = 0.0
-    for raw in rewards:
-        y = float(raw)
-        prec = (1.0 / var) + (1.0 / OBS_VARIANCE)
-        mu = ((mu / var) + (y / OBS_VARIANCE)) / prec
-        var = 1.0 / prec
-        n += 1
-        reward_sum += y
-    return mu, var, n, reward_sum
-
-
-def selector_meta(as_of: dt.date) -> Dict[str, Any]:
-    return {
-        "as_of": as_of.isoformat(),
-        "features": sorted(SCORE_WEIGHTS),
-        "method": SELECTOR_METHOD,
-        "obs_variance": OBS_VARIANCE,
-        "predictor": "linear",
-        "prior_variance": PRIOR_VARIANCE,
-        "weights": dict(SCORE_WEIGHTS),
-    }
-
-
-def _arm_state(
-    row: Dict[str, Any],
-    as_of: dt.date,
-    posteriors: Optional[Dict[str, Dict[str, Any]]],
-    outcomes: Optional[Dict[str, List[float]]],
-) -> Tuple[float, float, int, Dict[str, float], float]:
-    feats = arm_features(row, as_of)
-    mu0 = linear_score(feats)
-    key = _row_name_key(row)
-    stored = (posteriors or {}).get(key)
-    if stored and stored.get("mu") is not None and stored.get("variance") is not None:
-        return (
-            float(stored["mu"]),
-            float(stored["variance"]),
-            int(stored.get("pulls") or 0),
-            feats,
-            mu0,
-        )
-    rewards = (outcomes or {}).get(key) or []
-    mu, var, n, _ = fold_outcomes(mu0, rewards)
-    return mu, var, n, feats, mu0
-
-
-def job_winners(
-    rows: Sequence[Dict[str, Any]],
-    *,
-    posteriors: Optional[Dict[str, Dict[str, Any]]] = None,
-    outcomes: Optional[Dict[str, List[float]]] = None,
-    rng: Optional[random.Random] = None,
-    as_of: Optional[dt.date] = None,
-) -> Dict[str, Any]:
-    """One deployable arm per job via Thompson sampling over a linear prior.
-
-    Skip `none`. Never invent share_id. A job with rows but no share_id is
-    blocked. Name alpha and charter words are not selection keys. With no
-    outcomes the posterior is uninformative (wide prior variance), so draws
-    explore — they are not a frozen argmax of the linear score.
-    """
-    when = as_of or dt.date.today()
-    draw = rng or random.Random()
-    by_job: Dict[str, List[Dict[str, Any]]] = {}
-    for row in rows:
-        job = str(row.get("job") or "none")
-        if job in ("", "none"):
-            continue
-        by_job.setdefault(job, []).append(dict(row))
-
-    winners: List[Dict[str, Any]] = []
-    blocked: List[Dict[str, Any]] = []
-    for job in sorted(by_job):
-        group = by_job[job]
-        deployable = [r for r in group if _real_share_id(r)]
-        if not deployable:
-            blocked.append(
-                {
-                    "count": len(group),
-                    "job": job,
-                    "reason": "no share_id",
-                }
-            )
-            continue
-        best_sample: Optional[float] = None
-        chosen: List[Tuple[Dict[str, Any], float, float, int, Dict[str, float], float]] = []
-        for row in deployable:
-            mu, var, pulls, feats, mu0 = _arm_state(row, when, posteriors, outcomes)
-            sigma = math.sqrt(var) if var > 0 else 0.0
-            sample = draw.gauss(mu, sigma) if sigma > 0 else mu
-            item = (row, sample, mu, pulls, feats, mu0)
-            if best_sample is None or sample > best_sample:
-                best_sample = sample
-                chosen = [item]
-            elif sample == best_sample:
-                chosen.append(item)
-        top, sample, _mu, pulls, feats, mu0 = draw.choice(chosen)
-        sid = _real_share_id(top)
-        if not sid:
-            blocked.append(
-                {
-                    "count": len(group),
-                    "job": job,
-                    "reason": "no share_id",
-                }
-            )
-            continue
-        winners.append(
-            {
-                "added_at": top.get("added_at"),
-                "features": feats,
-                "has_approval_language": bool(top.get("has_approval_language")),
-                "job": job,
-                "name": top.get("name"),
-                "name_key": _row_name_key(top),
-                "origin": top.get("origin"),
-                "prompt_chars": _prompt_chars(top),
-                "pulls": pulls,
-                "sample": sample,
-                "score": mu0,
-                "share_id": sid,
-            }
-        )
-    return {
-        "blocked": blocked,
-        "selector": selector_meta(when),
-        "winners": winners,
-    }
-
-
-def _table_names(conn: sqlite3.Connection) -> set:
-    return {str(r[0]) for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-
-
-def read_bandit_outcomes(path: pathlib.Path) -> List[Dict[str, Any]]:
-    """Copy outcome rows from an existing cache. Missing table → empty, not a guess."""
-    if not path.is_file():
-        return []
-    try:
-        conn = sqlite3.connect("file:%s?mode=ro" % path.as_posix(), uri=True)
-    except sqlite3.Error:
-        return []
-    try:
-        if "bandit_outcomes" not in _table_names(conn):
-            return []
-        conn.row_factory = sqlite3.Row
-        return [
-            {
-                "job": row["job"],
-                "name_key": row["name_key"],
-                "recorded_at": row["recorded_at"],
-                "reward": float(row["reward"]),
-                "share_id": row["share_id"],
-            }
-            for row in conn.execute(
-                "SELECT name_key, job, share_id, reward, recorded_at "
-                "FROM bandit_outcomes ORDER BY id"
-            )
-        ]
-    except sqlite3.Error:
-        return []
-    finally:
-        conn.close()
-
-
-def load_outcomes(path: pathlib.Path) -> Dict[str, List[float]]:
-    by: Dict[str, List[float]] = {}
-    for row in read_bandit_outcomes(path):
-        by.setdefault(str(row["name_key"]), []).append(float(row["reward"]))
-    return by
-
-
-def load_posteriors(path: pathlib.Path) -> Dict[str, Dict[str, Any]]:
-    err = refuse_path(path)
-    if err:
-        raise CacheRefused(err)
-    conn = sqlite3.connect("file:%s?mode=ro" % path.as_posix(), uri=True)
-    conn.row_factory = sqlite3.Row
-    try:
-        apply_pragmas(conn)
-        if "bandit_posterior" not in _table_names(conn):
-            return {}
-        out: Dict[str, Dict[str, Any]] = {}
-        for row in conn.execute(
-            "SELECT name_key, job, share_id, mu, variance, pulls, reward_sum "
-            "FROM bandit_posterior"
-        ):
-            out[str(row["name_key"])] = {
-                "job": row["job"],
-                "mu": float(row["mu"]),
-                "name_key": row["name_key"],
-                "pulls": int(row["pulls"] or 0),
-                "reward_sum": float(row["reward_sum"] or 0),
-                "share_id": row["share_id"],
-                "variance": float(row["variance"]),
-            }
-        return out
-    finally:
-        conn.close()
-
-
-def _upsert_posterior(
-    conn: sqlite3.Connection,
-    row: Dict[str, Any],
-    as_of: dt.date,
-    rewards: Sequence[float],
-) -> Dict[str, Any]:
-    sid = _real_share_id(row)
-    if not sid:
-        raise CacheRefused("gb-market-db: refuse outcome — arm has no share_id")
-    job = str(row.get("job") or "none")
-    if job in ("", "none"):
-        raise CacheRefused("gb-market-db: refuse outcome — job none is not an arm")
-    feats = arm_features(row, as_of)
-    mu, var, pulls, reward_sum = fold_outcomes(linear_score(feats), rewards)
-    key = _row_name_key(row)
-    conn.execute(
-        """
-        INSERT INTO bandit_posterior (
-          name_key, job, share_id, mu, variance, pulls, reward_sum
-        ) VALUES (?,?,?,?,?,?,?)
-        ON CONFLICT(name_key) DO UPDATE SET
-          job=excluded.job,
-          share_id=excluded.share_id,
-          mu=excluded.mu,
-          variance=excluded.variance,
-          pulls=excluded.pulls,
-          reward_sum=excluded.reward_sum
-        """,
-        (key, job, sid, mu, var, pulls, reward_sum),
-    )
-    return {
-        "job": job,
-        "mu": mu,
-        "name_key": key,
-        "pulls": pulls,
-        "reward_sum": reward_sum,
-        "share_id": sid,
-        "variance": var,
-    }
-
-
-def _recompute_posteriors(
-    conn: sqlite3.Connection,
-    bots: Sequence[Dict[str, Any]],
-    outcome_rows: Sequence[Dict[str, Any]],
-    as_of: dt.date,
-) -> None:
-    rewards: Dict[str, List[float]] = {}
-    for item in outcome_rows:
-        rewards.setdefault(str(item["name_key"]), []).append(float(item["reward"]))
-    by_key = {_row_name_key(r): r for r in bots}
-    for key, ys in rewards.items():
-        row = by_key.get(key)
-        if row is None or not _real_share_id(row):
-            continue
-        job = str(row.get("job") or "none")
-        if job in ("", "none"):
-            continue
-        _upsert_posterior(conn, row, as_of, ys)
-
-
-def record_outcome(
-    path: pathlib.Path,
-    *,
-    name_key: str,
-    reward: float,
-    recorded_at: Optional[str] = None,
-    as_of: Optional[dt.date] = None,
-) -> Dict[str, Any]:
-    """Append one recorded outcome and refresh that arm's posterior. Not a deploy."""
-    err = refuse_path(path)
-    if err:
-        raise CacheRefused(err)
-    when = as_of or dt.date.today()
-    stamp = recorded_at or dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
-    key = " ".join(str(name_key or "").casefold().split())
-    lock = _lock(path.parent / LOCK_NAME)
-    try:
-        conn = sqlite3.connect(str(path))
-        conn.row_factory = sqlite3.Row
-        try:
-            apply_pragmas(conn, write=True)
-            found = conn.execute("SELECT * FROM bots WHERE name_key = ?", (key,)).fetchone()
-            if found is None:
-                raise CacheRefused("gb-market-db: refuse outcome — unknown name_key %r" % key)
-            integ = json.loads(found["integrations_json"] or "[]")
-            row = {
-                "added_at": found["added_at"],
-                "has_approval_language": bool(found["has_approval_language"]),
-                "job": found["job"],
-                "name": found["name"],
-                "name_key": found["name_key"],
-                "origin": found["origin"],
-                "prompt_chars": found["prompt_chars"],
-                "share_id": found["share_id"],
-                "integrations": integ,
-            }
-            sid = _real_share_id(row)
-            if not sid:
-                raise CacheRefused("gb-market-db: refuse outcome — arm has no share_id")
-            job = str(row.get("job") or "none")
-            if job in ("", "none"):
-                raise CacheRefused("gb-market-db: refuse outcome — job none is not an arm")
-            conn.execute(
-                "INSERT INTO bandit_outcomes (name_key, job, share_id, reward, recorded_at) "
-                "VALUES (?,?,?,?,?)",
-                (key, job, sid, float(reward), stamp),
-            )
-            rewards = [
-                float(r[0])
-                for r in conn.execute(
-                    "SELECT reward FROM bandit_outcomes WHERE name_key = ? ORDER BY id",
-                    (key,),
-                )
-            ]
-            posted = _upsert_posterior(conn, row, when, rewards)
-            conn.commit()
-            ok, text = integrity_ok(conn)
-            if not ok:
-                raise CacheRefused("integrity_check after outcome: %s" % text)
-            return posted
-        finally:
-            conn.close()
-    finally:
-        try:
-            import fcntl
-
-            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
-        except Exception:
-            pass
-        lock.close()
 
 
 class CacheRefused(Exception):
@@ -685,7 +259,6 @@ def rebuild(
     if not bots:
         raise CacheRefused("gb-market-db: refuse write — empty bots is not a corpus")
     path.parent.mkdir(parents=True, exist_ok=True)
-    prior_outcomes = read_bandit_outcomes(path)
     lock = _lock(path.parent / LOCK_NAME)
     tmp: Optional[pathlib.Path] = None
     try:
@@ -700,12 +273,10 @@ def rebuild(
             got = user_version(conn)
             if got != USER_VERSION:
                 raise CacheRefused("user_version wrote %s read back %s" % (USER_VERSION, got))
-            written: List[Dict[str, Any]] = []
             for row in bots:
                 c = canonicalize_row(dict(row))
                 if not c["name_key"] or not c["name"]:
                     continue
-                written.append(c)
                 conn.execute(
                     """
                     INSERT INTO bots (
@@ -751,24 +322,6 @@ def rebuild(
                 )
             for k, v in (meta or {}).items():
                 conn.execute("INSERT INTO meta (k, v) VALUES (?,?)", (str(k), str(v)))
-            for item in prior_outcomes:
-                conn.execute(
-                    "INSERT INTO bandit_outcomes (name_key, job, share_id, reward, recorded_at) "
-                    "VALUES (?,?,?,?,?)",
-                    (
-                        item["name_key"],
-                        item["job"],
-                        item["share_id"],
-                        float(item["reward"]),
-                        item["recorded_at"],
-                    ),
-                )
-            _recompute_posteriors(
-                conn,
-                written,
-                prior_outcomes,
-                dt.date.today(),
-            )
             conn.commit()
             ok, text = integrity_ok(conn)
             if not ok:
@@ -1018,216 +571,13 @@ def selftest() -> int:
 
         missing = refuse_path(root / "nope.sqlite")
         check("missing-is-refused", missing is not None and "no cache" in missing, str(missing))
-
-        # job_winners: one deployable pick per job. Name alpha is not a ranking key.
-        no_share_best = canonicalize_row(
-            {
-                "name": "Aaa Best",
-                "category": "Ops",
-                "origin": "both",
-                "prompt_chars": 9999,
-                "has_approval_language": True,
-                "added_at": "2026-12-31",
-                "charter": "looks like the winner if share_id is ignored",
-            }
-        )
-        weak_share = canonicalize_row(
-            {
-                "name": "Zzz Weak",
-                "category": "Ops",
-                "share_id": "weakShare",
-                "from_shares": True,
-                "origin": "shares",
-                "prompt_chars": 1,
-                "has_approval_language": False,
-                "added_at": "2020-01-01",
-            }
-        )
-        shares_first = canonicalize_row(
-            {
-                "name": "Aaa Shares",
-                "category": "Ops",
-                "share_id": "aaaShare",
-                "from_shares": True,
-                "origin": "shares",
-                "prompt_chars": 999,
-                "has_approval_language": True,
-                "added_at": "2026-12-31",
-            }
-        )
-        both_later = canonicalize_row(
-            {
-                "name": "Zzz Both",
-                "category": "Ops",
-                "share_id": "zzzShare",
-                "origin": "both",
-                "prompt_chars": 1,
-                "has_approval_language": False,
-                "added_at": "2020-01-01",
-            }
-        )
-        personal = canonicalize_row(
-            {
-                "name": "Aaa Personal",
-                "category": "Personal",
-                "share_id": "persShare",
-                "origin": "both",
-                "prompt_chars": 5000,
-                "has_approval_language": True,
-                "added_at": "2026-12-31",
-            }
-        )
-        sales_ghost = canonicalize_row(
-            {
-                "name": "Aaa Sales Ghost",
-                "category": "Sales",
-                "origin": "directory",
-                "prompt_chars": 800,
-                "added_at": "2026-12-31",
-            }
-        )
-        picked = job_winners(
-            [no_share_best, weak_share, personal, sales_ghost]
-        )
-        win_by_job = {w["job"]: w for w in picked["winners"]}
-        blocked_by_job = {b["job"]: b for b in picked["blocked"]}
+        catalog_src = open(__file__).read().split("def selftest()", 1)[0]
         check(
-            "no-share-cannot-win",
-            win_by_job.get("operate", {}).get("share_id") == "weakShare"
-            and win_by_job.get("operate", {}).get("name") == "Zzz Weak"
-            and all(w.get("share_id") for w in picked["winners"]),
-            str(picked),
-        )
-        both_pick = job_winners(
-            [shares_first, both_later, personal],
-            rng=random.Random(0),
-            as_of=dt.date(2026, 9, 13),
-        )
-        operate = {w["job"]: w for w in both_pick["winners"]}.get("operate") or {}
-        check(
-            "selector-is-not-lexicographic-sort",
-            operate.get("share_id") in ("zzzShare", "aaaShare")
-            and operate.get("share_id")
-            and both_pick.get("selector", {}).get("method") == "thompson"
-            and both_pick.get("selector", {}).get("predictor") == "linear",
-            str(both_pick),
-        )
-        check(
-            "none-never-a-winner",
-            all(w.get("job") != "none" for w in picked["winners"])
-            and all(w.get("job") != "none" for w in both_pick["winners"])
-            and "none" not in blocked_by_job
-            and personal["job"] == "none",
-            str(picked),
-        )
-        check(
-            "no-share-job-is-blocked",
-            "sell" in blocked_by_job
-            and blocked_by_job["sell"].get("count") == 1
-            and blocked_by_job["sell"].get("reason")
-            and "sell" not in win_by_job
-            and all(w.get("share_id") for w in picked["winners"]),
-            str(picked),
-        )
-        check(
-            "does-not-invent-decide-refuse",
-            all(w.get("job") not in ("decide", "refuse") for w in picked["winners"])
-            and all(b.get("job") not in ("decide", "refuse") for b in picked["blocked"]),
-            str(picked),
-        )
-
-        as_of = __import__("datetime").date(2026, 9, 13)
-        same_a = canonicalize_row(
-            {
-                "name": "Aaa Same",
-                "category": "Ops",
-                "share_id": "aaaSame",
-                "origin": "both",
-                "prompt_chars": 100,
-                "has_approval_language": True,
-                "added_at": "2026-08-01",
-            }
-        )
-        same_z = canonicalize_row(
-            {
-                "name": "Zzz Same",
-                "category": "Ops",
-                "share_id": "zzzSame",
-                "origin": "both",
-                "prompt_chars": 100,
-                "has_approval_language": True,
-                "added_at": "2026-08-01",
-            }
-        )
-        same_feats = arm_features(same_a, as_of)
-        check(
-            "features-measured-only",
-            set(same_feats) == {"approval", "both", "log1p_prompt_chars", "recency_days"}
-            and same_feats == arm_features(same_z, as_of)
-            and "name" not in same_feats
-            and "charter" not in same_feats,
-            str(same_feats),
-        )
-        same_names = set()
-        for seed in range(40):
-            drawn = job_winners([same_a, same_z], rng=__import__("random").Random(seed), as_of=as_of)
-            operate = [w for w in drawn["winners"] if w.get("job") == "operate"]
-            if operate:
-                same_names.add(operate[0].get("name"))
-        check(
-            "same-features-not-name-alpha",
-            same_names == {"Aaa Same", "Zzz Same"},
-            str(same_names),
-        )
-        mixed_names = set()
-        for seed in range(80):
-            drawn = job_winners(
-                [shares_first, both_later],
-                rng=__import__("random").Random(seed),
-                as_of=as_of,
-            )
-            operate = [w for w in drawn["winners"] if w.get("job") == "operate"]
-            if operate:
-                mixed_names.add(operate[0].get("name"))
-        check(
-            "no-outcome-not-frozen-ranking",
-            mixed_names == {"Aaa Shares", "Zzz Both"},
-            str(mixed_names),
-        )
-
-        bandit_db = root / "bandit.sqlite"
-        rebuild(bandit_db, [shares_first, both_later, no_share_best], [])
-        check("posterior-starts-empty", load_posteriors(bandit_db) == {}, str(load_posteriors(bandit_db)))
-        before_mu = linear_score(arm_features(shares_first, as_of))
-        record_outcome(
-            bandit_db,
-            name_key="aaa shares",
-            reward=1.0,
-            recorded_at="2026-09-13T00:00:00+00:00",
-            as_of=as_of,
-        )
-        posts = load_posteriors(bandit_db)
-        aaa_post = posts.get("aaa shares") or {}
-        check(
-            "posterior-updates-on-outcome",
-            aaa_post.get("pulls") == 1
-            and aaa_post.get("reward_sum") == 1.0
-            and aaa_post.get("share_id") == "aaaShare"
-            and aaa_post.get("mu") is not None
-            and abs(float(aaa_post["mu"]) - before_mu) > 1e-12,
-            str(posts),
-        )
-        try:
-            record_outcome(bandit_db, name_key="aaa best", reward=1.0, as_of=as_of)
-            check("outcome-refuses-no-share", False, "wrote outcome for no-share arm")
-        except CacheRefused as e:
-            check("outcome-refuses-no-share", "share_id" in str(e).lower(), str(e))
-        rebuild(bandit_db, [shares_first, both_later, no_share_best], [])
-        kept = load_posteriors(bandit_db)
-        check(
-            "rebuild-keeps-outcomes",
-            (kept.get("aaa shares") or {}).get("pulls") == 1,
-            str(kept),
+            "catalog-has-no-winner-sort",
+            "def job_winners" not in catalog_src
+            and ("SCORE" + "_WEIGHTS") not in catalog_src
+            and ("PRIOR" + "_VARIANCE") not in catalog_src,
+            "winner pick leaked into catalog cache",
         )
 
     failed = [n for n, ok, _ in legs if not ok]

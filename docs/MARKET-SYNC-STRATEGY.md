@@ -7,7 +7,8 @@ Engine is stock sqlite3 (Python stdlib). fsqlite is not involved.
 ## Source of Truth
 
 - Primary: live public catalogs (elie222/botdirectory.ai tarball + kydlikebtc/awesome-grokbot catalog.json). Official xAI listings when a desktop stamp exists.
-- SQLite (`usecases/market.sqlite`): rebuildable cache. Never the oracle.
+- SQLite (`usecases/market.sqlite`): rebuildable catalog cache. Never the oracle. Never the posterior.
+- Bandit store (`usecases/bandit.sqlite`): recorded outcomes only. Separate file, own `user_version`. Catalog rebuild must not wipe it (C49).
 - Dated JSON (`usecases/<stamp>.json`): inspect/export only. Gitignored.
 - Rationale: a stranger clone must live-pull. A local file that can go stale is not the market.
 
@@ -20,40 +21,43 @@ Engine is stock sqlite3 (Python stdlib). fsqlite is not involved.
 
 ## Sync Triggers
 
-- On command: `gb market bots` (default live pull), `gb market jobs` (same live pull, then one Thompson-sampled arm per job), and `gb market refresh --corpus`.
+- On command: `gb market bots` (default live pull), `gb market jobs` (same live pull, then one Thompson draw per job), and `gb market refresh --corpus`.
 - On exit: none.
-- Timer/throttle: none required. `--offline` reads cache only. `gb market jobs --offline` refuses if integrity_check or user_version fail.
-- One-way: catalog → sqlite → optional JSON stamp. Never sqlite → catalog. Never JSON → sqlite unless `--offline` and sqlite missing (rebuild cache from newest stamp, then integrity_check).
+- Timer/throttle: none required. `--offline` reads cache only. `gb market jobs --offline` refuses if the catalog `integrity_check` or `user_version` fail. A planted-bad bandit store is also refused. A missing bandit store is a cold start (explore), not a refuse.
+- One-way: catalog → sqlite → optional JSON stamp. Never sqlite → catalog. Never JSON → sqlite unless `--offline` and sqlite missing (rebuild cache from newest stamp, then integrity_check). Never catalog rebuild → bandit store.
 
 ## Versioning
 
-- DB marker: `PRAGMA user_version` (schema cookie). Now 4 (bandit posterior + outcomes). Bump on every DDL. A v1 cache is refused, then rebuilt from live catalogs.
+- Catalog DB marker: `PRAGMA user_version` on `market.sqlite`. Now 3 (job column). Bump on every catalog DDL. A v1 cache is refused, then rebuilt from live catalogs.
+- Bandit DB marker: `PRAGMA user_version` on `bandit.sqlite`. Now 1. Own cookie. A stale or planted-bad file is refused; it is not reconstructed from the catalog.
 - JSONL/JSON marker: `schema` field `gb-usecases/1` until the sqlite layer ships `gb-usecases/2`.
-- Row identity: `name_key` (casefold collapsed space) plus optional `share_id`. share_id is passed through from the catalog, never invented.
+- Catalog row identity: `name_key` (casefold collapsed space) plus optional `share_id`. share_id is passed through from the catalog, never invented.
+- Arm identity: `job + name_key + share_id` (C106). Same name, different share_id is a different arm.
 
 ## Concurrency
 
-- Lock file path: `usecases/market.sqlite.lock` (exclusive around rebuild).
+- Catalog lock: `usecases/market.sqlite.lock` (exclusive around rebuild).
+- Bandit lock: `usecases/bandit.sqlite.lock` (exclusive around outcome writes).
 - Busy timeout: 5s.
-- One writer. Full-file rebuild + replace. journal_mode=DELETE (WAL sidecars would orphan on replace). Not fsqlite MVCC.
+- One writer per file. Catalog is full-file rebuild + replace. Bandit appends outcomes in place. journal_mode=DELETE (WAL sidecars would orphan on replace). Not fsqlite MVCC.
 
 ## Failure Handling
 
 - DB locked: fail out loud, do not wait forever.
-- integrity_check ≠ ok: refuse the file. Do not reconstruct from a same-size backup (C94). Rebuild from live catalogs, or from the newest JSON stamp if `--offline`.
+- integrity_check ≠ ok: refuse the file. Do not reconstruct from a same-size backup (C94). Catalog: rebuild from live catalogs, or from the newest JSON stamp if `--offline`. Bandit: refuse; do not invent an empty posterior over a corrupt file.
 - JSON parse error: refuse. Empty corpus after a failed fetch is an error, not zero Bots.
 - Silent PRAGMA: not proof. Read the value back.
 
 ## Validation (planted known-bad)
 
-1. integrity_check on a planted malformed file → refuse.
+1. integrity_check on a planted malformed catalog or bandit file → refuse.
 2. Merge: directory charter wins; share_id fills in; name_key join only.
 3. Upstream `category` is preserved. `taxonomy` is an explicit alias table only: Personal=personal-admin→personal, Sales=customer-sales→sales. Unknown → unmapped. Do not guess from charter text.
-4. `gb market bots` first row is not a persona pick list. `gb market jobs` is one Thompson-sampled deployable arm per job, not a frozen sort.
+4. `gb market bots` first row is not a persona pick list. `gb market jobs` is one Thompson draw per job (`method=thompson`), honest about pulls.
 
 ## Fail
 
-A tick that ships persona rank on top of smashed categories and missing share_id keys, or that ships a frozen lexicographic winner sort (origin / approval / chars / added_at / name_key) as if it were selection.
+A tick that ships persona rank on top of smashed categories and missing share_id keys, or that ships a frozen winner sort — lexicographic or a feature prior (`both` / approval / `prompt_chars` / recency) dressed as Thompson.
 
 ## Taxonomy aliases (user_version 2)
 
@@ -63,20 +67,20 @@ See `TAXONOMY_MAP` in `bin/gb-market-db.py`. Only those keys map. Everything els
 
 `job` is assigned only from `taxonomy` via `JOB_FROM_TAXONOMY`. personal / productivity / success / unmapped → `none`. Name and charter never assign a job. decide and refuse have no taxonomy yet.
 
-## Job winners (`gb market jobs`)
+## Job draws (`gb market jobs`)
 
-One deployable arm per job from the live cache. Thompson sampling over a documented linear prior — not a frozen lexicographic sort, and not a persona ranker. Pack job lists may stay explicit later; winner pick must not ship as origin/approval/chars/added_at/name_key sort.
+One deployable arm per job. Thompson sampling, Beta(1,1) per arm. Not a frozen sort, not a linear prior, not a persona ranker.
 
 - Skip job `none`. Do not invent decide/refuse.
 - An arm MUST have a real `share_id` passed through from the catalog. Never invent one.
 - If a job has rows but none are deployable, list it as blocked (count + reason). Do not fill it with a no-share row.
 - Each deployable row (real `share_id`, job ≠ none) is an arm.
-- Score is the documented linear predictor in `SCORE_WEIGHTS` (`bin/gb-market-db.py`): `both`, `approval`, `log1p(prompt_chars)`, `recency_days` clipped to `[0, 365]`. Missing `added_at` is the cap. Name and charter words are not features.
-- Selection is Thompson sampling: draw `s ~ N(μ, σ²)` per arm, pick the max. Ties are a random choice among equals, not name-alpha.
-- Posterior starts uninformative: `μ` is the linear score, `σ² = PRIOR_VARIANCE` (4.0). With no outcomes the draw must explore — it is not the argmax of the linear score.
-- Outcomes live in `bandit_outcomes`. A write updates `bandit_posterior` via a Gaussian conjugate update (obs variance 1.0). Catalog rebuild copies outcomes and recomputes the posterior; it does not invent rewards.
-- Do not rank by display name alpha. Do not guess quality from charter words.
+- Catalog fields (`origin`, `has_approval_language`, `prompt_chars`, `added_at`, name, charter) are display only. They are not ranking keys and not a prior mean.
+- Selection: two Gamma(shape, 1) draws, θ = Ga(α,1) / (Ga(α,1) + Ga(β,1)), pick max. Ties are a random choice among equals, not name-alpha. UCB1 is the wrong first-hour algorithm (it walks every arm first; `brief` has 100+ deployable arms).
+- Posterior starts uninformative: α=1, β=1. With no outcomes the draw must explore. Select does not invent a reward.
+- A recorded hit increments α; a miss increments β. That write is `record_outcome` on `usecases/bandit.sqlite`, never a side effect of `gb market jobs`.
+- Product state lives under `usecases/`. Never under /tmp.
 
-## Bandit tables (user_version 4)
+## Bandit store (`usecases/bandit.sqlite`, user_version 1)
 
-`bandit_outcomes` and `bandit_posterior`. DDL bump from 3. A v3 cache is refused, then rebuilt from live catalogs (empty posterior — that is the uninformative start).
+Separate file from `market.sqlite`. Own `integrity_check` and `user_version`. Gitignored. Catalog rebuild replaces only the catalog cache (C49).
