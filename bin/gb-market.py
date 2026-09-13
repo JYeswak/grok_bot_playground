@@ -502,8 +502,8 @@ def print_jobs_human(payload: dict) -> None:
         % (len(winners), len(blocked), sel.get("method") or "thompson")
     )
     emit(
-        "%-28s %-10s %-16s %5s %5s %5s %-10s"
-        % ("NAME", "JOB", "SHARE_ID", "PULLS", "ALPHA", "BETA", "ORIGIN")
+        "%-28s %-10s %5s %5s %5s %5s %-10s"
+        % ("NAME", "JOB", "IMPR", "PULLS", "ALPHA", "BETA", "ORIGIN")
     )
     rows: List[Tuple[str, dict]] = [("win", w) for w in winners] + [
         ("block", b) for b in blocked
@@ -513,22 +513,24 @@ def print_jobs_human(payload: dict) -> None:
         job = str(row.get("job") or "-")
         if kind == "block":
             emit(
-                "%-28s %-10s %-16s %5s %5s %5s %-10s"
-                % ("-", job[:10], "BLOCKED", "-", "-", "-", "-")
+                "%-28s %-10s %5s %5s %5s %5s %-10s"
+                % ("-", job[:10], "-", "-", "-", "-", "-")
             )
+            emit("  SHARE_ID  BLOCKED")
             continue
         emit(
-            "%-28s %-10s %-16s %5s %5s %5s %-10s"
+            "%-28s %-10s %5s %5s %5s %5s %-10s"
             % (
                 str(row.get("name") or "-")[:28],
                 job[:10],
-                str(row.get("share_id") or "BLOCKED")[:16],
+                str(row.get("impressions") if row.get("impressions") is not None else 0),
                 str(row.get("pulls") if row.get("pulls") is not None else 0),
                 str(row.get("alpha") if row.get("alpha") is not None else "-"),
                 str(row.get("beta") if row.get("beta") is not None else "-"),
                 str(row.get("origin") or "-")[:10],
             )
         )
+        emit("  SHARE_ID  %s" % (row.get("share_id") or "BLOCKED"))
     for row in blocked:
         emit(
             "blocked  %s  %s  %s"
@@ -554,14 +556,20 @@ def cmd_jobs(root: pathlib.Path, as_json: bool, offline: bool = False) -> int:
     try:
         rows = mdb.load_bots(path)
         picked = mb.pick_jobs(rows, store=store)
-        draws = list(picked.get("draws") or picked.get("winners") or [])
-        for row in draws:
-            mb.record_impression(
+        draws = []
+        for row in list(picked.get("draws") or picked.get("winners") or []):
+            arm = mb.record_impression(
                 store,
                 job=str(row.get("job") or ""),
                 name_key=str(row.get("name_key") or ""),
                 share_id=str(row.get("share_id") or ""),
             )
+            updated = dict(row)
+            updated["alpha"] = arm.get("alpha")
+            updated["beta"] = arm.get("beta")
+            updated["impressions"] = arm.get("impressions")
+            updated["pulls"] = arm.get("pulls")
+            draws.append(updated)
     except mdb.CacheRefused as e:
         emit(str(e).replace("gb-market-db:", "gb market jobs:", 1))
         return EXIT_ENVIRONMENT
@@ -994,6 +1002,17 @@ def selftest() -> int:
                     "added_at": "2026-12-31",
                 }
             ),
+            mdb.canonicalize_row(
+                {
+                    "name": "Long Share Desk",
+                    "category": "finance-ops",
+                    "share_id": "ANv3NrqPfRcS9PdXku7h8",
+                    "from_shares": True,
+                    "origin": "shares",
+                    "prompt_chars": 40,
+                    "added_at": "2026-09-13",
+                }
+            ),
         ]
         mdb.rebuild(jobs_root / "usecases" / mdb.DB_NAME, planted, [])
         jcode, jout = _capture(lambda: cmd_jobs(jobs_root, False, offline=True))
@@ -1024,6 +1043,11 @@ def selftest() -> int:
             jout,
         )
         check("jobs-human-has-origin-alpha-beta", "shares" in jout and "ALPHA" in jout, jout)
+        check(
+            "jobs-human-prints-full-share-id",
+            "ANv3NrqPfRcS9PdXku7h8" in jout,
+            jout,
+        )
         jj = _capture(lambda: cmd_jobs(jobs_root, True, offline=True))[1]
         jpayload = json.loads(jj) if jj.strip().startswith("{") else {}
         jnames = [w.get("name") for w in jpayload.get("draws") or []]
@@ -1064,6 +1088,16 @@ def selftest() -> int:
             "jobs-json-blocked-count-reason",
             any(b.get("job") == "sell" and b.get("count") == 1 and b.get("reason") for b in blocked),
             str(blocked),
+        )
+        long_draw = next(
+            (w for w in jpayload.get("draws") or [] if w.get("share_id") == "ANv3NrqPfRcS9PdXku7h8"),
+            {},
+        )
+        check(
+            "jobs-json-impressions-after-draw",
+            int(long_draw.get("impressions") or 0) >= 1
+            and all(int(w.get("impressions") or 0) >= 1 for w in jpayload.get("draws") or []),
+            str(long_draw) + str(jpayload.get("draws")),
         )
 
         stale_root = root / "jobs-stale"
@@ -1136,6 +1170,33 @@ def selftest() -> int:
             "cli-keep-raises-alpha",
             keep[0] == 0 and "KEEP" in keep[1] and "alpha=2" in keep[1] and "WINNER" not in keep[1],
             keep[1][:300],
+        )
+        long_sid = "ANv3NrqPfRcS9PdXku7h8"
+        long_prefix = long_sid[:16]
+        pref = _capture(lambda: body(["keep", long_prefix, "--offline", "--root", str(jobs_root)]))
+        check(
+            "cli-keep-unique-truncated-prefix",
+            pref[0] == 0 and "KEEP" in pref[1] and long_sid in pref[1],
+            pref[1][:300],
+        )
+        collide_sid = long_prefix + "zzzzz"
+        mb.record_impression(
+            mb.store_path(jobs_root),
+            job="market",
+            name_key="collide desk",
+            share_id=collide_sid,
+        )
+        amb = _capture(lambda: body(["keep", long_prefix, "--offline", "--root", str(jobs_root)]))
+        check(
+            "cli-keep-ambiguous-prefix-refused",
+            amb[0] == EXIT_ENVIRONMENT and "ambiguous" in amb[1].lower(),
+            amb[1],
+        )
+        full = _capture(lambda: body(["skip", long_sid, "--offline", "--root", str(jobs_root)]))
+        check(
+            "cli-skip-full-share-id",
+            full[0] == 0 and "SKIP" in full[1] and long_sid in full[1],
+            full[1][:300],
         )
         skip = _capture(lambda: body(["skip", "weakShare", "--offline", "--root", str(jobs_root)]))
         check(
@@ -1214,7 +1275,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "share_id",
         nargs="?",
-        help="keep/skip/ban: catalog share_id already in the bandit store",
+        help="keep/skip/ban: stored share_id, or a unique prefix of one",
     )
     ap.add_argument(
         "--corpus",

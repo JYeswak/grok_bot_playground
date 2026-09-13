@@ -639,7 +639,7 @@ class MarketArgs:
         positional=True,
     )
     share_id: Optional[str] = arg(
-        help="keep/skip/ban: share_id already in the bandit store",
+        help="keep/skip/ban: stored share_id, or a unique prefix of one",
         positional=True,
     )
     corpus: bool = arg(help="refresh: also run the public usecases/ corpus refresh")
