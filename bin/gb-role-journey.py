@@ -157,6 +157,11 @@ def _persona_catalog() -> List[Dict[str, Any]]:
 
 def resolve_persona(phrase: str) -> str:
     key = _normalise_role(phrase)
+    if key in {"first hour", "firsthour"} or key.replace(" ", "") == "firsthour":
+        raise JourneyRefused(
+            "ROLE_REFUSED: first-hour is not an on-ramp; next: "
+            "gb templates deploy <id> --apply, gb skills attach, gb plugins"
+        )
     matches = [
         row
         for row in _persona_catalog()
@@ -527,7 +532,7 @@ class JournalLock:
 
 
 def _capabilities() -> int:
-    return 39
+    return 40
 
 
 def _check_resolution_selftests(leg: Callable[[str, bool], None]) -> None:
@@ -538,8 +543,20 @@ def _check_resolution_selftests(leg: Callable[[str, bool], None]) -> None:
         leg("unknown-role-refuses", str(exc).startswith("ROLE_UNKNOWN:"))
     leg(
         "phrase-normalizes-case-spacing",
-        resolve_persona("  FIRST   HOUR  ") == "first-hour",
+        resolve_persona("  FOUNDER   OPERATOR  ") == "founder-operator",
     )
+    try:
+        resolve_persona("first hour")
+        leg("first-hour-role-refuses", False)
+    except JourneyRefused as exc:
+        msg = str(exc)
+        leg(
+            "first-hour-role-refuses",
+            msg.startswith("ROLE_REFUSED:")
+            and "gb templates deploy" in msg
+            and "gb skills attach" in msg
+            and "gb plugins" in msg,
+        )
     try:
         resolve_persona("eng-lead")
         leg("legacy-persona-unavailable", False)
@@ -1660,6 +1677,8 @@ def run_status(
 def _emit_role_resolution_error(args: Any, exc: JourneyRefused) -> int:
     message = str(exc)
     code, separator, detail = message.partition(":")
+    refused = code == "ROLE_REFUSED"
+    status = "REFUSED" if refused else "USAGE"
     if args.json and separator and code.startswith("ROLE_"):
         print(
             json.dumps(
@@ -1668,9 +1687,14 @@ def _emit_role_resolution_error(args: Any, exc: JourneyRefused) -> int:
                     "role_input": args.role or args.persona,
                     "normalized_role": _normalise_role(args.role or args.persona or ""),
                     "resolution": code[5:],
-                    "status": "USAGE",
+                    "status": status,
                     "mutates": False,
                     "error": detail.strip(),
+                    "next": (
+                        "gb templates deploy <id> --apply, gb skills attach, gb plugins"
+                        if refused
+                        else None
+                    ),
                     "list_argv": ["gb", "role", "--list", "--json"],
                 },
                 indent=1,
@@ -1678,7 +1702,7 @@ def _emit_role_resolution_error(args: Any, exc: JourneyRefused) -> int:
         )
     else:
         print("gb-role-journey: %s" % message, file=sys.stderr)
-    return EXIT_USAGE
+    return EXIT_REFUSED if refused else EXIT_USAGE
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -1690,7 +1714,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="plan | status | apply | resume | rollback",
     )
     ap.add_argument(
-        "role", nargs="?", default="", help='role phrase, e.g. "first hour"'
+        "role", nargs="?", default="", help='role phrase, e.g. "founder operator"'
     )
     ap.add_argument("--persona", default="")
     ap.add_argument("--json", action="store_true")

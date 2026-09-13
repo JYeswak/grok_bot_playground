@@ -157,7 +157,7 @@ def warn(line: str) -> None:
 
 
 def _few_ids(ids: List[str], prefer: str, n: int = 6) -> str:
-    """Short known-id preview. Prefer the first-hour id so a typo still names it."""
+    """Short known-id preview. Prefer a known template id so a typo still names it."""
     ordered: List[str] = []
     if prefer in ids:
         ordered.append(prefer)
@@ -1176,7 +1176,7 @@ def load_persona_ids(
         preview = _few_ids(known, "first-hour")
         near = nearest(pack, known)
         hint = (
-            f"gb walk bots --role {near}" if near else "gb walk bots --role first-hour"
+            f"gb walk bots --role {near}" if near else "gb walk bots --paste <id>"
         )
         return (
             None,
@@ -1636,6 +1636,22 @@ def selftest() -> int:
             "'no-such-id'" in missing_err and "p" in missing_err,
             f"a typo is recoverable only if the alternatives are named; got {missing_err!r}",
         )
+
+        hello_path = pathlib.Path(__file__).resolve().parents[1] / "templates" / "hello-computer.json"
+        if hello_path.is_file():
+            hello_dir = hello_path.parent
+            hello_doc = walk_bots(directory=hello_dir, looked=[str(hello_dir)])
+            hello_code, hello_out, _he = _capture(
+                lambda: paste(hello_doc, "hello-computer")
+            )
+            check(
+                "hello-computer-paste-is-charter-not-role-plan",
+                hello_code == 0
+                and "You are hello computer" in hello_out
+                and "gb role" not in hello_out
+                and "first hour" not in hello_out,
+                f"hello-computer must paste its charter, not a role plan; got {hello_out[:120]!r}",
+            )
 
         # --- routine rendering ----------------------------------------------------------------
         check(
@@ -2127,7 +2143,7 @@ def body(argv: Optional[Sequence[str]] = None) -> int:
                         hint = (
                             f"gb walk bots --role {near}"
                             if near
-                            else "gb walk bots --role first-hour"
+                            else "gb walk bots --paste <id>"
                         )
                         print(
                             json.dumps(

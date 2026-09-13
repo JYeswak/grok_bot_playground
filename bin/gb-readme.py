@@ -13,11 +13,11 @@ turned every drift into a red gate. That is the right alarm and the wrong remedy
 fires on a number a human has to retype will keep firing. The remedy is to stop typing the
 number. So the README has two halves, and only one of them is written by a person:
 
-  HANDWRITTEN   the hero, "First hour", "What this is", "Install", "What it does not do" —
-                judgement, voice, and the promises a tool makes. The first-hour pitch
-                (`gb role --list`, then `gb role "first hour"`) lives HERE, never in the
-                derived block. A generator has no business writing these, and this file
-                never touches them.
+  HANDWRITTEN   the hero, "Build a Bot army", "What this is", "Install", "What it does not do" —
+                judgement, voice, and the promises a tool makes. The army pitch
+                (list templates, paste/deploy, attach skills, list plugins) lives HERE,
+                never in the derived block. A generator has no business writing these,
+                and this file never touches them.
   DERIVED       the verbs, the exit codes, the oracles, the layout, the build stamp. Every one
                 is a measurement, so every one comes from `gb capabilities --json`, the gate
                 producer, the selftests, and the exporter's own allowlist.
@@ -57,7 +57,6 @@ import gbtypes  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BIN = ROOT / "bin"
-TARGET = ROOT / "packaging" / "README.public.md"
 SCHEMA = "gb-readme/1"
 
 BEGIN = "<!-- gb:derived:begin -->"
@@ -68,15 +67,26 @@ WARN = (
     "     Prose outside the markers is handwritten and this generator never touches it. -->"
 )
 
+_PACKAGED = ROOT / "packaging" / "README.public.md"
+_ROOT_README = ROOT / "README.md"
+TARGET = (
+    _ROOT_README
+    if _ROOT_README.is_file() and BEGIN in _ROOT_README.read_text()
+    else _PACKAGED
+)
+
 EXIT_STALE = 1
 EXIT_USAGE = 2
 EXIT_ENVIRONMENT = 3
 
-# First-hour pitch MUST stay in the handwritten head. A derive that moved it
+# Army pitch MUST stay in the handwritten head. A derive that moved it
 # into render() would replace the capability pitch with measurement tables.
 PITCH_NEEDLES = (
-    "gb role --list",
-    'gb role "first hour"',
+    "gb templates",
+    "gb walk bots --paste",
+    "gb templates deploy",
+    "gb skills attach",
+    "gb plugins",
 )
 PITCH_COP_OUT = "Honest limit, stated before you start"
 
@@ -350,7 +360,7 @@ def render(f: Facts) -> str:
 def splice(current: str, block: str) -> str:
     """Replace the derived region, preserving every handwritten byte around it.
 
-    The first-hour pitch is handwritten (above BEGIN). This function never
+    The army pitch is handwritten (above BEGIN). This function never
     rewrites that head, so the next derive cannot revert the capability pitch.
     """
     if BEGIN in current and END in current:
@@ -382,11 +392,11 @@ def _handwritten_head(text: str) -> str:
 
 
 def _pitch_problems(head: str) -> List[str]:
-    """Refuse a derive that dropped or inverted the handwritten first-hour pitch."""
+    """Refuse a derive that dropped or inverted the handwritten army pitch."""
     problems: List[str] = []
     for needle in PITCH_NEEDLES:
         if needle not in head:
-            problems.append(f"first-hour pitch missing {needle!r}")
+            problems.append(f"army pitch missing {needle!r}")
     if PITCH_COP_OUT in head:
         problems.append("honest-limit cop-out sits before the capability pitch")
     return problems
@@ -403,7 +413,7 @@ def cmd_write(a: argparse.Namespace) -> int:
     problems = _pitch_problems(_handwritten_head(new))
     if problems:
         print(
-            "gb-readme: REFUSED — derive would drop the handwritten first-hour pitch",
+            "gb-readme: REFUSED — derive would drop the handwritten army pitch",
             file=sys.stderr,
         )
         for p in problems:
@@ -444,7 +454,7 @@ def cmd_check(a: argparse.Namespace) -> int:
     problems = _pitch_problems(_handwritten_head(cur))
     if problems:
         print(
-            "gb-readme: STALE — handwritten first-hour pitch is missing or inverted",
+            "gb-readme: STALE — handwritten army pitch is missing or inverted",
             file=sys.stderr,
         )
         for p in problems:
@@ -585,6 +595,22 @@ def selftest() -> int:
         "the README must point at the command instead of the value",
     )
     check("57 producers" in body, "the producer count is missing")
+
+    army_head = (
+        "gb templates\n"
+        "gb walk bots --paste <id>\n"
+        "gb templates deploy <id> --apply\n"
+        "gb skills attach\n"
+        "gb plugins\n"
+    )
+    check(
+        not _pitch_problems(army_head),
+        "the army pitch must satisfy PITCH_NEEDLES",
+    )
+    check(
+        bool(_pitch_problems('gb role --list\ngb role "first hour"\n')),
+        "the old first-hour pitch is no longer the handwritten contract",
+    )
 
     # --- a multi-line docstring collapses to its first line, or the table breaks ---
     multi = render(_facts(verbs={"a": "First line.\n\nSecond paragraph."}))

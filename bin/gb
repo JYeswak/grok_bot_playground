@@ -129,14 +129,9 @@ EXIT_CODES: Dict[int, str] = {
     130: "CANCELLED — SIGINT arrived; no partial artifact was written",
 }
 
-# First-hour on-ramp. Every legacy navigation surface resolves to this one
-# public grammar; none owns a second paste/deploy/setup sequence.
-FIRST_HOUR_ROLE_ARGV: Tuple[str, ...] = ("gb", "role", "first hour")
-FIRST_HOUR_ROLE = (
-    subprocess.list2cmdline(list(FIRST_HOUR_ROLE_ARGV))
-    if os.name == "nt" else shlex.join(FIRST_HOUR_ROLE_ARGV)
-)
-FIRST_HOUR_GUESSES = frozenset({
+# Army on-ramp. Newbie guesses and empty `gb` name these verbs, not a role plan.
+ARMY_NEXT = "gb templates deploy <id> --apply, gb skills attach, gb plugins"
+ARMY_GUESSES = frozenset({
     "start", "launch", "hello", "onboard", "onboarding", "init",
     "begin", "intro", "getting-started", "gettingstarted",
     "first-hour", "firsthour", "hello-computer", "hellocomputer",
@@ -272,9 +267,11 @@ EXAMPLES = """\
   gb setup --apply               measure first, then commit this desktop transactionally
   gb setup --apply --device brain    name the machine yourself instead of using the hostname
   gb setup --selftest            offline fake-producer rollback and commit proofs
-  gb role "first hour"            canonical no-write role plan and exact next argv
-  gb role --list                  bounded persona versions and availability
-  gb bootstrap --for-agent       compatibility redirect to the same role plan
+  gb templates                   list the Bot templates this repo proposes
+  gb walk bots --paste <id>      one charter, ready to paste
+  gb templates deploy <id> --apply   create that Bot from the seed template
+  gb skills attach               attach a skill to a live Bot
+  gb plugins                     marketplace catalog and this account's installs
   gb triage                      what is wrong right now, and the command that fixes it
   gb triage --json | jq .red     the same answer, for a script
   gb work                        what to pick up next, and whether the ranking is trustworthy
@@ -351,11 +348,11 @@ class SetupArgs:
 
 @dataclasses.dataclass(frozen=True)
 class RoleArgs:
-    """Turn one role phrase into a resumable, receipted Bot journey."""
+    """Turn one role phrase into a resumable, receipted Bot journey. first hour is refused."""
 
     role: Optional[str] = arg(
         positional=True,
-        help='supported role phrase, e.g. "first hour"',
+        help='supported role phrase, e.g. "founder operator"',
     )
     apply: bool = arg(help="apply the frozen plan named by --plan-hash")
     plan_hash: Optional[str] = arg(help="exact hash emitted by the no-write plan")
@@ -433,7 +430,7 @@ class BareArgs:
 
 @dataclasses.dataclass(frozen=True)
 class RobotDocsArgs:
-    """Agent handbook for the canonical role plan and operator surfaces."""
+    """Agent handbook for the army path and operator surfaces."""
 
     topic: Optional[str] = arg(
         positional=True,
@@ -485,7 +482,7 @@ class TemplatesArgs:
         positional=True,
     )
     id: Optional[str] = arg(help="template id, for `show`, `deploy` and `publish`", positional=True)
-    role: Optional[str] = arg(help="delegate a human role phrase to the canonical no-write role plan")
+    role: Optional[str] = arg(help="delegate a human role phrase to gb role (first hour is refused)")
     apply: bool = arg(help="deploy/publish: act for real (dry run without it)")
     screened: bool = arg(help="publish: a human reviewed the charter for private data")
     force: bool = arg(help="publish: allow minting drafts under an owned template (refused by default)")
@@ -496,22 +493,19 @@ class TemplatesArgs:
 
 @dataclasses.dataclass(frozen=True)
 class WalkArgs:
-    """Guided tour, or a redirect into the canonical role plan.
-
-    First hour: gb role "first hour"
-    """
+    """Guided tour of the CLI or the Bot templates this repo proposes."""
 
     track: Optional[str] = arg(
         default=None,
-        help="cli | bots (omit names the first-hour paste)",
+        help="cli | bots",
         choices=("cli", "bots"),
         positional=True,
     )
     paste: Optional[str] = arg(
-        help="print ONLY that template's charter, ready to paste (first hour: hello-computer)"
+        help="print ONLY that template's charter, ready to paste"
     )
     role: Optional[str] = arg(
-        help="delegate a human role phrase to the canonical no-write role plan"
+        help="delegate a human role phrase to gb role (first hour is refused)"
     )
     galaxy: Optional[str] = arg(
         help="walk one livestream seat from galaxy-seats.json (founder, engineer, ...)"
@@ -522,12 +516,12 @@ class WalkArgs:
 
 @dataclasses.dataclass(frozen=True)
 class BootstrapArgs:
-    """Compatibility on-ramp that delegates to the canonical role plan."""
+    """Compatibility on-ramp: army verbs, or a named role that is still active."""
 
-    role: Optional[str] = arg(help='human role phrase (default: "first hour")')
+    role: Optional[str] = arg(help="human role phrase (omit for the army path)")
     json: bool = arg(help="machine-readable envelope on stdout")
     for_agent: bool = arg(
-        help="print the same canonical no-write role plan for an agent"
+        help="print the army path for an agent: templates, skills, plugins"
     )
 
 @dataclasses.dataclass(frozen=True)
@@ -646,7 +640,7 @@ class JobsArgs:
 
 @dataclasses.dataclass(frozen=True)
 class GalaxyArgs:
-    """Baseline/diff the event, or delegate a role to the canonical plan."""
+    """Baseline/diff the event, or delegate a still-active role phrase."""
 
     action: str = arg(
         default="sessions",
@@ -654,7 +648,7 @@ class GalaxyArgs:
         choices=("baseline", "diff", "sessions"),
         positional=True,
     )
-    role: Optional[str] = arg(help="delegate a human role phrase to the canonical no-write role plan")
+    role: Optional[str] = arg(help="delegate a human role phrase to gb role (first hour is refused)")
     json: bool = arg(help="machine-readable envelope on stdout")
 
 
@@ -674,7 +668,7 @@ class FleetArgs:
         positional=True,
     )
     bot: Optional[str] = arg(help="Bot name (exact, or a unique prefix)")
-    role: Optional[str] = arg(help="delegate a human role phrase to the canonical no-write role plan")
+    role: Optional[str] = arg(help="delegate a human role phrase to gb role (first hour is refused)")
     text: Optional[str] = arg(help="send: the message body")
     yes: bool = arg(help="send: send it; rollback: separately confirm destructive deletion")
     only: Optional[str] = arg(help="rebuild: just this source Bot name")
@@ -2828,8 +2822,11 @@ def _setup_finish(
     if refused:
         human += ["", "plan first (drop --apply):", "  gb setup"]
     human += [
-        "", "next:", f"  {nxt}", "", "new-user pack (first-hour):",
-        f"  {FIRST_HOUR_ROLE}", "  gb role --list",
+        "", "next:", f"  {nxt}", "", "build a Bot army:",
+        "  gb templates",
+        "  gb templates deploy <id> --apply",
+        "  gb skills attach",
+        "  gb plugins",
     ]
     return rc, payload, "\n".join(human)
 
@@ -3476,7 +3473,7 @@ def cmd_setup(a: SetupArgs) -> int:
     if a.list_personas:
         if a.apply or a.device or a.persona:
             return _role_redirect_error(
-                "setup", "first hour", a.json,
+                "setup", "founder operator", a.json,
                 "--list-personas cannot be combined with setup actions", refused=bool(a.apply),
             )
         return _delegate_role(None, a.json, "setup role list")
@@ -3501,6 +3498,8 @@ def cmd_setup(a: SetupArgs) -> int:
 
 def cmd_role(a: RoleArgs) -> int:
     """Canonical role phrase -> one exact public journey grammar."""
+    if a.role and _is_first_hour_role(a.role) and not (a.selftest or a.capabilities or a.list):
+        return _refuse_first_hour_role(a.json)
     argv: List[str] = [sys.executable, str(BIN / "gb-role-journey.py")]
     transitions = [a.apply, bool(a.status), bool(a.resume), bool(a.rollback), a.list]
     if sum(bool(value) for value in transitions) > 1:
@@ -3830,11 +3829,13 @@ taking seconds or not returning. It is the second stop, after `gb setup --apply`
     gb platform --json     | jq -r .status                is this OS even measured here
     gb mirror                                             your own fleet, off disk, no token
 
-FIRST HOUR. One canonical no-write plan owns every stage and digest.
+ARMY. Build Bots with templates, skills, and plugins. There is no first-hour role plan.
 
-    {FIRST_HOUR_ROLE}
-    gb role --list                              bounded roles and persona versions
-    gb bootstrap --for-agent                   compatibility redirect to the same plan
+    gb templates                               list the shelf
+    gb walk bots --paste <id>                  one charter, ready to paste
+    gb templates deploy <id> --apply           create that Bot from the seed template
+    gb skills attach                           attach a skill to a live Bot
+    gb plugins                                 marketplace catalog and this account's installs
 
 ONCE CONFIGURED, triage is the loop.
 
@@ -3897,7 +3898,7 @@ sentence on this page.
 CANCELLATION. Every command is safe to SIGINT: artifact writes are atomic, so you get either the
 old artifact or the new one, and the process exits 130.
 
-AGENT DROP FILES. First hour does not need AGENTS.md — the five argv in FIRST HOUR are enough.
+AGENT DROP FILES. The army path does not need AGENTS.md — templates, skills, and plugins are enough.
 A fresh clone also carries AGENTS.md plus CLAUDE.md and .cursor/rules/grok-bot.mdc, which are
 pointers rather than copies.
 """)
@@ -3911,8 +3912,12 @@ gb — quickstart
 This repo watches one thing: a live Grok Bot deployment (the account, its Bots, its plugins, and
 the vendor surface those depend on). The producers in bin/ measure it; `gb` is how you ask.
 
-First hour (canonical role plan):
-  {FIRST_HOUR_ROLE}
+Army path (templates, skills, plugins):
+  gb templates
+  gb walk bots --paste <id>
+  gb templates deploy <id> --apply
+  gb skills attach
+  gb plugins
 
   0. gb setup             fresh clone? this registers this machine and takes the first
                           measurements (dry run unless --apply). Until something has been
@@ -4085,7 +4090,31 @@ def _render_public_argv(argv: Sequence[str]) -> str:
     return subprocess.list2cmdline(list(argv)) if os.name == "nt" else shlex.join(argv)
 
 
+def _is_first_hour_role(role: Optional[str]) -> bool:
+    if not role:
+        return False
+    key = " ".join(re.sub(r"[^a-z0-9]+", " ", role.casefold()).split())
+    return key in {"first hour", "firsthour"} or key.replace(" ", "") == "firsthour"
+
+
+def _refuse_first_hour_role(as_json: bool, source: str = "role") -> int:
+    reason = (
+        f'gb {source}: refused. next: {ARMY_NEXT}'
+    )
+    payload = envelope(
+        source,
+        status="REFUSED",
+        mutates=False,
+        error=reason,
+        next=ARMY_NEXT,
+    )
+    emit(payload, as_json, reason)
+    return EXIT_REFUSED
+
+
 def _delegate_role(role: Optional[str], as_json: bool, label: str) -> int:
+    if role is not None and _is_first_hour_role(role):
+        return _refuse_first_hour_role(as_json, source="role")
     argv = [sys.executable, str(BIN / "gb-role-journey.py")]
     argv += ["--list"] if role is None else ["plan", role]
     if as_json:
@@ -4135,14 +4164,6 @@ def cmd_templates(a: TemplatesArgs) -> int:
                 "--role cannot be combined with template actions", refused=bool(a.apply),
             )
         return _delegate_role(a.role, a.json, "templates role")
-    if a.action == "deploy" and a.id == "hello-computer":
-        if a.apply:
-            return _role_redirect_error(
-                "templates", "first hour", a.json,
-                "hello-computer deployment moved to the canonical role transaction",
-                refused=True,
-            )
-        return _delegate_role("first hour", a.json, "templates first hour")
     argv: List[str] = [sys.executable, str(BIN / "gb-templates.py"), a.action]
     if a.action in ("show", "deploy", "publish"):
         if not a.id:
@@ -4230,14 +4251,6 @@ def cmd_walk(a: WalkArgs) -> int:
                 refused=False,
             )
         return _delegate_role(a.role, a.json, "walk role")
-    if a.paste == "hello-computer":
-        if a.galaxy or a.step or a.track == "cli":
-            return _role_redirect_error(
-                "walk", "first hour", a.json,
-                "hello-computer is the canonical first-hour role journey",
-                refused=False,
-            )
-        return _delegate_role("first hour", a.json, "walk first hour")
     if a.paste:
         argv: List[str] = [sys.executable, str(BIN / "gb-walk.py"), "bots", "--paste", a.paste]
         if a.galaxy:
@@ -4253,9 +4266,10 @@ def cmd_walk(a: WalkArgs) -> int:
     if not a.track:
         print(
             "gb: walk needs a track: cli | bots\n"
-            f"    first hour:  {FIRST_HOUR_ROLE}\n"
+            "    army:        gb templates\n"
             "    CLI tour:    gb walk cli\n"
             "    Bot tour:    gb walk bots\n"
+            "    paste one:   gb walk bots --paste <id>\n"
             "    see:         gb walk --help",
             file=sys.stderr,
         )
@@ -4265,10 +4279,9 @@ def cmd_walk(a: WalkArgs) -> int:
                 status="USAGE",
                 error="walk needs a track: cli | bots",
                 tracks=["cli", "bots"],
-                next=FIRST_HOUR_ROLE,
-                hint=FIRST_HOUR_ROLE,
-                plan_argv=_role_public_argv("first hour"),
-                did_you_mean=FIRST_HOUR_ROLE,
+                next="gb templates",
+                hint="gb walk bots --paste <id>",
+                did_you_mean="gb walk bots",
             ), True, "")
         return EXIT_USAGE
     argv = [sys.executable, str(BIN / "gb-walk.py"), a.track]
@@ -4279,8 +4292,19 @@ def cmd_walk(a: WalkArgs) -> int:
     return _passthrough(argv, budget_s=300, label="walk")
 
 def cmd_bootstrap(a: BootstrapArgs) -> int:
-    """Compatibility on-ramp; the role orchestrator owns every stage and digest."""
-    return _delegate_role(a.role or "first hour", a.json, "bootstrap role")
+    """Compatibility on-ramp; omit a role to get the army path, not first-hour."""
+    if a.role:
+        return _delegate_role(a.role, a.json, "bootstrap role")
+    reason = f"gb bootstrap: next: {ARMY_NEXT}"
+    payload = envelope(
+        "bootstrap",
+        status="OK",
+        mutates=False,
+        next=ARMY_NEXT,
+        commands=["gb templates", "gb skills attach", "gb plugins"],
+    )
+    emit(payload, a.json, reason)
+    return EXIT_OK
 
 
 
@@ -5298,33 +5322,31 @@ def _hint_diff(token: str) -> int:
     )
     return EXIT_USAGE
 
-def _is_first_hour_guess(token: str) -> bool:
-    """True when the unknown verb is a newbie's name for the first-hour on-ramp."""
+def _is_army_guess(token: str) -> bool:
+    """True when the unknown verb is a newbie's name for the army on-ramp."""
     folded = token.lower().replace("_", "-")
     compact = folded.replace("-", "")
-    return folded in FIRST_HOUR_GUESSES or compact in {
-        g.replace("-", "") for g in FIRST_HOUR_GUESSES
+    return folded in ARMY_GUESSES or compact in {
+        g.replace("-", "") for g in ARMY_GUESSES
     }
 
 
-def _hint_first_hour(token: str, as_json: bool) -> int:
-    """Bounded newbie redirect into the only public journey grammar."""
-    plan_argv = _role_public_argv("first hour")
+def _hint_army(token: str, as_json: bool) -> int:
+    """Bounded newbie redirect into templates, skills, and plugins."""
     if as_json:
         emit(envelope(
-            "role-redirect",
+            "army-redirect",
             status="USAGE",
             error=f"no command {token!r}",
             mutates=False,
-            plan_argv=plan_argv,
-            recovery_argv=plan_argv,
-            list_argv=["gb", "role", "--list", "--json"],
+            next=ARMY_NEXT,
+            recovery_argv=["gb", "templates"],
+            list_argv=["gb", "templates"],
         ), True, "")
     else:
         print(
             f"gb: no command {token!r}.\n"
-            f"    first hour:  {FIRST_HOUR_ROLE}\n"
-            "    list roles:   gb role --list",
+            f"    army:  {ARMY_NEXT}",
             file=sys.stderr,
         )
     return EXIT_USAGE
@@ -5352,8 +5374,8 @@ def body() -> int:
     pos = [a for a in rest if not a.startswith("-")]
     # Intent-legible newbie verbs (start/launch/hello/onboard/init) must not fall through
     # to Levenshtein (`start`→`store`, `hello`→`help`, `init`→`info`) or the 58-verb wall.
-    if pos and pos[0] not in COMMANDS and _is_first_hour_guess(pos[0]):
-        return _hint_first_hour(pos[0], "--json" in rest)
+    if pos and pos[0] not in COMMANDS and _is_army_guess(pos[0]):
+        return _hint_army(pos[0], "--json" in rest)
     # Day-diff guesses (diff/changed/whatchanged) name the exact argv, same contract.
     if pos and pos[0] not in COMMANDS and _is_diff_guess(pos[0]):
         return _hint_diff(pos[0])
@@ -5365,18 +5387,27 @@ def body() -> int:
                 description="gb — operate a live Grok Bot deployment.",
             )
             return HANDLERS[name](args)
-        return _delegate_role("first hour", "--json" in rest, "bare role")
+        reason = f"gb: next: {ARMY_NEXT}"
+        payload = envelope(
+            "gb",
+            status="OK",
+            mutates=False,
+            next=ARMY_NEXT,
+            commands=["gb templates", "gb skills attach", "gb plugins"],
+        )
+        emit(payload, "--json" in rest, reason)
+        return EXIT_OK
     name, args = parse_sub(
         COMMANDS,
         prog="gb",
         description=(
             "gb — set up, run and grow a Grok Bot deployment from one command."
         ),
-        # All legacy first-hour navigation points at the one role plan.
         epilog=(
-            "FIRST HOUR / AGENT:\n"
-            f"  {FIRST_HOUR_ROLE}\n"
-            "  gb role --list"
+            "ARMY / AGENT:\n"
+            "  gb templates\n"
+            "  gb walk bots --paste <id>\n"
+            f"  {ARMY_NEXT}"
         ),
     )
     return HANDLERS[name](args)

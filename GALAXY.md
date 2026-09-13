@@ -25,7 +25,7 @@ Five-minute path: [QUICKSTART.md](QUICKSTART.md).
 
 | Session | MDT | Paste | Pack | Why this Bot |
 |---|---|---|---|---|
-| Grok Bot 101 | 9:00–10:00 | `hello-computer` | `first-hour` | Proves the cloud computer answers before any plugin. Then a file read and one plugin proof. |
+| Grok Bot 101 | 9:00–10:00 | `research-desk` | `first-hour` | One question, three cited sources. Works in-session; no plugin required. |
 | Grok Bot for Engineering | 12:30–14:00 | `galaxy-engineering` | `eng-lead` | Makes the review queue visible. Reads GitHub; comments on nothing. |
 | Grok Bot for Product Managers | 14:30–15:30 | `vendor-watch` | `product-manager` | Re-reads vendor pages and reports only what changed, quoted. |
 | Grok Bot for Founders | 16:00–17:30 | `morning-briefing` | `founder-operator` | One morning block: priorities, calendar, spend, overnight flags. |

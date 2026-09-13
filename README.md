@@ -15,69 +15,50 @@
   <img alt="zero required runtime dependencies" src="https://img.shields.io/badge/required%20deps-0-black">
 </p>
 
-## First hour (five minutes)
+## Build a Bot army
 
-A person or an agent can resolve a supported role without opening AGENTS.md.
+Use the CLI to list templates, paste or deploy a Bot, attach skills, install
+plugins, and repeat. That is the on-ramp. There is no staged first-hour role.
 
 ```sh
-gb role --list
-gb role "first hour"
+gb templates
+gb walk bots --paste <id>
+gb templates deploy <id> --apply
+gb skills attach
+gb plugins
 ```
 
-The list preserves all 14 persona packs with version and availability. The
-plan returns literal plan, apply, status, resume, and rollback argv and writes
-nothing to the account. `first-hour` and `founder-operator` are active; the
-other 12 packs remain visible as `legacy-unavailable` until migrated.
-
-This repo ships **73 templates**, **14 persona packs**, and Galaxy seats.
+`--paste` prints one charter. `deploy --apply` creates the Bot from the seed
+template when a desktop session is live. `gb skills attach` attaches a skill.
+`gb plugins` lists the marketplace and this account's installs. Then pick the
+next template.
 
 **Here for Grok Bot Galaxy (Sept 15-17)?** Pick your seat in
-[GALAXY.md](GALAXY.md), then use the listed role only when `gb role --list`
-marks it active.
+[GALAXY.md](GALAXY.md) and paste that row's Bot.
 
-| I am a... | Suggested first Bot | Role phrase / status |
-|---|---|---|
-| New to Grok Bot | `hello-computer` | `first hour` — active |
-| Founder | `morning-briefing` | `founder operator` — active |
-| Engineer | `galaxy-engineering` | `engineering lead` — legacy-unavailable |
-| Product manager | `vendor-watch` | `product manager` — legacy-unavailable |
-| Sales / SDR | `galaxy-sdr-desk` | `sales outbound` — legacy-unavailable |
-| Support / post-sales | `first-reply-desk` | `success support` — legacy-unavailable |
-| Marketing / marketing ops | `galaxy-marketing-ops` | `marketing content` — legacy-unavailable |
+| I am a... | Suggested first Bot |
+|---|---|
+| New to Grok Bot | `research-desk` |
+| Founder | `morning-briefing` |
+| Engineer | `galaxy-engineering` |
+| Product manager | `vendor-watch` |
+| Sales / SDR | `galaxy-sdr-desk` |
+| Support / post-sales | `first-reply-desk` |
+| Marketing / marketing ops | `galaxy-marketing-ops` |
 
-Every template and persona id above exists in this tree.
-[docs/ROLES.md](docs/ROLES.md) carries the complete mapping; `gb role --list`
-is the machine authority for whether a row can produce a plan.
-
-## Prove a job (the coverage loop)
-
-`walked` is not done. Done is a live Bot on the account, a rubric floor of 750,
-validated scripts, and a copy-paste walk that this README names.
-
-```sh
-gb jobs ingest
-gb jobs coverage --live
-gb jobs next
-gb jobs prove --id <id>
-gb jobs record --id <id> --verdict done --note '…'   # only if prove prints proven True
-gb walk bots --paste research-desk | pbcopy
-gb walk bots --paste vendor-watch | pbcopy
-gb walk bots --paste decision-ledger | pbcopy
-gb walk bots --paste inbox-sweep | pbcopy
-```
-
-`x:research-and-monitoring` is proven (live Research Desk, six dims 1000). Next
-unproven job is whatever `gb jobs next` prints.
+Every template id above exists in this tree.
+[docs/ROLES.md](docs/ROLES.md) maps seats to packs; the army path above is how
+you stand a Bot up.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/JYeswak/grok_bot_playground/main/install.sh | bash
 ```
 
 ```console
-$ gb role --list
-$ gb role "first hour"
+$ gb templates
+$ gb walk bots --paste research-desk
 $ gb walk cli            # guided tour of the read-only verbs
-$ gb walk bots           # the 73 Bots this repo proposes
+$ gb walk bots           # the Bots this repo proposes
 ```
 
 ### Honest limits
@@ -115,7 +96,8 @@ It does three jobs:
 **Built for an agent as much as for a person.** Every verb takes `--json` and returns a
 schema-stamped envelope; exit codes are semantic, not cosmetic; `gb robot-docs` is a handbook
 written for a model rather than a human; and `gb capabilities --json` describes the whole
-surface so an agent can plan without reading `bin/`. Start with `gb role "first hour"`.
+surface so an agent can plan without reading `bin/`. Start with `gb templates`,
+then `gb skills attach` and `gb plugins`.
 
 **It refuses rather than guesses.** An unmeasured check is an error, never a pass. A verb with
 no data says which command produces it. Numbers ship with their denominators, and a claim whose
@@ -138,8 +120,8 @@ your `PATH`, is safe to re-run, **verifies itself by running `gb capabilities --
 what it answered**, and removes only what it created on `--uninstall`. `bash install.sh --dry-run`
 prints the exact plan and touches nothing.
 
-New here? **[QUICKSTART.md](QUICKSTART.md)** is the five-minute path: list roles,
-run `gb role "first hour"`, then follow the exact emitted checkpoints.
+New here? **[QUICKSTART.md](QUICKSTART.md)** is the five-minute path: list
+templates, paste or deploy a Bot, attach skills, list plugins, repeat.
 
 Python 3.9 or newer. **No required runtime dependencies**: the tool is stdlib only, and the
 exporter that builds this tree resolves every import in it against the interpreter's standard
@@ -158,7 +140,11 @@ Two forms, one implementation: the console script runs the very same `bin/gb` th
 The difference is what is on disk around it. See [what it does not do](#limitations-what-this-does-not-do).
 
 ```sh
-gb role "first hour"     # canonical no-write role plan
+gb templates               # list the Bot shelf
+gb walk bots --paste <id>  # one charter, ready to paste
+gb templates deploy <id> --apply
+gb skills attach
+gb plugins
 gb quickstart              # the orientation page
 gb robot-docs              # the same thing for an agent
 gb capabilities --json     # the machine-readable contract
@@ -172,7 +158,7 @@ of this repository.
 ```sh
 gb walk cli      # the tool: 11 stops covering every verb, in the order a new operator needs them
 gb walk bots     # the 73 Bots this repo proposes, each with a charter you can paste
-gb templates show hello-computer    # inspect the template without starting a journey
+gb templates show hello-computer    # inspect one template; it is a Bot, not a journey
 ```
 
 The `cli` track **runs the read-only verbs live** and shows their real output inline. It runs
