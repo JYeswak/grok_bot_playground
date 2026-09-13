@@ -383,6 +383,50 @@ def latest_subject(path: pathlib.Path, share_id: str) -> Optional[Dict[str, Any]
         conn.close()
 
 
+def _like_prefix(prefix: str) -> str:
+    """Literal prefix for SQLite LIKE. % and _ in the copied id are not wildcards."""
+    return prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+
+def list_share_ids_with_prefix(path: pathlib.Path, prefix: str) -> List[str]:
+    """Distinct stored share_ids that start with prefix. Empty if the store is missing."""
+    sid = real_share_id({"share_id": prefix})
+    if not sid:
+        return []
+    err = refuse_path(path)
+    if err:
+        raise StoreRefused(err)
+    if not path.is_file():
+        return []
+    pattern = _like_prefix(sid)
+    conn = sqlite3.connect("file:%s?mode=ro" % path.as_posix(), uri=True)
+    try:
+        apply_pragmas(conn)
+        rows = conn.execute(
+            "SELECT share_id FROM arms WHERE share_id LIKE ? ESCAPE '\\' "
+            "UNION SELECT share_id FROM outcomes WHERE share_id LIKE ? ESCAPE '\\'",
+            (pattern, pattern),
+        ).fetchall()
+        return sorted({str(row[0]) for row in rows if row and row[0]})
+    finally:
+        conn.close()
+
+
+def resolve_share_id(path: pathlib.Path, share_id: str, *, kind: str = "lookup") -> str:
+    """Exact store hit, or a unique prefix of one stored share_id. Never guesses."""
+    sid = real_share_id({"share_id": share_id})
+    if not sid:
+        raise StoreRefused("gb-market-bandit: refuse %s — no share_id" % kind)
+    if latest_subject(path, sid) is not None:
+        return sid
+    matches = list_share_ids_with_prefix(path, sid)
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        raise StoreRefused("gb-market-bandit: refuse %s — not in store" % kind)
+    raise StoreRefused("gb-market-bandit: refuse %s — ambiguous share_id prefix" % kind)
+
+
 def record_outcome(
     path: pathlib.Path,
     *,
@@ -496,12 +540,17 @@ def apply_verdict(
     kind: str,
     recorded_at: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """keep / skip / ban the latest store subject for share_id. Never invents a share_id."""
+    """keep / skip / ban the latest store subject for share_id.
+
+    Accepts an exact stored id or a unique prefix. Refuses 0 or 2+ matches.
+    Never invents a share_id.
+    """
     sid = real_share_id({"share_id": share_id})
     if not sid:
         raise StoreRefused("gb-market-bandit: refuse %s — no share_id" % kind)
     if kind not in (KIND_KEEP, KIND_SKIP, KIND_BAN):
         raise StoreRefused("gb-market-bandit: refuse — unknown verdict %r" % kind)
+    sid = resolve_share_id(path, sid, kind=kind)
     subject = latest_subject(path, sid)
     if subject is None:
         raise StoreRefused("gb-market-bandit: refuse %s — not in store" % kind)
@@ -941,6 +990,55 @@ def selftest() -> int:
             check("keep-refuses-not-in-store", False, "wrote")
         except StoreRefused as e:
             check("keep-refuses-not-in-store", "not in store" in str(e).lower(), str(e))
+
+        long_sid = "ANv3NrqPfRcS9PdXku7h8"
+        long_prefix = long_sid[:16]
+        collide_sid = long_prefix + "zzzzz"
+        record_impression(store, job="spend", name_key="long share desk", share_id=long_sid)
+        before_prefix = load_posteriors(store)[_arm_id("spend", "long share desk", long_sid)]
+        try:
+            kept_prefix = apply_verdict(store, long_prefix, KIND_KEEP)
+            check(
+                "keep-unique-truncated-prefix",
+                kept_prefix.get("share_id") == long_sid
+                and kept_prefix.get("alpha") == before_prefix["alpha"] + 1,
+                str(kept_prefix),
+            )
+        except StoreRefused as e:
+            kept_prefix = None
+            check("keep-unique-truncated-prefix", False, str(e))
+        record_impression(store, job="market", name_key="collide desk", share_id=collide_sid)
+        try:
+            apply_verdict(store, long_prefix, KIND_KEEP)
+            check("keep-ambiguous-prefix-refuses", False, "wrote")
+        except StoreRefused as e:
+            check(
+                "keep-ambiguous-prefix-refuses",
+                "ambiguous" in str(e).lower(),
+                str(e),
+            )
+        try:
+            kept_full = apply_verdict(store, long_sid, KIND_KEEP)
+            expected_alpha = (
+                (kept_prefix["alpha"] + 1) if kept_prefix is not None else before_prefix["alpha"] + 1
+            )
+            check(
+                "keep-full-share-id-still-works",
+                kept_full.get("share_id") == long_sid
+                and kept_full.get("alpha") == expected_alpha,
+                str(kept_full),
+            )
+        except StoreRefused as e:
+            check("keep-full-share-id-still-works", False, str(e))
+        try:
+            skipped_prefix = apply_verdict(store, collide_sid[:18], KIND_SKIP)
+            check(
+                "skip-unique-prefix-resolves",
+                skipped_prefix.get("share_id") == collide_sid,
+                str(skipped_prefix),
+            )
+        except StoreRefused as e:
+            check("skip-unique-prefix-resolves", False, str(e))
 
         catalog = root / PRODUCT_DIR / "market.sqlite"
         catalog.parent.mkdir(parents=True, exist_ok=True)
