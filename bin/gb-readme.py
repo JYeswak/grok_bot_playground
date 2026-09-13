@@ -87,6 +87,8 @@ PITCH_NEEDLES = (
     "gb templates deploy",
     "gb swarm",
     "gb stack",
+    "official",
+    "corpus",
 )
 PITCH_COP_OUT = "Honest limit, stated before you start"
 
@@ -399,6 +401,9 @@ def _pitch_problems(head: str) -> List[str]:
             problems.append(f"army pitch missing {needle!r}")
     if PITCH_COP_OUT in head:
         problems.append("honest-limit cop-out sits before the capability pitch")
+    folded = head.casefold()
+    if "71 listing" in folded:
+        problems.append("scan must not be official-listings-only (71)")
     return problems
 
 
@@ -597,7 +602,8 @@ def selftest() -> int:
     check("57 producers" in body, "the producer count is missing")
 
     army_head = (
-        "gb market refresh\n"
+        "Scan is official + corpus + URLs.\n"
+        "gb market refresh --corpus\n"
         "gb market bots\n"
         "gb templates deploy <id> --apply\n"
         "gb swarm <persona>\n"

@@ -6,7 +6,7 @@ It does not invent Bots. Every id below is a file that already ships.
 Stand Bots up with the four-command first hour, then repeat:
 
 ```sh
-gb market refresh
+gb market refresh --corpus
 gb market bots
 gb templates deploy <id> --apply
 gb swarm <persona>

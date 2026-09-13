@@ -131,11 +131,11 @@ EXIT_CODES: Dict[int, str] = {
 
 # Four-command first hour. Newbie guesses and empty `gb` name these, not a role plan.
 ARMY_NEXT = (
-    "gb market refresh, gb market bots, gb templates deploy <id> --apply, "
+    "gb market refresh --corpus, gb market bots, gb templates deploy <id> --apply, "
     "gb swarm <persona>, gb stack"
 )
 ARMY_COMMANDS = (
-    "gb market refresh",
+    "gb market refresh --corpus",
     "gb market bots",
     "gb templates deploy",
     "gb swarm",
@@ -277,8 +277,8 @@ EXAMPLES = """\
   gb setup --apply               measure first, then commit this desktop transactionally
   gb setup --apply --device brain    name the machine yourself instead of using the hostname
   gb setup --selftest            offline fake-producer rollback and commit proofs
-  gb market refresh              snapshot live marketplace Bots (network)
-  gb market bots                 name, creator, category, updated; new since last stamp
+  gb market refresh --corpus     official snapshot + public corpus (network)
+  gb market bots                 official ∪ corpus ∪ URL finds; denominators printed
   gb templates deploy <id> --apply   create that Bot (CreateGrokBotAgentFromTemplate + Update)
   gb swarm <persona>             deploy one persona pack's Bot list
   gb stack                       plugins catalog, attachable skills, gb x methods
@@ -623,14 +623,16 @@ class PluginsArgs:
 
 @dataclasses.dataclass(frozen=True)
 class MarketArgs:
-    """Scan live marketplace Bots from the newest market/<stamp>.json."""
+    """Official marketplace ∪ public corpus ∪ curated URLs."""
 
     action: str = arg(
         default="bots",
-        help="refresh | bots",
-        choices=("refresh", "bots"),
+        help="refresh | bots | new",
+        choices=("refresh", "bots", "new"),
         positional=True,
     )
+    corpus: bool = arg(help="refresh: also run the public usecases/ corpus refresh")
+    urls: bool = arg(help="bots: dump curated URL rows (default: counts by section/host)")
     json: bool = arg(help="machine-readable envelope on stdout")
     selftest: bool = arg(help="offline stamp fixtures")
 
@@ -3880,8 +3882,8 @@ taking seconds or not returning. It is the second stop, after `gb setup --apply`
 
 ARMY. Four-command first hour. There is no first-hour role plan.
 
-    gb market refresh                          snapshot live marketplace Bots
-    gb market bots                             name, creator, category, updated; new since last stamp
+    gb market refresh --corpus                 official snapshot + public corpus
+    gb market bots                             official ∪ corpus ∪ URL finds; print the union with denominators
     gb templates deploy <id> --apply           create that Bot (charter + instructions)
     gb swarm <persona>                         one persona pack's Bot list (not the prove-a-job trio)
     gb stack                                   plugins catalog, attachable skills, gb x methods
@@ -3965,7 +3967,7 @@ This repo watches one thing: a live Grok Bot deployment (the account, its Bots, 
 the vendor surface those depend on). The producers in bin/ measure it; `gb` is how you ask.
 
 Four-command first hour (scan, deploy, swarm, stack):
-  gb market refresh
+  gb market refresh --corpus
   gb market bots
   gb templates deploy <id> --apply
   gb swarm <persona>
@@ -4459,15 +4461,19 @@ def cmd_plugins(a: PluginsArgs) -> int:
 
 
 def cmd_market(a: MarketArgs) -> int:
-    """Pass through to `bin/gb-market.py` — live marketplace Bots from market/<stamp>.json."""
+    """Pass through to `bin/gb-market.py` — official ∪ public corpus ∪ curated URLs."""
     argv: List[str] = [sys.executable, str(BIN / "gb-market.py")]
     if a.selftest:
         argv.append("--selftest")
         return _passthrough(argv, budget_s=30, label="market")
     argv.append(a.action)
+    if a.corpus:
+        argv.append("--corpus")
+    if a.urls:
+        argv.append("--urls")
     if a.json:
         argv.append("--json")
-    budget = 180 if a.action == "refresh" else 30
+    budget = 600 if a.action == "refresh" else 30
     return _passthrough(argv, budget_s=budget, label="market")
 
 
@@ -5501,7 +5507,7 @@ def body() -> int:
         ),
         epilog=(
             "ARMY / AGENT:\n"
-            "  gb market refresh\n"
+            "  gb market refresh --corpus\n"
             "  gb market bots\n"
             "  gb templates deploy <id> --apply\n"
             "  gb swarm <persona>\n"

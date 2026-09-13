@@ -4,19 +4,22 @@ Scan the live marketplace, deploy the Bots you name, swarm a persona pack,
 then read the stack before you copy a weak Bot.
 
 ```sh
-gb market refresh
+gb market refresh --corpus
 gb market bots
 gb templates deploy <id> --apply
 gb swarm <persona>
 gb stack
 ```
 
-`gb market bots` lists live marketplace Bots (name, creator, category, updated)
-plus new since the last stamp. `deploy --apply` creates each named Bot via
-CreateGrokBotAgentFromTemplate + Update. `gb swarm founder-operator` plans that
-pack's Bot list. `gb stack` reprints the plugin catalog total from the newest
-market snapshot, lists attachable skills, and runs `gb x` methods ranked by
-distinct authors. This path never redirects to `gb role "first hour"`.
+`gb market bots` reprints the official + public-corpus union (name, source,
+category, builder) with official / corpus / overlap / union denominators, plus
+curated URL finds (counts; `--urls` dumps them). `gb market new` is names in
+the current identity set that were not in the previous stamps. `deploy --apply`
+creates each named Bot via CreateGrokBotAgentFromTemplate + Update. `gb swarm
+founder-operator` plans that pack's Bot list. `gb stack` reprints the plugin
+catalog total from the newest market snapshot, lists attachable skills, and
+runs `gb x` methods ranked by distinct authors. This path never redirects to
+`gb role "first hour"`.
 
 **Here for Galaxy week (Sept 15-17)?** Find your session in
 [GALAXY.md](GALAXY.md) and paste that row's Bot.
@@ -24,14 +27,14 @@ distinct authors. This path never redirects to `gb role "first hour"`.
 
 Two things you will actually do in the next five minutes:
 
-1. get the CLI, and scan the live marketplace
+1. get the CLI, and scan official listings + the public corpus + URL finds
 2. deploy the Bots you name, or swarm one persona, then read the stack
 
 ### Honest limits
 
-Marketplace rows today often lack `share_id`. One-click deploy is blocked until
-the scan carries it. Plugin install is still human: Settings → Plugins. There
-is no install RPC.
+Official marketplace rows often lack `share_id`. One-click deploy is blocked
+until the scan carries it. Plugin install is still human: Settings → Plugins.
+There is no install RPC. usecases/ is a public-source refresh a clone can run.
 
 `gb` does not drive the Grok Bot app, cannot sign in, and never asks for a credential.
 There is no connector-install call — connectors are installed in the app. What it CAN do,
@@ -126,7 +129,7 @@ strips every escape.
 Then the four-command first hour:
 
 ```sh
-gb market refresh
+gb market refresh --corpus
 gb market bots
 gb templates deploy <id> --apply
 gb swarm founder-operator
