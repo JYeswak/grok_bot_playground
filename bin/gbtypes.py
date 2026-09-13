@@ -76,10 +76,12 @@ import contextlib
 import dataclasses
 import enum
 import errno
+import hashlib
 import json
 import os
 import pathlib
 import selectors
+import shutil
 import signal
 import subprocess
 import sys
@@ -106,6 +108,10 @@ __all__ = [
     "Severity",
     "Verdict",
     "Cell",
+    "FileSnapshot",
+    "CallState",
+    "CallBudgetLedger",
+    "validate_call_budget",
     "CheckResult",
     "Coverage",
     "Proc",
@@ -123,6 +129,8 @@ __all__ = [
     "atomic_write_text",
     "atomic_write_bytes",
     "atomic_write_json",
+    "durable_remove",
+    "durable_transition",
     "cancel_scope",
     "main",
     "MAX_FILE_BYTES",
@@ -203,6 +211,367 @@ class Cell(str, enum.Enum):
     BLOCKED = "BLOCKED"
 
 
+class CallState(str, enum.Enum):
+    """One specialty source's terminal measurement state.
+
+    EMPTY means the source answered successfully with zero matching rows. Every state
+    below EMPTY means the source was not measured and therefore cannot promote readiness.
+    """
+
+    PENDING = "PENDING"
+    ATTEMPTED = "ATTEMPTED"
+    MEASURED = "MEASURED"
+    EMPTY = "EMPTY"
+    UNREACHABLE = "UNREACHABLE"
+    FAILED = "FAILED"
+    BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED"
+    SOURCE_CAP_EXHAUSTED = "SOURCE_CAP_EXHAUSTED"
+    SKIPPED = "SKIPPED"
+
+
+_SUCCESSFUL_CALL_STATES = frozenset((CallState.MEASURED, CallState.EMPTY))
+_FAILED_CALL_STATES = frozenset((CallState.UNREACHABLE, CallState.FAILED))
+
+
+@dataclasses.dataclass
+class CallBudgetLedger:
+    """One aggregate live-call ceiling shared by an ordered set of sources.
+
+    Allocation is just-in-time and deterministic: sources run in source_order;
+    each checks cache before asking for a slot; a cache hit costs zero; every
+    upstream attempt is charged before I/O starts. A later source can use a slot
+    that an earlier cache hit did not spend, without exceeding either ceiling.
+    """
+
+    requested: int
+    ceiling: int
+    planned: int
+    source_ceilings: Mapping[str, int]
+    source_order: Sequence[str]
+    correlation_id: str
+    clock: Callable[[], float] = time.monotonic
+    _spent: int = dataclasses.field(init=False, default=0, repr=False)
+    _started_at: float = dataclasses.field(init=False, repr=False)
+    _sources: Dict[str, Dict[str, Any]] = dataclasses.field(
+        init=False, default_factory=dict, repr=False
+    )
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("requested", self.requested),
+            ("ceiling", self.ceiling),
+            ("planned", self.planned),
+        ):
+            if type(value) is not int or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer")
+        if self.ceiling > self.requested or self.planned > self.ceiling:
+            raise ValueError("budget must satisfy planned <= ceiling <= requested")
+        order = tuple(self.source_order)
+        if len(order) != len(set(order)):
+            raise ValueError("source_order must not contain duplicates")
+        unknown = [source for source in order if source not in self.source_ceilings]
+        if unknown:
+            raise ValueError(f"source ceilings absent for: {', '.join(unknown)}")
+        self.source_order = order
+        self.source_ceilings = {
+            source: self.source_ceilings[source] for source in order
+        }
+        self._started_at = self.clock()
+        for source, cap in self.source_ceilings.items():
+            if type(cap) is not int or cap < 0:
+                raise ValueError(f"source ceiling for {source} must be non-negative")
+            self._sources[source] = {
+                "ceiling": cap,
+                "attempted": 0,
+                "succeeded": 0,
+                "failed": 0,
+                "skipped": 0,
+                "cache_decision": "NOT_CHECKED",
+                "state": CallState.PENDING.value,
+                "request_ids": [],
+                "rows": 0,
+                "error": None,
+                "elapsed_ms": 0.0,
+                "started_at": None,
+            }
+
+    @property
+    def spent(self) -> int:
+        return self._spent
+
+    @property
+    def remaining(self) -> int:
+        return self.planned - self._spent
+
+    def _source(self, source: str) -> Dict[str, Any]:
+        try:
+            return self._sources[source]
+        except KeyError as exc:
+            raise ValueError(f"source {source!r} is not in this budget") from exc
+
+    def cache_decision(self, source: str, *, hit: bool) -> None:
+        row = self._source(source)
+        if row["cache_decision"] != "NOT_CHECKED":
+            raise ValueError(f"cache decision already recorded for {source}")
+        if row["state"] != CallState.PENDING.value:
+            raise ValueError(f"cache decision for {source} came after work started")
+        row["cache_decision"] = "HIT" if hit else "MISS"
+
+    def _skip(self, source: str, state: CallState, error: str) -> None:
+        row = self._source(source)
+        row["state"] = state.value
+        row["skipped"] += 1
+        row["error"] = error
+
+    def skip(self, source: str, *, reason: str) -> None:
+        """Record a policy skip such as sweep depth. It is not budget exhaustion."""
+        row = self._source(source)
+        if row["state"] != CallState.PENDING.value:
+            raise ValueError(f"source {source} already left PENDING")
+        self._skip(source, CallState.SKIPPED, reason)
+
+    def attempt(self, source: str) -> Optional[str]:
+        """Charge before I/O and return a deterministic request id, or record exhaustion."""
+        row = self._source(source)
+        if row["cache_decision"] != "MISS":
+            raise ValueError(
+                f"source {source} must record a cache miss before live I/O"
+            )
+        if row["state"] != CallState.PENDING.value:
+            raise ValueError(f"source {source} already left PENDING")
+        if row["attempted"] >= row["ceiling"]:
+            self._skip(
+                source, CallState.SOURCE_CAP_EXHAUSTED, "per-source ceiling exhausted"
+            )
+            return None
+        if self.remaining <= 0:
+            self._skip(source, CallState.BUDGET_EXHAUSTED, "aggregate budget exhausted")
+            return None
+        row["attempted"] += 1
+        self._spent += 1
+        request_id = f"{self.correlation_id}:{source}:{row['attempted']}"
+        row["request_ids"].append(request_id)
+        row["state"] = CallState.ATTEMPTED.value
+        row["started_at"] = self.clock()
+        return request_id
+
+    def complete(
+        self,
+        source: str,
+        state: CallState,
+        *,
+        rows: int = 0,
+        error: Optional[str] = None,
+    ) -> None:
+        """Close one source. Cache hits may complete without a charged attempt."""
+        if state not in _SUCCESSFUL_CALL_STATES | _FAILED_CALL_STATES:
+            raise ValueError(f"{state.value} is not a completion state")
+        row = self._source(source)
+        cache_hit = row["cache_decision"] == "HIT"
+        if row["state"] != CallState.ATTEMPTED.value and not (
+            cache_hit and row["state"] == CallState.PENDING.value
+        ):
+            raise ValueError(f"source {source} has no open attempt or cache hit")
+        if type(rows) is not int or rows < 0:
+            raise ValueError("rows must be a non-negative integer")
+        row["state"] = state.value
+        row["rows"] = rows
+        row["error"] = error
+        if state in _SUCCESSFUL_CALL_STATES:
+            row["succeeded"] += 1
+        else:
+            row["failed"] += 1
+        started = row["started_at"]
+        row["elapsed_ms"] = (
+            0.0
+            if started is None
+            else round(max(0.0, self.clock() - started) * 1000, 3)
+        )
+        row["started_at"] = None
+
+    def snapshot(self) -> Dict[str, Any]:
+        sources: Dict[str, Any] = {}
+        for source in self.source_order:
+            row = self._sources[source]
+            attempted = row["attempted"]
+            sources[source] = {
+                "ceiling": row["ceiling"],
+                "planned": attempted,
+                "spent": attempted,
+                "remaining": min(max(0, row["ceiling"] - attempted), self.remaining),
+                **{
+                    key: value
+                    for key, value in row.items()
+                    if key not in ("ceiling", "started_at")
+                },
+            }
+        payload: Dict[str, Any] = {
+            "policy": "requested-source-order; cache-before-budget; charge-before-io",
+            "correlation_id": self.correlation_id,
+            "source_order": list(self.source_order),
+            "aggregate": {
+                "requested": self.requested,
+                "ceiling": self.ceiling,
+                "planned": self.planned,
+                "spent": self.spent,
+                "remaining": self.remaining,
+                "elapsed_ms": round(
+                    max(0.0, self.clock() - self._started_at) * 1000, 3
+                ),
+            },
+            "sources": sources,
+        }
+        errors = validate_call_budget(payload)
+        payload["valid"] = not errors
+        payload["errors"] = list(errors)
+        return payload
+
+
+def validate_call_budget(payload: Any) -> Tuple[str, ...]:
+    """Validate receipt accounting without trusting its self-declared valid bit."""
+    errors: list[str] = []
+    if not isinstance(payload, Mapping):
+        return ("budget accounting absent or not an object",)
+    policy = payload.get("policy")
+    if policy != "requested-source-order; cache-before-budget; charge-before-io":
+        errors.append("budget allocation policy absent or unknown")
+    correlation_id = payload.get("correlation_id")
+    if not isinstance(correlation_id, str) or not correlation_id:
+        errors.append("correlation_id absent or malformed")
+    aggregate = payload.get("aggregate")
+    sources = payload.get("sources")
+    order = payload.get("source_order")
+    if not isinstance(aggregate, Mapping):
+        errors.append("aggregate accounting absent")
+        aggregate = {}
+    if not isinstance(sources, Mapping):
+        errors.append("per-source accounting absent")
+        sources = {}
+    if not isinstance(order, list) or not all(isinstance(v, str) for v in order):
+        errors.append("source_order absent or malformed")
+        order = []
+    elif order != list(sources.keys()):
+        errors.append("source_order does not match per-source accounting order")
+
+    counts: Dict[str, int] = {}
+    for name in ("requested", "ceiling", "planned", "spent", "remaining"):
+        value = aggregate.get(name)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            errors.append(f"aggregate.{name} must be a non-negative integer")
+        else:
+            counts[name] = value
+    if len(counts) == 5:
+        if not counts["planned"] <= counts["ceiling"] <= counts["requested"]:
+            errors.append("aggregate must satisfy planned <= ceiling <= requested")
+        if counts["remaining"] != counts["planned"] - counts["spent"]:
+            errors.append("aggregate remaining != planned - spent")
+        if counts["spent"] > counts["planned"]:
+            errors.append("aggregate spent exceeds planned")
+    aggregate_elapsed = aggregate.get("elapsed_ms")
+    if (
+        not isinstance(aggregate_elapsed, (int, float))
+        or isinstance(aggregate_elapsed, bool)
+        or aggregate_elapsed < 0
+    ):
+        errors.append("aggregate.elapsed_ms must be non-negative")
+
+    attempted_total = 0
+    terminal_states = {
+        CallState.MEASURED.value: "succeeded",
+        CallState.EMPTY.value: "succeeded",
+        CallState.UNREACHABLE.value: "failed",
+        CallState.FAILED.value: "failed",
+        CallState.BUDGET_EXHAUSTED.value: "skipped",
+        CallState.SOURCE_CAP_EXHAUSTED.value: "skipped",
+        CallState.SKIPPED.value: "skipped",
+    }
+    for source in order:
+        row = sources.get(source)
+        if not isinstance(row, Mapping):
+            errors.append(f"sources.{source} accounting absent")
+            continue
+        integers: Dict[str, int] = {}
+        for name in (
+            "ceiling",
+            "planned",
+            "spent",
+            "remaining",
+            "attempted",
+            "succeeded",
+            "failed",
+            "skipped",
+            "rows",
+        ):
+            value = row.get(name)
+            if type(value) is not int or value < 0:
+                errors.append(f"sources.{source}.{name} must be a non-negative integer")
+            else:
+                integers[name] = value
+        attempted_total += integers.get("attempted", 0)
+        if {"attempted", "ceiling"} <= integers.keys() and integers[
+            "attempted"
+        ] > integers["ceiling"]:
+            errors.append(f"sources.{source} attempted exceeds ceiling")
+        if {"planned", "spent", "attempted"} <= integers.keys() and not (
+            integers["planned"] == integers["spent"] == integers["attempted"]
+        ):
+            errors.append(f"sources.{source} planned/spent/attempted disagree")
+        if {"remaining", "ceiling", "spent"} <= integers.keys() and (
+            integers["remaining"] > integers["ceiling"] - integers["spent"]
+        ):
+            errors.append(f"sources.{source} remaining exceeds available ceiling")
+        if "remaining" in counts and integers.get("remaining", 0) > counts["remaining"]:
+            errors.append(f"sources.{source} remaining exceeds aggregate remaining")
+        state = row.get("state")
+        counter = terminal_states.get(state) if isinstance(state, str) else None
+        if counter is None:
+            errors.append(f"sources.{source} has non-terminal state {state!r}")
+        elif integers.get(counter) != 1:
+            errors.append(f"sources.{source} state {state} disagrees with {counter}")
+        if all(k in integers for k in ("succeeded", "failed", "skipped")) and (
+            integers["succeeded"] + integers["failed"] + integers["skipped"] != 1
+        ):
+            errors.append(f"sources.{source} must have exactly one terminal outcome")
+        cache = row.get("cache_decision")
+        if cache not in ("HIT", "MISS", "NOT_CHECKED"):
+            errors.append(f"sources.{source} cache_decision malformed")
+        if cache == "HIT" and integers.get("attempted") != 0:
+            errors.append(f"sources.{source} cache hit was charged")
+        if (
+            cache == "MISS"
+            and state
+            in (
+                CallState.MEASURED.value,
+                CallState.EMPTY.value,
+                CallState.UNREACHABLE.value,
+                CallState.FAILED.value,
+            )
+            and integers.get("attempted") != 1
+        ):
+            errors.append(f"sources.{source} cache miss completion lacks one attempt")
+        request_ids = row.get("request_ids")
+        if not isinstance(request_ids, list) or len(request_ids) != integers.get(
+            "attempted", 0
+        ):
+            errors.append(f"sources.{source} request ids disagree with attempted")
+        elapsed = row.get("elapsed_ms")
+        if (
+            not isinstance(elapsed, (int, float))
+            or isinstance(elapsed, bool)
+            or elapsed < 0
+        ):
+            errors.append(f"sources.{source}.elapsed_ms must be non-negative")
+        if isinstance(request_ids, list) and any(
+            not isinstance(request_id, str)
+            or not request_id.startswith(f"{correlation_id}:{source}:")
+            for request_id in request_ids
+        ):
+            errors.append(f"sources.{source} request ids do not match correlation id")
+    if "spent" in counts and attempted_total != counts["spent"]:
+        errors.append("aggregate spent != sum of per-source attempted")
+    return tuple(errors)
+
+
 @dataclasses.dataclass(frozen=True)
 class CheckResult:
     """One gate check's outcome.
@@ -265,6 +634,58 @@ class Coverage:
             "gate": self.gate,
             "artifact": self.artifact,
         }
+
+
+@dataclasses.dataclass(frozen=True)
+class FileSnapshot:
+    """Exact, bounded file state that can be restored after a failed transaction.
+
+    Existence is separate from the body because an absent file and a present empty file are
+    different registry states. The digest lets journals identify the prior state without ever
+    emitting the device-private contents.
+    """
+
+    path: pathlib.Path
+    existed: bool
+    body: bytes
+    digest: str
+
+    @classmethod
+    def capture(
+        cls, path: pathlib.Path, *, max_bytes: int = MAX_FILE_BYTES
+    ) -> "FileSnapshot":
+        try:
+            size = path.stat().st_size
+        except FileNotFoundError:
+            return cls(path=path, existed=False, body=b"", digest="absent")
+        except OSError as exc:
+            raise ValueError(f"cannot snapshot {path}: {exc}") from exc
+        if not path.is_file():
+            raise ValueError(f"cannot snapshot {path}: it is not a regular file")
+        if size > max_bytes:
+            raise ValueError(
+                f"{path} is {size} bytes, over the {max_bytes}-byte snapshot cap"
+            )
+        try:
+            with path.open("rb") as fh:
+                body = fh.read(max_bytes + 1)
+        except OSError as exc:
+            raise ValueError(f"cannot snapshot {path}: {exc}") from exc
+        if len(body) > max_bytes:
+            raise ValueError(f"{path} grew beyond the {max_bytes}-byte snapshot cap")
+        return cls(
+            path=path,
+            existed=True,
+            body=body,
+            digest=hashlib.sha256(body).hexdigest(),
+        )
+
+    def restore(self) -> bool:
+        """Restore these exact bytes, or restore absence; return whether a write occurred."""
+        if self.existed:
+            atomic_write_bytes(self.path, self.body)
+            return True
+        return durable_remove(self.path)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -643,6 +1064,22 @@ def _uninterruptible() -> Iterator[None]:
         mask(signal.SIG_SETMASK, previous)
 
 
+@contextlib.contextmanager
+def durable_transition() -> Iterator[None]:
+    """Finish one remote mutation and its recovery receipt before honoring cancellation.
+
+    Once a request may have reached the server, its result must be journaled before a signal
+    can unwind the caller. Producers persist the intent first, then use this scope for the
+    request plus the post-write atomic manifest update. A pending signal is delayed, never
+    discarded, and is delivered at the first safe checkpoint after the receipt is durable.
+
+    This exports the invariant rather than the POSIX mechanism: a Rust port maps the scope to a
+    synchronous commit obligation, not to signal masking.
+    """
+    with _uninterruptible():
+        yield
+
+
 # ---------------------------------------------------------------------------------------------
 # Atomic writes — the cancel-correctness primitive
 # ---------------------------------------------------------------------------------------------
@@ -680,6 +1117,14 @@ def _atomic_write(path: pathlib.Path, data: Any, *, binary: bool) -> None:
                 os.fsync(fh.fileno())
             os.replace(tmp_name, str(path))
             tmp_name = ""
+            # fsyncing the file makes its CONTENT durable; fsyncing the directory makes the
+            # rename that publishes it durable. A recovery manifest whose new inode vanishes
+            # after a power loss is not a recovery manifest.
+            dir_fd = os.open(str(path.parent), os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
         finally:
             if fd is not None:
                 os.close(fd)
@@ -688,6 +1133,28 @@ def _atomic_write(path: pathlib.Path, data: Any, *, binary: bool) -> None:
                     os.unlink(tmp_name)
                 except OSError:
                     pass
+
+
+def durable_remove(path: pathlib.Path) -> bool:
+    """Remove one transaction-owned path and fsync its parent; absence is idempotent.
+
+    The caller must name an exact path it created. This primitive deliberately does not discover
+    candidates or accept globs: recovery may compensate its own writes, never somebody else's.
+    """
+    with _uninterruptible():
+        try:
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+        except FileNotFoundError:
+            return False
+        dir_fd = os.open(str(path.parent), os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    return True
 
 
 def atomic_write_text(path: pathlib.Path, body: str) -> None:

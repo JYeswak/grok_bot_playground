@@ -33,19 +33,21 @@ LOG_DIR="$ROOT/state"
 LOG="$LOG_DIR/daily.log"
 FETCH=1
 AS_JSON=0
+FULL_ROWS=0
 KINDS=()
 
 usage() {
   cat <<'USAGE'
 gb-daily.sh — the daily tick: collect → ingest → compact → diff
-
   --no-fetch      skip the network producers; ingest and diff what is already on disk
   --kind ROOT     only diff this producer root (repeatable; default: all with 2+ snapshots)
   --json          machine-readable envelope on stdout
+  --full          include every added/changed row (default caps each rows array at 20;
+                  counts are always full — a capped array never hides a number)
   -h, --help      this
 
 Producers run in sequence and a failure NEVER aborts the tick: a refusing source is recorded
-and the remaining producers still run. A tick that collects 4 of 5 sources is worth more than
+and the remaining producers still run. A tick that collects 5 of 6 sources is worth more than
 a tick that dies on the first 403.
 USAGE
 }
@@ -53,6 +55,7 @@ USAGE
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-fetch) FETCH=0; shift ;;
+    --full) FULL_ROWS=1; shift ;;
     --kind) KINDS+=("$2"); shift 2 ;;
     --json) AS_JSON=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -100,8 +103,8 @@ INGEST_RC=$?
 COMPACT_JSON="$("$PY" "$BIN/gb-store.py" compact --json 2>>"$LOG")"
 COMPACT_RC=$?
 
-if [ "$INGEST_RC" != 0 ]; then
-  printf 'gb-daily: the store could not be written — UNMEASURED, not "nothing new"\n' >&2
+if [ "$INGEST_RC" != 0 ] || [ "$COMPACT_RC" != 0 ]; then
+  printf 'gb-daily: the store could not be updated — UNMEASURED, not "nothing new"\n' >&2
   exit 3
 fi
 
@@ -109,7 +112,7 @@ fi
 # The point of the whole tick. A root with one snapshot reports INSUFFICIENT rather than zero:
 # "we have not measured twice yet" and "nothing changed" are different answers.
 if [ "${#KINDS[@]}" -eq 0 ]; then
-  KINDS=(sources github feeds x links usecases market)
+  KINDS=(sources github feeds grokbotdev x links usecases market)
 fi
 
 DIFFS="["
@@ -124,11 +127,9 @@ except Exception:
     print("null")')"
   SEP=","
 done
-DIFFS="$DIFFS]"
-
-# --- report ------------------------------------------------------------------------------------
 export GB_STAMP="$STAMP" GB_RESULTS="${RESULTS[*]}" GB_DIFFS="$DIFFS"
-export GB_INGEST="$INGEST_JSON" GB_COMPACT="$COMPACT_JSON" GB_ASJSON="$AS_JSON"
+export GB_INGEST="$INGEST_JSON" GB_COMPACT="$COMPACT_JSON" GB_ASJSON="$AS_JSON" GB_FULL="$FULL_ROWS"
+export GB_CAP=20
 "$PY" - <<'REPORT'
 import json, os, sys
 
@@ -146,6 +147,16 @@ def load(name, default):
 ingest = load("GB_INGEST", {}).get("result", {})
 compact = load("GB_COMPACT", {}).get("result", {})
 diffs = [d for d in load("GB_DIFFS", []) if isinstance(d, dict)]
+full = os.environ.get("GB_FULL") == "1"
+cap = int(os.environ.get("GB_CAP") or 20)
+truncated = False
+if not full:
+    for d in diffs:
+        for key in ("added_rows", "changed_rows"):
+            rows = d.get(key)
+            if isinstance(rows, list) and len(rows) > cap:
+                d[key] = rows[:cap]
+                truncated = True
 producers = []
 for chunk in (os.environ.get("GB_RESULTS") or "").split():
     parts = chunk.split(":")
@@ -158,15 +169,8 @@ refused = [p for p in producers if p["rc"] not in ("0", "skipped", "absent")]
 
 payload = {
     "schema": "gb-daily/1",
-    "stamp": stamp,
-    "producers": producers,
-    "ingest": {
-        "files": ingest.get("files_ingested"),
-        "unique_rows": ingest.get("unique_rows"),
-        "dedup_ratio": ingest.get("dedup_ratio"),
-    },
-    "compact": {"reclaimed_pct": compact.get("reclaimed_pct"), "verified": compact.get("verified")},
     "diffs": diffs,
+    "rows_truncated": truncated,
     "summary": {
         "roots_changed": len(changed),
         "roots_unmeasured": len(insufficient),

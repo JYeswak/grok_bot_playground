@@ -1,0 +1,21 @@
+{
+ "schema": "gb-grokbotdev/1",
+ "epistemic": "community-claim",
+ "captured_at": "2026-09-11T06:00:00Z",
+ "count": 1,
+ "rows": [
+  {
+   "id": "fixture-0",
+   "type": "template",
+   "slug": "fixture-0",
+   "headline": "Fixture 0",
+   "added_at": "2026-09-11T00:00:00.000Z"
+  }
+ ],
+ "transport": "json",
+ "mcp": {
+  "advertised": true,
+  "used": false,
+  "refused": "NE-25 mcp.grokbot.dev NXDOMAIN; JSON/RSS only"
+ }
+}

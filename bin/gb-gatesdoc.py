@@ -3,11 +3,10 @@
 
 TWO halves, both mechanical, both fail-closed.
 
-1. NORMATIVE — GATES.md against bin/gb-surface-gate.py, by import:
-   a. every `gNN-...` id in the doc's Check column equals CHECKS (no missing, no extra)
-   b. the "**N checks**" claim equals len(CHECKS)
-   c. the "**N fixtures**" claim equals len(FIXTURE_EXPECT)
-   d. the "Version `x.y.z`" claim equals VERSION
+1. NORMATIVE — AGENTS.md, GATES.md, and SCRIPTS.md against the one count tuple emitted by
+   bin/gb-surface-gate.py --counts, plus GATES.md's version and Check-column ids. Each document
+   must carry exactly one well-formed tuple; every field, the verdict-split arithmetic, and the
+   mutation-coverage bound are checked.
 
 2. SELF-DESCRIPTION — every human-facing doc the EXPORTER publishes at the root of the
    public tree, against the LIVE runner, by subprocess. Which docs travel is read out of
@@ -16,8 +15,8 @@ TWO halves, both mechanical, both fail-closed.
    MEASURED, never hardcoded here:
 
      verbs      len(json(`gb capabilities --json`)["commands"])
-     checks     len(json(`gb-surface-gate.py --json`)["checks"])
-     fixtures   the denominator of `gb-surface-gate.py --selftest`'s "N/M fixtures"
+     checks     json(`gb-surface-gate.py --counts --json`)["checks"]
+     fixtures   json(`gb-surface-gate.py --counts --json`)["fixtures"]
      templates  json(`gb-templates.py stats --json`)["ours"]["templates"]
      producers  len(json(`gb info`)["producers"])
 
@@ -48,9 +47,9 @@ not a count mismatch.
 `--json` prints a `gb-gatesdoc/1` envelope — the same verdict, plus the measured totals it
 judged against, so a reader never has to re-derive them.
 
-`--selftest` runs the self-description rule against inline known-good and known-bad
-fixtures with SYNTHETIC measurements: it proves the RULE fires and abstains correctly,
-offline and in milliseconds. The measurement path is proven by running the checker itself.
+`--selftest` runs both the self-description rule and the per-document normative matrix against
+inline known-good and known-bad fixtures with SYNTHETIC measurements. It proves current, stale,
+malformed, arithmetic, missing-document, and extra-count cases offline.
 """
 
 from __future__ import annotations
@@ -106,10 +105,10 @@ def load_gate() -> ModuleType:
 
 
 def normative_problems(text: str, gate: ModuleType) -> Tuple[List[str], List[str], str]:
-    """(problems, check ids, version). The original check, unchanged in behavior."""
+    """Check GATES.md's ids and version; the count tuple is checked for all normative docs."""
     problems: List[str] = []
 
-    doc_ids = re.findall(r"^\| `(g\d+-[a-z0-9-]+)` \|", text, re.M)
+    doc_ids = re.findall(r"^\| \x60(g\d+-[a-z0-9-]+)\x60 \|", text, re.M)
     code_ids: List[str] = list(gate.CHECKS)
     if sorted(set(doc_ids)) != sorted(code_ids):
         problems.append(
@@ -122,20 +121,10 @@ def normative_problems(text: str, gate: ModuleType) -> Tuple[List[str], List[str
     if len(doc_ids) != len(set(doc_ids)):
         problems.append("doc Check column holds duplicate ids")
 
-    for label, pattern, actual in (
-        ("checks", r"\*\*(\d+) checks\*\*", len(code_ids)),
-        ("fixtures", r"\*\*(\d+) fixtures\*\*", len(gate.FIXTURE_EXPECT)),
-    ):
-        m = re.search(pattern, text)
-        if not m:
-            problems.append(f"doc states no **N {label}** count to check against")
-        elif int(m.group(1)) != actual:
-            problems.append(f"doc claims {m.group(1)} {label}, producer has {actual}")
-
     version = str(gate.VERSION)
-    m = re.search(r"Version `([\d.]+)`", text)
+    m = re.search(r"Version \x60([\d.]+)\x60", text)
     if not m:
-        problems.append("doc states no Version `x.y.z` to check against")
+        problems.append("doc states no Version x.y.z to check against")
     elif m.group(1) != version:
         problems.append(f"doc claims {m.group(1)}, producer is {version}")
 
@@ -164,6 +153,165 @@ def normative_problems(text: str, gate: ModuleType) -> Tuple[List[str], List[str
 # also asserted "routines cannot [be created programmatically]", which is the single sentence
 # that guarantees nobody builds the capability — and nobody did, for a day.
 UNSHIPPED_ENFORCED: Tuple[Tuple[str, str], ...] = (("AGENTS.md", "AGENTS.md"),)
+
+NORMATIVE_DOCS: Tuple[str, ...] = ("AGENTS.md", "GATES.md", "SCRIPTS.md")
+COUNT_PREFIX = "Gate count tuple (producer:"
+COUNT_PATTERN = re.compile(
+    r"^Gate count tuple \(producer: \x60bin/gb-surface-gate\.py --counts\x60\): "
+    r"\x60checks=(?P<checks>\d+) fixtures=(?P<fixtures>\d+) "
+    r"GREEN=(?P<GREEN>\d+) RED=(?P<RED>\d+) ERROR=(?P<ERROR>\d+) "
+    r"mutation-covered=(?P<mutation_covered>\d+)\x60\.$",
+    re.M,
+)
+COUNT_RECOVERY_ARGV = ["bin/gb-surface-gate.py", "--counts"]
+
+
+def count_fields(contract: Dict[str, object]) -> Dict[str, int]:
+    split = contract.get("verdict_split")
+    if not isinstance(split, dict):
+        raise ValueError("producer tuple has no verdict_split object")
+    fields = {
+        "checks": contract.get("checks"),
+        "fixtures": contract.get("fixtures"),
+        "GREEN": split.get("GREEN"),
+        "RED": split.get("RED"),
+        "ERROR": split.get("ERROR"),
+        "mutation_covered": contract.get("mutation_covered"),
+    }
+    if any(not isinstance(value, int) or value < 0 for value in fields.values()):
+        raise ValueError("producer tuple fields must be non-negative integers")
+    typed = {key: int(value) for key, value in fields.items()}
+    if typed["GREEN"] + typed["RED"] + typed["ERROR"] != typed["fixtures"]:
+        raise ValueError("producer verdict split does not equal fixture total")
+    if typed["mutation_covered"] > typed["checks"]:
+        raise ValueError("producer mutation-covered count exceeds enabled checks")
+    return typed
+
+
+def count_tuple_text(contract: Dict[str, object]) -> str:
+    fields = count_fields(contract)
+    tick = chr(96)
+    return (
+        f"Gate count tuple (producer: {tick}bin/gb-surface-gate.py --counts{tick}): "
+        f"{tick}checks={fields['checks']} fixtures={fields['fixtures']} "
+        f"GREEN={fields['GREEN']} RED={fields['RED']} ERROR={fields['ERROR']} "
+        f"mutation-covered={fields['mutation_covered']}{tick}."
+    )
+
+
+def normative_count_problems(
+    documents: Dict[str, Optional[str]],
+    contract: Dict[str, object],
+    fixture_id: str = "in-tree",
+) -> Tuple[List[str], List[Dict[str, object]]]:
+    """Require one exact producer tuple in each normative document."""
+    expected = count_fields(contract)
+    problems: List[str] = []
+    records: List[Dict[str, object]] = []
+
+    def record(
+        document: str,
+        claim_id: str,
+        observed: object,
+        wanted: object,
+        verdict: str,
+        started: float,
+    ) -> None:
+        records.append(
+            {
+                "producer_tuple": expected,
+                "document": document,
+                "path": document,
+                "claim_id": claim_id,
+                "expected": wanted,
+                "observed": observed,
+                "fixture_id": fixture_id,
+                "verdict": verdict,
+                "recovery_argv": COUNT_RECOVERY_ARGV,
+                "exit": 0 if verdict == "GREEN" else 1,
+                "timing_ms": round(
+                    (datetime.datetime.now().timestamp() - started) * 1000, 3
+                ),
+            }
+        )
+
+    for document in NORMATIVE_DOCS:
+        started = datetime.datetime.now().timestamp()
+        text = documents.get(document)
+        if text is None:
+            problems.append(f"{document}: normative document is missing")
+            record(document, "document-present", None, "present", "RED", started)
+            continue
+        candidates = [line for line in text.splitlines() if COUNT_PREFIX in line]
+        matches = list(COUNT_PATTERN.finditer(text))
+        if not candidates:
+            problems.append(f"{document}: missing normative gate count tuple")
+            record(
+                document,
+                "count-tuple-present",
+                None,
+                count_tuple_text(contract),
+                "RED",
+                started,
+            )
+            continue
+        if len(candidates) != 1 or len(matches) > 1:
+            problems.append(
+                f"{document}: expected one normative gate count tuple, found {len(candidates)}"
+            )
+            record(
+                document, "count-tuple-cardinality", len(candidates), 1, "RED", started
+            )
+            continue
+        if not matches:
+            problems.append(f"{document}: malformed normative gate count tuple")
+            record(
+                document,
+                "count-tuple-shape",
+                candidates[0],
+                count_tuple_text(contract),
+                "RED",
+                started,
+            )
+            continue
+
+        observed = {key: int(value) for key, value in matches[0].groupdict().items()}
+        split_sum = observed["GREEN"] + observed["RED"] + observed["ERROR"]
+        arithmetic_ok = split_sum == observed["fixtures"]
+        if not arithmetic_ok:
+            problems.append(
+                f"{document}: verdict split sums to {split_sum}, fixture total is {observed['fixtures']}"
+            )
+        record(
+            document,
+            "verdict-sum",
+            split_sum,
+            observed["fixtures"],
+            "GREEN" if arithmetic_ok else "RED",
+            started,
+        )
+        coverage_ok = observed["mutation_covered"] <= observed["checks"]
+        if not coverage_ok:
+            problems.append(
+                f"{document}: mutation-covered {observed['mutation_covered']} exceeds checks {observed['checks']}"
+            )
+        record(
+            document,
+            "mutation-bound",
+            observed["mutation_covered"],
+            f"<= {observed['checks']}",
+            "GREEN" if coverage_ok else "RED",
+            started,
+        )
+        for claim_id, wanted in expected.items():
+            got = observed[claim_id]
+            ok = got == wanted
+            if not ok:
+                problems.append(
+                    f"{document}: {claim_id} claims {got}, producer has {wanted}"
+                )
+            record(document, claim_id, got, wanted, "GREEN" if ok else "RED", started)
+    return problems, records
 
 
 def shipped_root_docs(source: str) -> List[Tuple[str, str]]:
@@ -238,14 +386,14 @@ def _templates(out: str) -> int:
     return value
 
 
-def _fixture_denominator(out: str) -> int:
-    """The M of the selftest's "N/M fixtures". The DENOMINATOR is the corpus size and is
-    what the docs describe; the numerator is how many passed on this machine today, which
-    is the gate's business and not a self-description."""
-    hits = re.findall(r"(\d+)\s*/\s*(\d+)\s+fixtures", out)
-    if not hits:
-        raise MeasureError("selftest printed no `N/M fixtures` line")
-    return int(hits[-1][1])
+def _int_of(key: str) -> Callable[[str], int]:
+    def extract(out: str) -> int:
+        value = _json_obj(out).get(key)
+        if not isinstance(value, int):
+            raise MeasureError(f"envelope has no `{key}` integer")
+        return value
+
+    return extract
 
 
 @dataclasses.dataclass(frozen=True)
@@ -261,16 +409,23 @@ class Probe:
 # checker that can be ignored.
 PROBES: Tuple[Probe, ...] = (
     Probe("verbs", ("bin/gb", "capabilities", "--json"), 120.0, _len_of("commands")),
-    Probe("checks", ("bin/gb-surface-gate.py", "--json"), 300.0, _len_of("checks")),
+    Probe(
+        "checks",
+        ("bin/gb-surface-gate.py", "--counts", "--json"),
+        300.0,
+        _int_of("checks"),
+    ),
     Probe(
         "fixtures",
-        ("bin/gb-surface-gate.py", "--selftest"),
+        ("bin/gb-surface-gate.py", "--counts", "--json"),
         300.0,
-        _fixture_denominator,
+        _int_of("fixtures"),
     ),
     Probe("templates", ("bin/gb-templates.py", "stats", "--json"), 120.0, _templates),
     Probe("producers", ("bin/gb", "info"), 120.0, _len_of("producers")),
 )
+
+_PROBE_CACHE: Dict[Tuple[str, ...], subprocess.CompletedProcess[str]] = {}
 
 
 def measure(metric: str) -> int:
@@ -283,22 +438,26 @@ def measure(metric: str) -> int:
     if not path.is_file():
         raise MeasureError(f"{probe.argv[0]} absent")
     argv = [sys.executable, str(path), *probe.argv[1:]]
+    proc = _PROBE_CACHE.get(probe.argv)
+    if proc is None:
+        try:
+            proc = subprocess.run(
+                argv,
+                cwd=str(ROOT),
+                capture_output=True,
+                text=True,
+                timeout=probe.timeout,
+            )
+        except subprocess.TimeoutExpired:
+            raise MeasureError(
+                f"`{' '.join(probe.argv)}` exceeded {probe.timeout:.0f}s"
+            )
+        except OSError as exc:
+            raise MeasureError(f"`{' '.join(probe.argv)}` did not start: {exc}")
+        _PROBE_CACHE[probe.argv] = proc
     try:
-        proc = subprocess.run(
-            argv,
-            cwd=str(ROOT),
-            capture_output=True,
-            text=True,
-            timeout=probe.timeout,
-        )
-    except subprocess.TimeoutExpired:
-        raise MeasureError(f"`{' '.join(probe.argv)}` exceeded {probe.timeout:.0f}s")
-    except OSError as exc:
-        raise MeasureError(f"`{' '.join(probe.argv)}` did not start: {exc}")
-    try:
-        # The exit code is deliberately not consulted: `--selftest` exits 1 when a fixture
-        # fails, and the corpus SIZE is still the truth about what the docs describe. An
-        # unparseable stream is the real failure, and it is reported with the code.
+        if proc.returncode != 0:
+            raise MeasureError("producer returned nonzero")
         return probe.extract(proc.stdout)
     except (MeasureError, ValueError, KeyError) as exc:
         tail = (proc.stderr or proc.stdout or "").strip().splitlines()
@@ -704,9 +863,72 @@ def _blind_measurer(metric: str) -> int:
     raise MeasureError(f"`{metric}` producer did not answer")
 
 
-def selftest() -> int:
+COUNT_FIXTURE_CONTRACT: Dict[str, object] = {
+    "checks": 30,
+    "fixtures": 66,
+    "verdict_split": {"GREEN": 5, "RED": 47, "ERROR": 14},
+    "mutation_covered": 30,
+}
+
+
+@dataclasses.dataclass(frozen=True)
+class NormativeFixture:
+    document: str
+    case: str
+
+    @property
+    def name(self) -> str:
+        return f"normative-{self.document.lower().replace('.', '-')}-{self.case}"
+
+
+NORMATIVE_FIXTURES: Tuple[NormativeFixture, ...] = tuple(
+    NormativeFixture(document, case)
+    for document in NORMATIVE_DOCS
+    for case in (
+        "current",
+        "stale-checks",
+        "stale-fixtures",
+        "stale-verdict-split",
+        "stale-mutation-coverage",
+        "malformed",
+        "arithmetic-mismatch",
+        "missing-document",
+        "extra-normative-count",
+    )
+)
+
+
+def normative_fixture_docs(fixture: NormativeFixture) -> Dict[str, Optional[str]]:
+    current = count_tuple_text(COUNT_FIXTURE_CONTRACT)
+    docs: Dict[str, Optional[str]] = {document: current for document in NORMATIVE_DOCS}
+    if fixture.case == "stale-checks":
+        docs[fixture.document] = current.replace("checks=30", "checks=29")
+    elif fixture.case == "stale-fixtures":
+        docs[fixture.document] = current.replace("fixtures=66", "fixtures=67").replace(
+            "ERROR=14", "ERROR=15"
+        )
+    elif fixture.case == "stale-verdict-split":
+        docs[fixture.document] = current.replace("GREEN=5 RED=47", "GREEN=4 RED=48")
+    elif fixture.case == "stale-mutation-coverage":
+        docs[fixture.document] = current.replace(
+            "mutation-covered=30", "mutation-covered=29"
+        )
+    elif fixture.case == "malformed":
+        docs[fixture.document] = "Gate count tuple (producer: malformed): malformed."
+    elif fixture.case == "arithmetic-mismatch":
+        docs[fixture.document] = current.replace("fixtures=66", "fixtures=67")
+    elif fixture.case == "missing-document":
+        docs[fixture.document] = None
+    elif fixture.case == "extra-normative-count":
+        docs[fixture.document] = current + "\n" + current
+    return docs
+
+
+def selftest(as_json: bool = False) -> int:
     passed = 0
+    logs: List[Dict[str, object]] = []
     for fx in FIXTURES:
+        started = datetime.datetime.now().timestamp()
         verdict = self_description(
             [(f"{fx.name}.md", f"{fx.name}.md")],
             lambda _src, body=fx.body: body,  # type: ignore[misc]
@@ -721,22 +943,96 @@ def selftest() -> int:
         want = (fx.problems, fx.exemptions, fx.advisories)
         ok = got == want
         passed += ok
-        print(f"  [{'PASS' if ok else 'FAIL'}] {fx.name:<42} expected {want} got {got}")
-        if not ok:
-            for detail in verdict.problems + verdict.exemptions + verdict.advisories:
-                print(f"           {detail}")
+        logs.append(
+            {
+                "producer_tuple": count_fields(COUNT_FIXTURE_CONTRACT),
+                "document": f"{fx.name}.md",
+                "path": f"{fx.name}.md",
+                "claim_id": "self-description",
+                "expected": want,
+                "observed": got,
+                "fixture_id": fx.name,
+                "verdict": "GREEN" if ok else "RED",
+                "recovery_argv": ["bin/gb-gatesdoc.py", "--selftest"],
+                "exit": 0 if ok else 1,
+                "timing_ms": round(
+                    (datetime.datetime.now().timestamp() - started) * 1000, 3
+                ),
+            }
+        )
+        if not as_json:
+            print(
+                f"  [{'PASS' if ok else 'FAIL'}] {fx.name:<42} expected {want} got {got}"
+            )
+            if not ok:
+                for detail in (
+                    verdict.problems + verdict.exemptions + verdict.advisories
+                ):
+                    print(f"           {detail}")
 
-    # A suite with no known-bad is not a suite.
-    known_bad = sum(1 for f in FIXTURES if f.name.startswith("bad-"))
-    total = len(FIXTURES)
-    if known_bad < 3:
-        print(f"SELFTEST FAIL - only {known_bad} known-bad fixtures", file=sys.stderr)
-        return 1
-    if passed != total:
-        print(f"SELFTEST FAIL - {passed}/{total} fixtures", file=sys.stderr)
-        return 1
-    print(f"SELFTEST PASS - {passed}/{total} fixtures ({known_bad} known-bad)")
-    return 0
+    for fx in NORMATIVE_FIXTURES:
+        started = datetime.datetime.now().timestamp()
+        problems, _records = normative_count_problems(
+            normative_fixture_docs(fx), COUNT_FIXTURE_CONTRACT, fx.name
+        )
+        got = "RED" if problems else "GREEN"
+        want = "GREEN" if fx.case == "current" else "RED"
+        ok = got == want
+        passed += ok
+        logs.append(
+            {
+                "producer_tuple": count_fields(COUNT_FIXTURE_CONTRACT),
+                "document": fx.document,
+                "path": fx.document,
+                "claim_id": fx.case,
+                "expected": want,
+                "observed": got,
+                "fixture_id": fx.name,
+                "verdict": got,
+                "recovery_argv": COUNT_RECOVERY_ARGV,
+                "exit": 0 if got == "GREEN" else 1,
+                "timing_ms": round(
+                    (datetime.datetime.now().timestamp() - started) * 1000, 3
+                ),
+            }
+        )
+        if not as_json:
+            print(
+                f"  [{'PASS' if ok else 'FAIL'}] {fx.name:<42} expected {want} got {got}"
+            )
+            if not ok:
+                for detail in problems:
+                    print(f"           {detail}")
+
+    known_bad = sum(1 for f in FIXTURES if f.name.startswith("bad-")) + sum(
+        1 for f in NORMATIVE_FIXTURES if f.case != "current"
+    )
+    total = len(FIXTURES) + len(NORMATIVE_FIXTURES)
+    ok = known_bad >= 3 and passed == total
+    if as_json:
+        print(
+            json.dumps(
+                {
+                    "schema": "gb-gatesdoc-selftest/1",
+                    "producer_tuple": count_fields(COUNT_FIXTURE_CONTRACT),
+                    "fixtures": logs,
+                    "passed": passed,
+                    "total": total,
+                    "known_bad": known_bad,
+                    "verdict": "GREEN" if ok else "RED",
+                    "exit": 0 if ok else 1,
+                },
+                indent=1,
+            )
+        )
+    elif not ok:
+        print(
+            f"SELFTEST FAIL - {passed}/{total} fixtures ({known_bad} known-bad)",
+            file=sys.stderr,
+        )
+    else:
+        print(f"SELFTEST PASS - {passed}/{total} fixtures ({known_bad} known-bad)")
+    return 0 if ok else 1
 
 
 # ---------------------------------------------------------------------------------------------
@@ -811,10 +1107,12 @@ def main(argv: Sequence[str]) -> int:
     if "--help" in argv or "-h" in argv:
         print(__doc__)
         return 0
-    if "--selftest" in argv:
-        return selftest()
     as_json = "--json" in argv
-    unknown = [a for a in argv if a.startswith("-") and a != "--json"]
+    if "--selftest" in argv:
+        return selftest(as_json)
+    unknown = [
+        a for a in argv if a.startswith("-") and a not in ("--json", "--selftest")
+    ]
     if unknown:
         print(f"GATESDOC FAIL: unknown option {unknown[0]}", file=sys.stderr)
         return 2
@@ -827,7 +1125,16 @@ def main(argv: Sequence[str]) -> int:
     gate = load_gate()
     problems, code_ids, version = normative_problems(DOC.read_text(), gate)
     problems.extend(_manifest_url_problems())
-
+    try:
+        contract = gate.count_contract(ROOT)
+        contract_fields = count_fields(contract)
+        normative_problems_found, normative_records = normative_count_problems(
+            {document: _read(document) for document in NORMATIVE_DOCS}, contract
+        )
+        problems.extend(normative_problems_found)
+    except (RuntimeError, ValueError) as exc:
+        print(f"GATESDOC FAIL: count producer failed: {exc}", file=sys.stderr)
+        return 2
     docs = shipped_root_docs(EXPORTER.read_text())
     missing = [d for d in REQUIRED_DOCS if d not in {src for src, _ in docs}]
     if missing:
@@ -835,7 +1142,13 @@ def main(argv: Sequence[str]) -> int:
             "exporter no longer publishes %s at the root of the public tree — the "
             "self-description scan would silently shrink" % ", ".join(missing)
         )
-    verdict = self_description(docs, _read, measure)
+    verdict = self_description(
+        docs,
+        _read,
+        lambda metric: contract_fields[metric]
+        if metric in ("checks", "fixtures")
+        else measure(metric),
+    )
     problems.extend(verdict.problems)
     code = 1 if problems else 0
 
@@ -848,8 +1161,10 @@ def main(argv: Sequence[str]) -> int:
             .astimezone()
             .isoformat(timespec="seconds"),
             "gate_version": version,
-            "gate_checks": len(code_ids),
-            "gate_fixtures": len(gate.FIXTURE_EXPECT),
+            "producer_tuple": contract_fields,
+            "gate_checks": contract_fields["checks"],
+            "gate_fixtures": contract_fields["fixtures"],
+            "normative_claims": normative_records,
             "docs_scanned": [{"source": s, "published_as": d} for s, d in docs],
             "measured": verdict.measured,
             "agreed": verdict.agreed,
@@ -870,9 +1185,9 @@ def main(argv: Sequence[str]) -> int:
         for p in problems:
             print(f"GATESDOC FAIL: {p}", file=sys.stderr)
         return code
+    producer_text = gate.count_contract_text(contract)
     print(
-        f"GATESDOC PASS — {len(code_ids)} checks, "
-        f"{len(gate.FIXTURE_EXPECT)} fixtures, version {version}; "
+        f"GATESDOC PASS — {producer_text}, version {version}; "
         f"{verdict.agreed} self-described counts across {len(docs)} shipped docs agree "
         f"with the live runner "
         f"({len(verdict.exemptions)} exempt, {len(verdict.advisories)} advisory)"

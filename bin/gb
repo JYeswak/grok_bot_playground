@@ -46,9 +46,11 @@ import os
 import pathlib
 import re
 import shutil
+import shlex
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -62,7 +64,18 @@ from gblib import (  # noqa: E402
     platform_support,
     unavailable,
 )
-from gbtypes import Severity, atomic_write_json, main, read_json_capped, run  # noqa: E402
+from gbtypes import (  # noqa: E402
+    Cancelled,
+    FileSnapshot,
+    Severity,
+    atomic_write_bytes,
+    atomic_write_json,
+    durable_remove,
+    durable_transition,
+    main,
+    read_json_capped,
+    run,
+)
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BIN = ROOT / "bin"
@@ -116,20 +129,18 @@ EXIT_CODES: Dict[int, str] = {
     130: "CANCELLED — SIGINT arrived; no partial artifact was written",
 }
 
-# First-hour on-ramp. Axiom 0: a newbie who types `gb start` must not Levenshtein
-# onto `gb store`. These two commands are the copy-paste next step; keep them
-# identical everywhere they are named (bare `gb`, setup, walk, unknown verbs).
-FIRST_HOUR_WALK = "gb walk bots --paste hello-computer"
-FIRST_HOUR_SETUP = "gb setup --persona first-hour"
+# First-hour on-ramp. Every legacy navigation surface resolves to this one
+# public grammar; none owns a second paste/deploy/setup sequence.
+FIRST_HOUR_ROLE_ARGV: Tuple[str, ...] = ("gb", "role", "first hour")
+FIRST_HOUR_ROLE = (
+    subprocess.list2cmdline(list(FIRST_HOUR_ROLE_ARGV))
+    if os.name == "nt" else shlex.join(FIRST_HOUR_ROLE_ARGV)
+)
 FIRST_HOUR_GUESSES = frozenset({
     "start", "launch", "hello", "onboard", "onboarding", "init",
     "begin", "intro", "getting-started", "gettingstarted",
     "first-hour", "firsthour", "hello-computer", "hellocomputer",
 })
-# Mega-command follow-ups (Axiom 10). Same strings in `gb bootstrap` JSON + --for-agent.
-FIRST_HOUR_DEPLOY = "gb templates deploy hello-computer"
-FIRST_HOUR_VERIFY = "gb triage"
-FIRST_HOUR_PLATFORM = "gb platform --json"
 
 
 
@@ -229,19 +240,18 @@ TOPICS: Dict[str, str] = {
         "  version you run any time — it never fetches and never writes."
     ),
     "setup": (
-        "  A fresh clone has measured nothing, so `gb triage` routes to `gb setup` instead of\n"
-        "  printing one ERROR per unmeasured check. Setup runs four steps:\n\n"
-        "    preflight    python, this CLI's producers, the Grok Bot desktop app's support dir,\n"
-        "                 whether the client's keychain item EXISTS (presence only — no value is\n"
-        "                 read or printed), `cryptography`, and reachability of docs.x.ai\n"
-        "    device       register THIS machine in desktops.json, keyed on hostname so a\n"
-        "                 re-run cannot duplicate the row\n"
-        "    measure      the producers that need no prior state: the vendor surface snapshot\n"
-        "                 and the local deployment audit, then the account inventory pull\n"
-        "    verify       re-classify the root, and say whether it is CONFIGURED now\n\n"
-        "  Dry-run by default (`actual_actions: []`). `--apply` writes. If nothing can be\n"
-        "  measured here at all, `--apply` REFUSES (exit 5) rather than registering a desktop\n"
-        "  and leaving a root that only LOOKS configured.\n\n"
+        "  A fresh clone has measured nothing, so gb triage routes to gb setup instead of\n"
+        "  printing one ERROR per unmeasured check. Setup runs one journaled transaction:\n\n"
+        "    preflight    prove the interpreter, producers, app, keychain, crypto and network\n"
+        "    stage        preserve the exact prior registry and journal the proposed digest\n"
+        "    measure      run eligible first producers while desktops.json remains unchanged\n"
+        "    commit       publish the staged registry only after a new dated artifact exists\n"
+        "    verify       require artifact-backed CONFIGURED; restore on every failure\n\n"
+        "  Dry-run is the default and performs zero writes. It prints the exact registry digest\n"
+        "  delta and producer prerequisites. --apply writes an fsynced journal under state/,\n"
+        "  restores registry bytes plus transaction-created artifacts after failure or cancel,\n"
+        "  and records recovery argv. gb setup --selftest runs the same implementation\n"
+        "  against offline fake producers and known-bad timeout/interruption fixtures.\n\n"
         "  What it cannot do for you: install or sign into the Grok Bot desktop app. That is a\n"
         "  human step, and the first authenticated read also needs you to click Allow on a\n"
         "  macOS keychain prompt."
@@ -259,11 +269,12 @@ EXAMPLES = """\
   gb platform --json | jq -r .status   SUPPORTED | UNVERIFIED | UNSUPPORTED
   gb platform --selftest         resolve every planted platform under fixtures/platform/
   gb setup                       what configuring this machine would do (writes nothing)
-  gb setup --apply               register this desktop and take the first measurements
+  gb setup --apply               measure first, then commit this desktop transactionally
   gb setup --apply --device brain    name the machine yourself instead of using the hostname
-  gb bootstrap                   first-hour paste + dry-run deploy + setup + verify argv
-  gb bootstrap --json | jq -r '.commands[]'   the same four (plus platform) for a script
-  gb bootstrap --for-agent       machine contract + exact next argv, then stop
+  gb setup --selftest            offline fake-producer rollback and commit proofs
+  gb role "first hour"            canonical no-write role plan and exact next argv
+  gb role --list                  bounded persona versions and availability
+  gb bootstrap --for-agent       compatibility redirect to the same role plan
   gb triage                      what is wrong right now, and the command that fixes it
   gb triage --json | jq .red     the same answer, for a script
   gb work                        what to pick up next, and whether the ranking is trustworthy
@@ -286,20 +297,12 @@ EXAMPLES = """\
 class TriageArgs:
     """What is wrong right now, and the exact command that addresses it."""
 
+    # No choices= here on purpose: gb-triage-check.py owns the id list and its
+    # usage_error teaches (live CHECK_ORDER + try line, exit 2). An argparse
+    # wall would duplicate that list and rot beside it.
     check: Optional[str] = arg(
         default=None,
         help="one check id (e.g. g8-desktop-inventory); omit for the whole board",
-        choices=(
-            "g1-surface-fetch-integrity", "g2-surface-canary", "g3-snapshot-freshness",
-            "g4-client-update-applied", "g5-bot-charter-present", "g6-capability-delta-reviewed",
-            "g7-desktop-parity", "g8-desktop-inventory", "g9-routine-health",
-            "g10-loop-scheduled", "g11-tunable-delta-reviewed", "g12-ondemand-spend-bounded",
-            "g13-practitioner-index-reviewed", "g14-coverage-ratchet", "g15-market-delta-reviewed",
-            "g16-doc-delta-reviewed", "g17-discovery-triaged", "g18-mcp-surface-healthy",
-            "g19-fleet-earning-its-keep", "g20-context-archived", "g21-usecase-corpus-reviewed",
-            "g22-durable-io", "g23-types-ratcheted", "g24-cli-contract", "g25-routine-liveness",
-            "g26-jobs-proof-calls", "g27-surface-drift",
-        ),
         positional=True,
     )
     json: bool = arg(help="machine-readable envelope on stdout")
@@ -339,11 +342,32 @@ class SetupArgs:
     apply: bool = arg(help="actually register and measure; without this the command only plans")
     device: Optional[str] = arg(help="label for THIS machine in desktops.json (default: hostname)")
     persona: Optional[str] = arg(
-        help="persona id for the tailored setup walk; new-user pack is first-hour "
-             "(gb setup --persona first-hour; see --list-personas)",
+        help="compatibility alias for a role/persona id; delegates to gb role",
         aliases=("--personas",),
     )
-    list_personas: bool = arg(help="list the persona packs and exit (new-user pack: first-hour)")
+    list_personas: bool = arg(help="compatibility alias for gb role --list")
+    selftest: bool = arg(help="offline transactional setup proofs with fake producers")
+    json: bool = arg(help="machine-readable envelope on stdout")
+
+@dataclasses.dataclass(frozen=True)
+class RoleArgs:
+    """Turn one role phrase into a resumable, receipted Bot journey."""
+
+    role: Optional[str] = arg(
+        positional=True,
+        help='supported role phrase, e.g. "first hour"',
+    )
+    apply: bool = arg(help="apply the frozen plan named by --plan-hash")
+    plan_hash: Optional[str] = arg(help="exact hash emitted by the no-write plan")
+    status: Optional[str] = arg(help="inspect ATTEMPT_ID without mutation")
+    resume: Optional[str] = arg(help="resume ATTEMPT_ID after one human checkpoint")
+    checkpoint: Optional[str] = arg(help="exact checkpoint id returned by the attempt")
+    rollback: Optional[str] = arg(help="compensate ATTEMPT_ID and report residue")
+    list: bool = arg(help="list supported role phrases and persona versions")
+    input: Optional[str] = arg(help="first-job input artifact after human attachment")
+    attempt_id: Optional[str] = arg(help="first-job attempt id")
+    selftest: bool = arg(help="offline journey state-machine proof")
+    capabilities: bool = arg(help="machine-readable role backend contract")
     json: bool = arg(help="machine-readable envelope on stdout")
 
 
@@ -409,7 +433,7 @@ class BareArgs:
 
 @dataclasses.dataclass(frozen=True)
 class RobotDocsArgs:
-    """Agent handbook: first-hour paste, deploy, setup, and verify argv."""
+    """Agent handbook for the canonical role plan and operator surfaces."""
 
     topic: Optional[str] = arg(
         positional=True,
@@ -461,6 +485,7 @@ class TemplatesArgs:
         positional=True,
     )
     id: Optional[str] = arg(help="template id, for `show`, `deploy` and `publish`", positional=True)
+    role: Optional[str] = arg(help="delegate a human role phrase to the canonical no-write role plan")
     apply: bool = arg(help="deploy/publish: act for real (dry run without it)")
     screened: bool = arg(help="publish: a human reviewed the charter for private data")
     force: bool = arg(help="publish: allow minting drafts under an owned template (refused by default)")
@@ -471,9 +496,9 @@ class TemplatesArgs:
 
 @dataclasses.dataclass(frozen=True)
 class WalkArgs:
-    """Guided tour: walk the CLI, or walk the Bot templates this repo proposes.
+    """Guided tour, or a redirect into the canonical role plan.
 
-    First hour: gb walk bots --paste hello-computer
+    First hour: gb role "first hour"
     """
 
     track: Optional[str] = arg(
@@ -486,7 +511,7 @@ class WalkArgs:
         help="print ONLY that template's charter, ready to paste (first hour: hello-computer)"
     )
     role: Optional[str] = arg(
-        help="walk only the desk in personas/<PACK>.json (first hour: first-hour)"
+        help="delegate a human role phrase to the canonical no-write role plan"
     )
     galaxy: Optional[str] = arg(
         help="walk one livestream seat from galaxy-seats.json (founder, engineer, ...)"
@@ -497,11 +522,12 @@ class WalkArgs:
 
 @dataclasses.dataclass(frozen=True)
 class BootstrapArgs:
-    """First-hour plan: paste, dry-run deploy, persona setup, and verify argv in one call."""
+    """Compatibility on-ramp that delegates to the canonical role plan."""
 
+    role: Optional[str] = arg(help='human role phrase (default: "first hour")')
     json: bool = arg(help="machine-readable envelope on stdout")
     for_agent: bool = arg(
-        help="print the machine contract and exact next argv, then stop"
+        help="print the same canonical no-write role plan for an agent"
     )
 
 @dataclasses.dataclass(frozen=True)
@@ -596,7 +622,7 @@ class JobsArgs:
 
     action: str = arg(
         default="matrix",
-        help="matrix | next | record | coverage | prove | ingest | tick | drain",
+        help="matrix | next | record | coverage | prove | ingest | tick | drain | preregister",
         choices=(
             "matrix",
             "next",
@@ -606,19 +632,21 @@ class JobsArgs:
             "ingest",
             "tick",
             "drain",
+            "preregister",
         ),
         positional=True,
     )
     id: Optional[str] = arg(help="job id for record/prove")
     verdict: Optional[str] = arg(help="leads-only | done | blocked | skip")
     note: Optional[str] = arg(help="one-line walk receipt")
+    file: Optional[str] = arg(help="preregister: JSON plan to seal or validate")
     live: bool = arg(help="score live_agent via gb fleet roster")
     json: bool = arg(help="machine-readable envelope on stdout")
     limit: int = arg(default=109, help="drain: max ticks")
 
 @dataclasses.dataclass(frozen=True)
 class GalaxyArgs:
-    """Baseline and diff the ecosystem across the Sep 15-17 Grok Bot Galaxy livestream."""
+    """Baseline/diff the event, or delegate a role to the canonical plan."""
 
     action: str = arg(
         default="sessions",
@@ -626,6 +654,7 @@ class GalaxyArgs:
         choices=("baseline", "diff", "sessions"),
         positional=True,
     )
+    role: Optional[str] = arg(help="delegate a human role phrase to the canonical no-write role plan")
     json: bool = arg(help="machine-readable envelope on stdout")
 
 
@@ -645,12 +674,13 @@ class FleetArgs:
         positional=True,
     )
     bot: Optional[str] = arg(help="Bot name (exact, or a unique prefix)")
+    role: Optional[str] = arg(help="delegate a human role phrase to the canonical no-write role plan")
     text: Optional[str] = arg(help="send: the message body")
-    yes: bool = arg(help="send: actually send it (dry run without this)")
+    yes: bool = arg(help="send: send it; rollback: separately confirm destructive deletion")
     only: Optional[str] = arg(help="rebuild: just this source Bot name")
     spec: Optional[str] = arg(help="rebuild: Bot list PATH instead of fleet-spec.json")
-    apply: bool = arg(help="rebuild: instantiate + shape after planning (dry run without it)")
-    manifest: Optional[str] = arg(help="rollback: delete exactly what that manifest created")
+    apply: bool = arg(help="rebuild: create; rollback: delete (both plan without this)")
+    manifest: Optional[str] = arg(help="rollback: recovery manifest written by fleet rebuild")
     json: bool = arg(help="machine-readable envelope on stdout")
 
 @dataclasses.dataclass(frozen=True)
@@ -675,6 +705,17 @@ class DogfoodArgs:
     )
     accept: Optional[str] = arg(help="record an accepted new gap (who)")
     why: Optional[str] = arg(help="record why a new gap was accepted")
+    dispose: Optional[List[str]] = arg(default=None, help="KEY=adopt|reject|defer; repeatable")
+    owner: Optional[str] = arg(help="disposition owner")
+    evidence: Optional[str] = arg(help="adopt: proof the gap is intentional")
+    falsifier: Optional[str] = arg(help="adopt: measurement that reopens the gap")
+    expires: Optional[str] = arg(help="defer: review date YYYY-MM-DD")
+    review: Optional[str] = arg(help="defer: predicate that triggers review")
+    ne: Optional[str] = arg(help="negative-evidence link")
+    decisions: Optional[str] = arg(help="JSON disposition list for a batch")
+    no_probe: bool = arg(help="skip help probes; AST-only and weaker")
+    dry_run: bool = arg(help="measure without writing the baseline")
+    selftest: bool = arg(help="offline disposition and ordering proofs")
     json: bool = arg(help="machine-readable envelope on stdout")
 
 
@@ -722,7 +763,12 @@ class AdviseArgs:
     publicly. Found by `gb dogfood audit`, which exists to find exactly this.
     """
 
-    json: bool = arg(help="machine-readable envelope on stdout")
+    json: bool = arg(help="machine-readable envelope on stdout (top actions unless --full)")
+    full: bool = arg(help="include every ranked action; counts always full")
+    limit: Optional[int] = arg(help="ranked actions to show (default 5)")
+    source: Tuple[str, ...] = arg(help="restrict the join to this input; repeatable")
+    dry_run: bool = arg(help="rank and report, but write no artifact")
+    selftest: bool = arg(help="run the inline-fixture selftest and exit")
 
 @dataclasses.dataclass(frozen=True)
 class ResearchArgs:
@@ -1120,7 +1166,7 @@ class GrokbotdevArgs:
         positional=True,
     )
     selftest: bool = arg(help="offline envelope/id/expiry proofs")
-    json: bool = arg(help="unused; producer prints a one-line summary")
+    json: bool = arg(help="probe prints the gb-grokbotdev-probe/1 machine envelope")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1210,8 +1256,10 @@ class DailyArgs:
                       choices=("collect", "proof"), metavar="{collect,proof}", positional=True)
     no_fetch: bool = arg(help="collect: skip the network producers; ingest and diff what is on disk")
     kind: Tuple[str, ...] = arg(help="collect: only diff these producer roots; repeatable")
-    json: bool = arg(help="machine-readable envelope on stdout")
+    json: bool = arg(help="machine-readable envelope on stdout (rows arrays capped at 20 unless --full)")
+    full: bool = arg(help="include full row/cursor arrays (collect: every row; proof: every cursor id); counts always full")
     selftest: bool = arg(help="proof: fail-closed receipt fixture")
+    share: bool = arg(help="proof: copy this run's post-draft via bin/gb-share-post.sh")
 
 
 COMMANDS: Dict[str, type] = {
@@ -1249,6 +1297,7 @@ COMMANDS: Dict[str, type] = {
     "post": PostArgs,
     "roadmap": RoadmapArgs,
     "setup": SetupArgs,
+    "role": RoleArgs,
     "bootstrap": BootstrapArgs,
     "teach": TeachArgs,
     "daily": DailyArgs,
@@ -1387,15 +1436,11 @@ def newest(dirname: str) -> Optional[Dict[str, Any]]:
 # question he actually has, which is "what do I run FIRST". Exit 1 was wrong too: FINDINGS means
 # measured-and-bad, and nothing here was measured.
 #
-# THE RULE. A working root is UNCONFIGURED exactly when BOTH hold:
-#   (1) zero dated artifacts across every producer root — no producer has ever written here; AND
-#   (2) no desktops.json — no desktop has ever been registered.
-# Anything else is CONFIGURED, and a CONFIGURED root behaves exactly as it always has: one
-# snapshot plus 21 gaps IS 21 real findings, and collapsing those into "not set up" would be the
-# same lie pointed the other way. The rule is deliberately the WEAKEST evidence of configuration
-# that exists (one artifact, OR one registered device) because the two mistakes are not
-# symmetric: a false UNCONFIGURED hides real findings behind a setup nag, while a false
-# CONFIGURED only shows the operator the check wall he already knows how to read.
+# THE RULE. A working root is UNCONFIGURED until at least one dated producer artifact exists.
+# desktops.json is routing intent, not measurement evidence. A stale or interrupted registry-only
+# write must therefore keep routing to setup rather than resurrecting the check wall that setup is
+# meant to replace. One artifact is enough: after a producer has answered authoritatively, every
+# remaining gap is a real finding and CONFIGURED preserves it.
 # ---------------------------------------------------------------------------------------------
 PRODUCER_ROOTS: Tuple[str, ...] = (
     "deployment", "inventory", "surface", "market", "usecases", "discovery", "mcp",
@@ -1442,14 +1487,18 @@ def instance_state(root: pathlib.Path = ROOT) -> InstanceState:
             measured.append(name)
             total += dated
     registry = (root / DEVICE_REGISTRY).is_file()
-    if total or registry:
+    if total:
         parts = [f"{total} dated artifact(s) across {len(measured)} producer root(s)"]
         parts.append(f"{DEVICE_REGISTRY} {'present' if registry else 'absent'}")
         return InstanceState("CONFIGURED", total, tuple(measured), registry, "; ".join(parts))
+    registry_note = (
+        f"{DEVICE_REGISTRY} present but not measurement evidence"
+        if registry else f"no {DEVICE_REGISTRY}"
+    )
     return InstanceState(
-        "UNCONFIGURED", 0, (), False,
+        "UNCONFIGURED", 0, (), registry,
         f"no producer has ever written here (0 dated artifacts across {len(PRODUCER_ROOTS)} "
-        f"producer roots) and there is no {DEVICE_REGISTRY}")
+        f"producer roots); {registry_note}")
 
 
 def route_unconfigured(command: str, as_json: bool, st: InstanceState) -> int:
@@ -1461,12 +1510,9 @@ def route_unconfigured(command: str, as_json: bool, st: InstanceState) -> int:
     `checks: []` reads it as green. That is the exact failure `cmd_triage` already refuses for a
     zero-check board, and EMPTY must not be allowed to collapse into UNCONFIGURED here either.
 
-    THE PLATFORM CAVEAT, added in wave 5. "Run `gb setup --apply`" is the right next command on
-    macOS and a WRONG one on Linux: setup will register the desktop, fail to find a support
-    directory at a path this repo only inferred, and leave the operator exactly where he
-    started with one more artifact. So when the platform is not SUPPORTED the route says that
-    FIRST and points at `gb platform`. His real problem is not that he has not set up yet; it
-    is that nobody has ever verified this tool on his operating system.
+    THE PLATFORM CAVEAT. gb setup --apply is valid only where at least one producer can run.
+    On an unsupported platform setup now refuses before staging the registry, but gb platform
+    remains the honest first command because it names which capabilities are implemented.
     """
     plat = platform_support()
     caveat = plat.status != "SUPPORTED"
@@ -1498,16 +1544,16 @@ def route_unconfigured(command: str, as_json: bool, st: InstanceState) -> int:
             "",
             f"  AND FIRST: this is {plat.os}, which this tool reports {plat.status}.",
             f"  {plat.why}.",
-            "  `gb setup --apply` would register this desktop and then find nothing to measure",
-            "  at a path nobody here has verified. Read `gb platform` before you run it.",
+            "  gb setup --apply would refuse before staging a registry on an unverified path.",
+            "  Read gb platform before you run it.",
         ]
     human += ["", "next:"]
     if caveat:
         human += ["  gb platform               what this operating system can and cannot do here"]
     human += [
         "  gb setup                  what configuring this machine would do (writes nothing)",
-        "  gb setup --apply          do it: register this desktop, then take the first",
-        "                            measurements",
+        "  gb setup --apply          do it: journal the registry, take first measurements,",
+        "                            then commit only after an artifact exists",
     ]
     emit(payload, as_json, "\n".join(human))
     return EXIT_ENVIRONMENT
@@ -2086,11 +2132,10 @@ def cmd_health(a: HealthArgs) -> int:
 # in `desktops.json` twice. A hostname that is already registered under the same label is a
 # no-op, so `--apply` twice leaves one row and re-fetches nothing.
 #
-# NEVER HALF-CONFIGURE. Writing `desktops.json` is by itself enough to flip this root to
-# CONFIGURED (see `instance_state`), which means writing it on a machine that cannot then MEASURE
-# anything would hand the operator the check wall back with a registry on top — the precise
-# failure this wave exists to remove. So when preflight proves no measurement can follow (no
-# network AND no desktop app), `--apply` REFUSES (exit 5) and writes nothing at all.
+# NEVER HALF-CONFIGURE. desktops.json is staged beside an fsynced journal while the exact prior
+# bytes remain live. Eligible producers run first. Only a newly confirmed dated artifact permits
+# the registry commit; every failure, timeout or cancellation restores the prior bytes and removes
+# transaction-created artifacts. instance_state deliberately ignores registry-only presence.
 # ---------------------------------------------------------------------------------------------
 # Presence is probed, never the value. `bin/gb-pull-inventory.py` is the only thing that reads
 # the password out of this item, and it is a human-gated read (macOS prompts for Allow).
@@ -2268,297 +2313,1243 @@ def _device_label(explicit: Optional[str]) -> Tuple[Optional[str], Optional[str]
     return label, None
 
 
-def _plan_device(label: str) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
-    """What registering THIS machine would change, and the whole document that would replace
-    `desktops.json`. A `None` document means there is nothing to write — that is the idempotent
-    path, and it is decided on HOSTNAME so a re-typed label cannot duplicate a row."""
-    host = socket.gethostname()
-    path = ROOT / DEVICE_REGISTRY
+SETUP_JOURNAL = pathlib.Path("state/setup-transaction.json")
+SETUP_PRIOR = pathlib.Path("state/setup-registry.prior")
+SETUP_STAGED = pathlib.Path("state/setup-registry.staged")
+SETUP_RECOVERY_ARGV: Tuple[str, ...] = ("gb", "setup", "--apply")
+SETUP_ARTIFACT_ROOT: Dict[str, str] = {
+    "surface": "surface",
+    "deployment": "deployment",
+    "inventory": "inventory",
+}
+
+
+def _plan_device(
+    label: str, *, root: pathlib.Path = ROOT, hostname: Optional[str] = None
+) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+    """Return the redacted registry delta and the full document to stage.
+
+    The full hostname stays only in the local staged document. Human and JSON output carry a
+    redaction, while prior/staged digests prove exactly which bytes the transaction considered.
+    """
+    host = hostname or socket.gethostname()
+    path = root / DEVICE_REGISTRY
     existing_any = read_json_capped(path)
     if path.is_file() and not isinstance(existing_any, dict):
-        return (_step("device", "FAILED",
-                      f"{DEVICE_REGISTRY} exists but does not read as a JSON object — refusing "
-                      f"to overwrite a file this tool cannot parse",
-                      f"inspect it: jq . {DEVICE_REGISTRY}"), None)
+        return (_step(
+            "device", "FAILED",
+            f"{DEVICE_REGISTRY} exists but does not read as a JSON object — refusing to "
+            "overwrite a registry this tool cannot restore semantically",
+            f"inspect it: python3 -m json.tool {DEVICE_REGISTRY}",
+        ), None)
     existing: Dict[str, Any] = existing_any if isinstance(existing_any, dict) else {}
     rows = [d for d in (existing.get("desktops") or []) if isinstance(d, dict)]
     hit = next((d for d in rows if str(d.get("hostname") or "") == host), None)
     if hit is not None and str(hit.get("label") or "") == label:
-        return (_step("device", "OK",
-                      f"{label} ({host}) is already in {DEVICE_REGISTRY} alongside "
-                      f"{len(rows) - 1} other desktop(s) — nothing to write",
-                      device=label, hostname=host, desktops=len(rows)), None)
+        return (_step(
+            "device", "OK",
+            f"{label} ([redacted-host]) is already in {DEVICE_REGISTRY} alongside "
+            f"{len(rows) - 1} other desktop(s) — no registry bytes will change",
+            device=label, hostname="[redacted]", desktops=len(rows),
+            desktop_rows_before=len(rows), desktop_rows_after=len(rows),
+        ), None)
     kept = [d for d in rows if str(d.get("hostname") or "") != host]
-    kept.append({"label": label, "hostname": host, "ssh": None,
-                 "note": f"registered by `gb setup` on "
-                         f"{dt.date.today().isoformat()}; audited locally"})
+    kept.append({
+        "label": label,
+        "hostname": host,
+        "ssh": None,
+        "note": f"registered by gb setup after first measurement on {dt.date.today().isoformat()}",
+    })
     doc = dict(existing)
     doc.setdefault("_why", REGISTRY_WHY)
     doc["host_of_record"] = existing.get("host_of_record") or label
     doc["desktops"] = kept
     doc.setdefault("not_a_desktop", [])
-    verb = ("refresh the hostname row for" if hit is not None
-            else ("create " + DEVICE_REGISTRY + " with" if not path.is_file() else "add"))
-    return (_step("device", "PLANNED",
-                  f"would {verb} {label} ({host}) — {len(kept)} desktop(s) after, "
-                  f"host_of_record={doc['host_of_record']}",
-                  device=label, hostname=host, desktops=len(kept)), doc)
+    operation = "CREATE" if not path.is_file() else "UPDATE"
+    return (_step(
+        "device", "PLANNED",
+        f"would {operation.lower()} the row for {label} ([redacted-host]); "
+        f"{len(rows)} -> {len(kept)} desktop(s), host_of_record={doc['host_of_record']}",
+        device=label, hostname="[redacted]", desktops=len(kept),
+        desktop_rows_before=len(rows), desktop_rows_after=len(kept), operation=operation,
+    ), doc)
+
+
+def _logged_producer_argv(argv: Sequence[str]) -> List[str]:
+    """The executable producer argv with device-private values redacted."""
+    logged = ["python3", f"bin/{argv[0]}"]
+    redact_next = False
+    for item in argv[1:]:
+        if redact_next:
+            logged.append("[redacted-device]")
+            redact_next = False
+        else:
+            logged.append(str(item))
+            redact_next = item == "--device"
+    return logged
 
 
 def _run_producer(step: str, argv: List[str], timeout_s: float) -> Dict[str, Any]:
-    """Drive one producer through the typed spine and classify it the way `probe` does."""
-    shown = "python3 bin/" + " ".join(argv)
+    """Drive one producer through the typed spine and retain its complete result class."""
+    logged = _logged_producer_argv(argv)
+    shown = " ".join(logged)
     proc = run([sys.executable, str(BIN / argv[0]), *argv[1:]], timeout_s=timeout_s, cwd=ROOT)
-    if proc.timed_out:
-        return _step(step, "FAILED",
-                     f"`{shown}` exceeded {timeout_s:.0f}s — stopped, so whether it wrote "
-                     f"anything is unknown", shown, command=shown, exit=None)
+    common = {
+        "command": shown,
+        "argv": logged,
+        "attempt": 1,
+        "exit": proc.code,
+        "timed_out": proc.timed_out,
+        "truncated": proc.truncated,
+        "elapsed_s": proc.elapsed_s,
+    }
+    if proc.timed_out or proc.truncated:
+        result = "TIMEOUT" if proc.timed_out else "OUTPUT_LIMIT"
+        return _step(
+            step, "FAILED",
+            f"{shown} was stopped ({result.lower()}); whether it completed is unknown",
+            shown, result=result, **common,
+        )
     channel = (proc.out if proc.code == 0 else (proc.err or proc.out)) or ""
     line = next((ln.strip() for ln in reversed(channel.splitlines()) if ln.strip()), "(no output)")
     if proc.code != 0:
-        return _step(step, "FAILED", f"`{shown}` exited {proc.code}: {line[:160]}",
-                     shown, command=shown, exit=proc.code)
-    return _step(step, "OK", f"`{shown}` -> {line[:160]}", command=shown, exit=0,
-                 elapsed_s=proc.elapsed_s)
+        return _step(
+            step, "FAILED", f"{shown} exited {proc.code}: {line[:160]}", shown,
+            result="EXIT_NONZERO", **common,
+        )
+    return _step(
+        step, "OK", f"{shown} -> {line[:160]}", command=shown,
+        argv=logged, attempt=1, result="EXIT_ZERO", exit=0,
+        timed_out=False, truncated=False, elapsed_s=proc.elapsed_s,
+    )
 
 
-def _already(root: str, pattern: str = "*") -> int:
-    """How many DATED artifacts a producer root already holds. The idempotency predicate: setup
-    takes a FIRST measurement, it is not a tick, so anything already measured is left alone and
-    `bin/gb-weekly.sh` owns refreshing it. Without this, a second `--apply` would re-fetch 35
-    vendor pages to learn nothing."""
-    d = ROOT / root
-    if not d.is_dir():
+def _artifact_ids(root: pathlib.Path, roots: Sequence[str] = PRODUCER_ROOTS) -> List[str]:
+    """Top-level dated artifact ids, the same evidence instance_state counts."""
+    found: List[str] = []
+    for name in roots:
+        directory = root / name
+        if not directory.is_dir():
+            continue
+        try:
+            entries = tuple(directory.iterdir())
+        except OSError:
+            continue
+        found.extend(f"{name}/{path.name}" for path in entries if _DATED.match(path.name))
+    return sorted(found)
+
+
+def _artifact_path(root: pathlib.Path, artifact_id: str) -> pathlib.Path:
+    rel = pathlib.PurePosixPath(artifact_id)
+    if (
+        len(rel.parts) != 2
+        or rel.parts[0] not in PRODUCER_ROOTS
+        or not _DATED.match(rel.parts[1])
+        or any(part in ("", ".", "..") for part in rel.parts)
+    ):
+        raise ValueError(f"unsafe setup artifact id {artifact_id!r}")
+    return root.joinpath(*rel.parts)
+
+
+def _remove_new_artifacts(
+    root: pathlib.Path,
+    baseline: Sequence[str],
+    uncertain_roots: Sequence[str],
+    known_ids: Sequence[str],
+) -> List[str]:
+    """Compensate known outputs plus additions from an interrupted active producer only."""
+    additions = set(str(item) for item in known_ids)
+    roots = tuple(sorted(set(uncertain_roots)))
+    if roots:
+        current = set(_artifact_ids(root, roots))
+        additions.update(current - set(str(item) for item in baseline))
+    removed: List[str] = []
+    for artifact_id in sorted(additions):
+        if durable_remove(_artifact_path(root, artifact_id)):
+            removed.append(artifact_id)
+    return removed
+
+
+def _already(
+    producer_root: str, pattern: str = "*", *, root: pathlib.Path = ROOT
+) -> int:
+    """How many dated artifacts a producer root already holds."""
+    directory = root / producer_root
+    if not directory.is_dir():
         return 0
-    return sum(1 for p in d.glob(pattern) if _DATED.match(p.name))
+    return sum(1 for path in directory.glob(pattern) if _DATED.match(path.name))
 
 
-def _measure(label: str, pre: Dict[str, str], apply: bool, plat: Platform) -> List[Dict[str, Any]]:
-    """The first measurements a machine with no prior state can take, in dependency order.
+def _setup_journal_path(root: pathlib.Path) -> pathlib.Path:
+    return root / SETUP_JOURNAL
 
-    `gb-surface-snapshot.py` needs only the network. `gb-deployment-audit.py` needs the desktop
-    app's support directory. `gb-pull-inventory.py` needs BOTH a registered desktop and a
-    deployment audit (it calls `gblib.newest_audit` and dies without one) plus the keychain and
-    `cryptography` — so it is reported SKIPPED with the named prerequisite rather than run and
-    allowed to fail for a reason the operator has to decode from a traceback.
-    """
+
+def _write_setup_journal(root: pathlib.Path, journal: Dict[str, Any]) -> None:
+    journal.setdefault("journal", {})["path"] = SETUP_JOURNAL.as_posix()
+    journal["journal"]["fsync"] = "DONE"
+    atomic_write_json(_setup_journal_path(root), journal)
+
+
+def _registry_body(document: Dict[str, Any]) -> bytes:
+    return (json.dumps(document, indent=1, default=str) + "\n").encode("utf-8")
+
+
+def _registry_delta(
+    prior: FileSnapshot, staged_body: bytes, device_row: Dict[str, Any], changed: bool
+) -> Dict[str, Any]:
+    staged_digest = hashlib.sha256(staged_body).hexdigest() if changed else prior.digest
+    return {
+        "path": DEVICE_REGISTRY,
+        "operation": str(device_row.get("operation") or ("UNCHANGED" if not changed else "UPDATE")),
+        "prior": {
+            "exists": prior.existed, "digest": prior.digest,
+            "backup": SETUP_PRIOR.as_posix() if prior.existed else None,
+        },
+        "staged": {
+            "digest": staged_digest, "bytes": len(staged_body),
+            "path": SETUP_STAGED.as_posix(),
+        },
+        "committed": None,
+        "desktop_rows_before": device_row.get("desktop_rows_before"),
+        "desktop_rows_after": device_row.get("desktop_rows_after"),
+        "device": device_row.get("device"),
+        "hostname": "[redacted]",
+    }
+
+
+def _producer_prerequisites(pre: Dict[str, str]) -> List[Dict[str, Any]]:
+    return [
+        {"step": "surface", "requires": ["network=OK"], "eligible": pre.get("network") == "OK"},
+        {"step": "deployment", "requires": ["desktop-app=OK"],
+         "eligible": pre.get("desktop-app") == "OK"},
+        {"step": "inventory", "requires": [
+            "staged-registry committed after first artifact", "deployment artifact",
+            "keychain=OK", "crypto=OK",
+        ], "eligible": pre.get("keychain") == "OK" and pre.get("crypto") == "OK"},
+    ]
+
+
+def _stage_setup_journal(
+    root: pathlib.Path,
+    before: InstanceState,
+    prior: FileSnapshot,
+    staged_body: bytes,
+    registry: Dict[str, Any],
+    prerequisites: List[Dict[str, Any]],
+    recovered: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    prior_path = root / SETUP_PRIOR
+    staged_path = root / SETUP_STAGED
+    if prior.existed:
+        atomic_write_bytes(prior_path, prior.body)
+    else:
+        durable_remove(prior_path)
+    atomic_write_bytes(staged_path, staged_body)
+    transaction_seed = f"{prior.digest}:{registry['staged']['digest']}:{time.time_ns()}"
+    journal: Dict[str, Any] = {
+        "schema": "gb-setup-transaction/1",
+        "transaction_id": hashlib.sha256(transaction_seed.encode()).hexdigest()[:20],
+        "phase": "STAGED",
+        "registry": registry,
+        "producer_prerequisites": prerequisites,
+        "artifact_baseline": _artifact_ids(root, tuple(SETUP_ARTIFACT_ROOT.values())),
+        "artifact_ids": [],
+        "producers": [],
+        "events": [{"event": "journal-staged", "journal_fsync": "DONE"}],
+        "restore": {"state": "NOT_NEEDED", "journal_fsync": "DONE"},
+        "state_before": before.state,
+        "state_after": before.state,
+        "next_command_before": "gb setup --apply" if before.unconfigured else "gb triage",
+        "next_command_after": None,
+        "verdict": "PENDING",
+        "exit": None,
+        "interruption_point": None,
+        "recovery_argv": list(SETUP_RECOVERY_ARGV),
+        "recovered_before_start": recovered,
+    }
+    _write_setup_journal(root, journal)
+    return journal
+
+
+def _rollback_setup(
+    root: pathlib.Path,
+    journal: Dict[str, Any],
+    prior: FileSnapshot,
+    *,
+    reason: str,
+    exit_code: int,
+) -> Dict[str, Any]:
+    uncertain_roots = [
+        str(row.get("root")) for row in journal.get("producers", [])
+        if str(row.get("root") or "") in PRODUCER_ROOTS
+        and row.get("result") in ("PENDING", "INTERRUPTED", "FAILED_EXCEPTION")
+    ]
+    with durable_transition():
+        journal["phase"] = "ROLLING_BACK"
+        journal["verdict"] = reason
+        journal["exit"] = exit_code
+        journal["restore"] = {"state": "PENDING", "journal_fsync": "DONE"}
+        _write_setup_journal(root, journal)
+        removed = _remove_new_artifacts(
+            root, journal.get("artifact_baseline", []), uncertain_roots,
+            journal.get("artifact_ids", []),
+        )
+        registry_write = prior.restore()
+        restored = FileSnapshot.capture(root / DEVICE_REGISTRY)
+        after = instance_state(root)
+        journal["phase"] = "RECOVERED"
+        journal["registry"]["restored"] = {
+            "exists": restored.existed, "digest": restored.digest,
+        }
+        journal["artifact_ids"] = sorted(set(
+            list(journal.get("artifact_ids", [])) + removed
+        ))
+        journal["restore"] = {
+            "state": "DONE",
+            "reason": reason,
+            "registry_digest": restored.digest,
+            "registry_matches_prior": restored.digest == prior.digest,
+            "registry_fsync": "DONE" if registry_write else "NOT_NEEDED",
+            "artifact_ids_removed": removed,
+            "artifact_fsync": "DONE" if removed else "NOT_NEEDED",
+            "journal_fsync": "DONE",
+        }
+        journal["state_after"] = after.state
+        journal["next_command_after"] = "gb setup --apply" if after.unconfigured else "gb triage"
+        journal["events"].append({
+            "event": "restore-complete", "reason": reason,
+            "registry_digest": restored.digest, "artifact_ids": removed,
+            "journal_fsync": "DONE",
+        })
+        _write_setup_journal(root, journal)
+    return journal
+
+
+def _recover_pending_setup(root: pathlib.Path) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Restore a prior interrupted setup before another apply starts."""
+    path = _setup_journal_path(root)
+    if not path.is_file():
+        return None, None
+    journal_any = read_json_capped(path)
+    if not isinstance(journal_any, dict):
+        return None, f"{SETUP_JOURNAL.as_posix()} is unreadable; refusing unsafe recovery"
+    journal: Dict[str, Any] = journal_any
+    if journal.get("schema") != "gb-setup-transaction/1":
+        return None, f"{SETUP_JOURNAL.as_posix()} has an unknown schema"
+    if journal.get("phase") in ("COMMITTED", "RECOVERED"):
+        return None, None
+    prior_meta = (journal.get("registry") or {}).get("prior") or {}
+    prior_exists = prior_meta.get("exists") is True
+    expected_digest = str(prior_meta.get("digest") or "")
+    if prior_exists:
+        backup = FileSnapshot.capture(root / SETUP_PRIOR)
+        if not backup.existed or backup.digest != expected_digest:
+            return None, (
+                f"cannot recover {DEVICE_REGISTRY}: {SETUP_PRIOR.as_posix()} does not match "
+                f"the journaled prior digest {expected_digest or '[missing]'}"
+            )
+        prior = FileSnapshot(root / DEVICE_REGISTRY, True, backup.body, backup.digest)
+    else:
+        if expected_digest != "absent":
+            return None, "setup journal says the prior registry was absent but its digest disagrees"
+        prior = FileSnapshot(root / DEVICE_REGISTRY, False, b"", "absent")
+    recovered = _rollback_setup(
+        root, journal, prior,
+        reason=f"RECOVER_INCOMPLETE_{str(journal.get('phase') or 'UNKNOWN')}",
+        exit_code=EXIT_ENVIRONMENT,
+    )
+    return {
+        "transaction_id": recovered.get("transaction_id"),
+        "status": "RESTORED",
+        "registry_digest": recovered["restore"]["registry_digest"],
+        "artifact_ids_removed": recovered["restore"]["artifact_ids_removed"],
+        "state": recovered.get("state_after"),
+        "recovery_argv": recovered.get("recovery_argv"),
+    }, None
+
+
+def _measure(
+    label: str,
+    pre: Dict[str, str],
+    apply: bool,
+    plat: Platform,
+    *,
+    root: pathlib.Path = ROOT,
+    phase: str = "all",
+    runner: Callable[[str, List[str], float], Dict[str, Any]] = _run_producer,
+    on_attempt: Optional[Callable[[str, List[str], str], None]] = None,
+    on_result: Optional[Callable[[Dict[str, Any]], None]] = None,
+) -> List[Dict[str, Any]]:
+    """Plan or run first measurements; pre-registry producers and inventory are separable."""
     rows: List[Dict[str, Any]] = []
 
-    def plan_or_run(step: str, argv: List[str], timeout_s: float, have: int,
-                    where: str, blocker: Optional[str], fix: Optional[str]) -> Dict[str, Any]:
-        shown = "python3 bin/" + " ".join(argv)
+    def plan_or_run(
+        step: str, argv: List[str], timeout_s: float, have: int,
+        where: str, blocker: Optional[str], fix: Optional[str], producer_root: str,
+    ) -> Dict[str, Any]:
+        shown = " ".join(_logged_producer_argv(argv))
         if have:
-            return _step(step, "OK",
-                         f"already measured: {have} dated artifact(s) under {where} — setup "
-                         f"takes the FIRST measurement and never re-fetches; "
-                         f"bin/gb-weekly.sh refreshes it", command=shown, existing=have)
+            return _step(
+                step, "OK", f"already measured: {have} dated artifact(s) under {where}; "
+                "setup never refreshes an existing first measurement",
+                command=shown, argv=_logged_producer_argv(argv), existing=have,
+                root=producer_root, result="ALREADY_MEASURED", artifact_ids=[], exit=None,
+            )
         if blocker is not None:
-            return _step(step, "SKIPPED", f"cannot run `{shown}`: {blocker}", fix, command=shown)
+            return _step(
+                step, "SKIPPED", f"cannot run {shown}: {blocker}", fix,
+                command=shown, argv=_logged_producer_argv(argv), root=producer_root,
+                result="PREREQUISITE_MISSING", artifact_ids=[], exit=None,
+            )
         if not apply:
-            return _step(step, "PLANNED", f"would run `{shown}`", None, command=shown)
-        return _run_producer(step, argv, timeout_s)
+            return _step(
+                step, "PLANNED", f"would run {shown}", command=shown,
+                argv=_logged_producer_argv(argv), root=producer_root,
+                result="PLANNED", artifact_ids=[], exit=None,
+            )
+        before_ids = set(_artifact_ids(root, (producer_root,)))
+        if on_attempt is not None:
+            on_attempt(step, argv, producer_root)
+        row = runner(step, argv, timeout_s)
+        after_ids = set(_artifact_ids(root, (producer_root,)))
+        new_ids = sorted(after_ids - before_ids)
+        row["root"] = producer_root
+        row["artifact_ids"] = new_ids
+        row.setdefault("argv", _logged_producer_argv(argv))
+        row.setdefault("attempt", 1)
+        row.setdefault("exit", None)
+        if row.get("status") == "OK" and not new_ids:
+            row["status"] = "FAILED"
+            row["result"] = "NO_ARTIFACT"
+            row["detail"] = (
+                f"{shown} exited successfully but created no new dated artifact under {where}; "
+                "setup cannot treat stdout as measurement evidence"
+            )
+            row["remediation"] = shown
+        elif row.get("status") == "OK":
+            row["result"] = "MEASURED"
+        if on_result is not None:
+            on_result(row)
+        return row
 
-    rows.append(plan_or_run(
-        "surface", ["gb-surface-snapshot.py"], 900.0, _already("surface"), "surface/",
-        None if pre.get("network") == "OK"
-        else f"the doc surface is not reachable ({pre.get('network')})",
-        f"curl -sSI {DOCS_PROBE_URL}"))
-    rows.append(plan_or_run(
-        "deployment", ["gb-deployment-audit.py"], 300.0, _already("deployment", "*.json"),
-        "deployment/",
-        None if pre.get("desktop-app") == "OK" else
-        (f"{plat.support_dir} does not exist" if plat.support_dir
-         else f"{plat.os} has no support directory for the audit to read"),
-        ("install and launch the Grok Bot desktop app, then re-run `gb setup --apply`"
-         if plat.status == "SUPPORTED" else "gb platform")))
+    if phase in ("all", "pre"):
+        rows.append(plan_or_run(
+            "surface", ["gb-surface-snapshot.py"], 900.0,
+            _already("surface", root=root), "surface/",
+            None if pre.get("network") == "OK"
+            else f"the doc surface is not reachable ({pre.get('network')})",
+            f"curl -sSI {DOCS_PROBE_URL}", "surface",
+        ))
+        if apply and rows[-1]["status"] == "FAILED":
+            return rows
+        rows.append(plan_or_run(
+            "deployment", ["gb-deployment-audit.py"], 300.0,
+            _already("deployment", "*.json", root=root), "deployment/",
+            None if pre.get("desktop-app") == "OK" else
+            (f"{plat.support_dir} does not exist" if plat.support_dir
+             else f"{plat.os} has no support directory for the audit to read"),
+            ("install and launch the Grok Bot desktop app, then re-run gb setup --apply"
+             if plat.status == "SUPPORTED" else "gb platform"), "deployment",
+        ))
 
-    audited = any(r["step"] == "deployment" and r["status"] in ("OK", "PLANNED") for r in rows)
-    blocker = next((why for ok, why in (
-        (pre.get("keychain") == "OK",
-         "the desktop client's keychain item is not present"
-         if plat.capability("credential_read").available
-         else f"the credential read is NOT_IMPLEMENTED on {plat.os} — see `gb platform`"),
-        (pre.get("crypto") == "OK", "the `cryptography` module is not importable"),
-        (audited, "there is no deployment audit for it to read (see the `deployment` step)"),
-    ) if not ok), None)
-    rows.append(plan_or_run(
-        "inventory", ["gb-pull-inventory.py", "--device", label], 600.0,
-        _already("inventory", f"*.{label}.json"), f"inventory/*.{label}.json", blocker,
-        ("open the Grok Bot desktop app and sign in, then re-run `gb setup --apply`"
-         if plat.capability("credential_read").available else
-         "run the pull from a signed-in macOS desktop; the inventory artifact it writes is "
-         "platform-neutral and can be committed from anywhere")))
+    if phase in ("all", "post"):
+        audit_ready = _already("deployment", "*.json", root=root) > 0
+        if not apply and pre.get("desktop-app") == "OK":
+            audit_ready = True
+        blocker = next((why for ok, why in (
+            (pre.get("keychain") == "OK",
+             "the desktop client's keychain item is not present"
+             if plat.capability("credential_read").available
+             else f"credential read is NOT_IMPLEMENTED on {plat.os}"),
+            (pre.get("crypto") == "OK", "the cryptography module is not importable"),
+            (audit_ready, "there is no deployment audit for it to read"),
+        ) if not ok), None)
+        rows.append(plan_or_run(
+            "inventory", ["gb-pull-inventory.py", "--device", label], 600.0,
+            _already("inventory", f"*.{label}.json", root=root),
+            f"inventory/*.{label}.json", blocker,
+            ("open the Grok Bot desktop app and sign in, then re-run gb setup --apply"
+             if plat.capability("credential_read").available else "gb platform"), "inventory",
+        ))
     return rows
 
 
-def cmd_setup(a: SetupArgs) -> int:
-    """Zero to measured: preflight, register this desktop, take the first measurements, verify."""
-    if a.apply and (a.persona or a.list_personas):
-        plan = (
-            "gb setup --list-personas"
-            if a.list_personas
-            else f"gb setup --persona {a.persona}"
+def _setup_finish(
+    *,
+    apply: bool,
+    before: InstanceState,
+    after: InstanceState,
+    label: str,
+    steps: List[Dict[str, Any]],
+    actual: List[str],
+    nxt: str,
+    rc: int,
+    transaction: Dict[str, Any],
+    refused: bool = False,
+) -> Tuple[int, Dict[str, Any], str]:
+    payload = envelope(
+        "setup", dry_run=not apply, state=after.state, device=label,
+        hostname="[redacted]", state_before=before.state, state_after=after.state,
+        refused=refused, steps=steps, transaction=transaction,
+        planned=[row["detail"] for row in steps
+                 if row["status"] == "PLANNED" and row["step"] != "verify"],
+        actual_actions=actual, next_command=nxt,
+        commands=[row["remediation"] for row in steps if row.get("remediation")] or [nxt],
+        exit=rc,
+    )
+    phase = str(transaction.get("phase") or "")
+    if not apply:
+        head = "gb setup — PLAN (nothing was written; re-run with --apply)"
+    elif refused:
+        head = "gb setup — REFUSED (nothing was written)"
+    elif phase == "RECOVERED":
+        head = "gb setup — FAILED (transaction restored)"
+    elif phase == "COMMITTED":
+        head = ("gb setup — UNCHANGED (already measured)"
+                if transaction.get("verdict") == "UNCHANGED" else "gb setup — APPLIED")
+    else:
+        head = "gb setup — FAILED"
+    human = [head, ""]
+    for row in steps:
+        human.append(f"  {row['status']:<16}{row['step']:<12}{row['detail'][:110]}")
+        if row.get("remediation"):
+            human.append(f"  {'':<16}{'':<12}fix: {str(row['remediation'])[:110]}")
+    registry = transaction.get("registry") or {}
+    if registry:
+        human += [
+            "",
+            f"registry: {registry.get('operation')} "
+            f"{(registry.get('prior') or {}).get('digest')} -> "
+            f"{(registry.get('staged') or {}).get('digest')}",
+            f"journal: {transaction.get('phase')} · "
+            f"fsync={(transaction.get('journal') or {}).get('fsync', 'NOT_RUN')}",
+        ]
+    human += ["", f"state: {before.state} -> {after.state}"]
+    if refused:
+        human += ["", "plan first (drop --apply):", "  gb setup"]
+    human += [
+        "", "next:", f"  {nxt}", "", "new-user pack (first-hour):",
+        f"  {FIRST_HOUR_ROLE}", "  gb role --list",
+    ]
+    return rc, payload, "\n".join(human)
+
+
+def _setup_transaction(
+    *,
+    label: str,
+    apply: bool,
+    plat: Platform,
+    pre_rows: List[Dict[str, Any]],
+    root: pathlib.Path = ROOT,
+    runner: Callable[[str, List[str], float], Dict[str, Any]] = _run_producer,
+    hostname: Optional[str] = None,
+) -> Tuple[int, Dict[str, Any], str]:
+    """The single setup implementation, injectable only so its offline selftest uses it too."""
+    recovered: Optional[Dict[str, Any]] = None
+    recovery_error: Optional[str] = None
+    if apply:
+        recovered, recovery_error = _recover_pending_setup(root)
+    before = instance_state(root)
+    pre = {str(row["step"]): str(row["status"]) for row in pre_rows}
+    steps: List[Dict[str, Any]] = list(pre_rows)
+    actual: List[str] = []
+    prerequisites = _producer_prerequisites(pre)
+    if recovery_error is not None:
+        steps.append(_step(
+            "recovery", "FAILED", recovery_error,
+            "inspect state/setup-transaction.json and its setup-registry.prior backup",
+        ))
+        after = instance_state(root)
+        nxt = "gb setup --apply"
+        steps.append(_step("verify", "FAILED", f"{after.state} — {after.why}", nxt,
+                           state=after.state, next_command=nxt))
+        return _setup_finish(
+            apply=apply, before=before, after=after, label=label, steps=steps,
+            actual=actual, nxt=nxt, rc=EXIT_ENVIRONMENT,
+            transaction={
+                "phase": "RECOVERY_ERROR", "error": recovery_error,
+                "journal": {"path": SETUP_JOURNAL.as_posix(), "fsync": "NOT_RUN"},
+                "recovery_argv": list(SETUP_RECOVERY_ARGV), "exit": EXIT_ENVIRONMENT,
+            },
         )
-        return _refuse_apply(
-            "setup",
-            plan,
-            "--apply is refused for the persona walk — it only prints",
-            a.json,
+
+    fatal = [row for row in pre_rows
+             if row["step"] in ("python", "cli") and row["status"] != "OK"]
+    measurable = pre.get("network") == "OK" or pre.get("desktop-app") == "OK"
+    if fatal:
+        device_row = _step("device", "SKIPPED", "preflight is fatal — nothing was planned",
+                           "fix the preflight rows above")
+        device_doc = None
+    else:
+        device_row, device_doc = _plan_device(label, root=root, hostname=hostname)
+        if device_row["status"] == "FAILED":
+            fatal.append(device_row)
+    refused = apply and before.unconfigured and not measurable and not fatal
+    prior = FileSnapshot.capture(root / DEVICE_REGISTRY)
+    if device_doc is not None:
+        staged_body = _registry_body(device_doc)
+        changed = True
+    else:
+        staged_body = prior.body
+        changed = False
+    registry = _registry_delta(prior, staged_body, device_row, changed)
+    preview: Dict[str, Any] = {
+        "schema": "gb-setup-transaction/1",
+        "phase": "PLANNED",
+        "registry": registry,
+        "producer_prerequisites": prerequisites,
+        "artifact_ids": [],
+        "producers": [],
+        "events": [],
+        "restore": {"state": "NOT_NEEDED"},
+        "journal": {"path": SETUP_JOURNAL.as_posix(), "fsync": "NOT_RUN"},
+        "state_before": before.state,
+        "state_after": before.state,
+        "next_command_before": "gb setup --apply" if before.unconfigured else "gb triage",
+        "next_command_after": None,
+        "verdict": "PLANNED",
+        "exit": None,
+        "recovery_argv": list(SETUP_RECOVERY_ARGV),
+        "recovered_before_start": recovered,
+    }
+
+    if fatal:
+        if device_row not in steps:
+            steps.append(device_row)
+        steps.append(_step("measure", "SKIPPED", "preflight or registry parsing is fatal", None))
+        after = instance_state(root)
+        nxt = str(fatal[0].get("remediation") or "gb setup")
+        steps.append(_step("verify", "FAILED" if apply else "PLANNED",
+                           f"{after.state} — {after.why}", nxt,
+                           state=after.state, next_command=nxt))
+        return _setup_finish(
+            apply=apply, before=before, after=after, label=label, steps=steps,
+            actual=actual, nxt=nxt, rc=EXIT_ENVIRONMENT, transaction=preview,
         )
-    if a.list_personas or a.persona:
-        # Persona walk composes AFTER machine setup (it assumes a measured instance)
-        # but runs standalone: gb-setup-persona.py discovers personas/*.json itself.
-        # --apply is never forwarded: the producer prints, it does not mutate.
-        argv: List[str] = [sys.executable, str(BIN / "gb-setup-persona.py")]
-        if a.list_personas:
-            argv.append("--list")
+
+    if refused:
+        steps.append(_step(
+            "device", "SKIPPED",
+            f"refusing to stage {DEVICE_REGISTRY}: neither eligible first producer can run, "
+            "so no authoritative artifact could precede the registry commit",
+            "get network access to docs.x.ai, or install the Grok Bot desktop app, then re-run "
+            "gb setup --apply",
+        ))
+        steps.append(_step("measure", "SKIPPED", "no first producer is eligible", None))
+        after = instance_state(root)
+        nxt = "gb setup --apply"
+        steps.append(_step("verify", "FAILED", f"{after.state} — {after.why}", nxt,
+                           state=after.state, next_command=nxt))
+        preview["phase"] = "REFUSED"
+        preview["verdict"] = "REFUSED"
+        preview["exit"] = EXIT_REFUSED
+        preview["next_command_after"] = nxt
+        return _setup_finish(
+            apply=apply, before=before, after=after, label=label, steps=steps,
+            actual=actual, nxt=nxt, rc=EXIT_REFUSED, transaction=preview, refused=True,
+        )
+
+    if not apply:
+        steps.append(device_row)
+        steps.extend(_measure(
+            label, pre, False, plat, root=root, phase="all", runner=runner,
+        ))
+        after = instance_state(root)
+        nxt = "gb setup --apply" if after.unconfigured else "gb triage"
+        verify_status = "PLANNED" if after.unconfigured else "OK"
+        steps.append(_step(
+            "verify", verify_status,
+            f"{after.state} — {after.why}; dry-run left every byte unchanged", nxt,
+            state=after.state, next_command=nxt,
+        ))
+        preview["next_command_after"] = nxt
+        preview["exit"] = EXIT_OK
+        return _setup_finish(
+            apply=False, before=before, after=after, label=label, steps=steps,
+            actual=actual, nxt=nxt, rc=EXIT_OK, transaction=preview,
+        )
+
+    if not changed and not prior.existed:
+        steps.append(_step(
+            "device", "FAILED", "there is no registry document to stage", "gb setup",
+        ))
+        after = instance_state(root)
+        nxt = "gb setup --apply"
+        steps.append(_step("verify", "FAILED", f"{after.state} — {after.why}", nxt,
+                           state=after.state, next_command=nxt))
+        return _setup_finish(
+            apply=True, before=before, after=after, label=label, steps=steps,
+            actual=actual, nxt=nxt, rc=EXIT_ENVIRONMENT, transaction=preview,
+        )
+
+    try:
+        journal = _stage_setup_journal(
+            root, before, prior, staged_body, registry, prerequisites, recovered,
+        )
+    except BaseException as exc:
+        interrupted = isinstance(exc, (Cancelled, KeyboardInterrupt))
+        exit_code = exc.exit_code if isinstance(exc, Cancelled) else 130 if isinstance(
+            exc, KeyboardInterrupt
+        ) else EXIT_ENVIRONMENT
+        reason = ("INTERRUPTED" if interrupted else "FAILED") + f"_{type(exc).__name__}"
+        journal_any = read_json_capped(_setup_journal_path(root))
+        if isinstance(journal_any, dict) and journal_any.get("schema") == "gb-setup-transaction/1":
+            journal_any["interruption_point"] = "registry staging"
+            failure_journal = _rollback_setup(
+                root, journal_any, prior, reason=reason, exit_code=exit_code,
+            )
         else:
-            argv += ["--persona", str(a.persona)]
-        if a.json:
-            argv.append("--json")
-        return _passthrough(argv, budget_s=120, label="setup persona")
+            with durable_transition():
+                prior.restore()
+                durable_remove(root / SETUP_STAGED)
+                durable_remove(root / SETUP_PRIOR)
+            failure_journal = dict(preview)
+            failure_journal.update({
+                "phase": "RECOVERED", "verdict": reason, "exit": exit_code,
+                "interruption_point": "registry staging",
+                "restore": {"state": "DONE", "registry_digest": prior.digest},
+            })
+        if interrupted or not isinstance(exc, Exception):
+            raise
+        after = instance_state(root)
+        nxt = "gb setup --apply" if after.unconfigured else "gb triage"
+        steps.append(_step(
+            "device", "FAILED", f"registry staging failed and was restored: {type(exc).__name__}",
+            nxt,
+        ))
+        steps.append(_step("verify", "FAILED", f"{after.state} — {after.why}", nxt,
+                           state=after.state, next_command=nxt))
+        return _setup_finish(
+            apply=True, before=before, after=after, label=label, steps=steps,
+            actual=actual, nxt=nxt, rc=EXIT_ENVIRONMENT, transaction=failure_journal,
+        )
+    device_row = dict(device_row)
+    device_row["status"] = "STAGED"
+    device_row["detail"] = (
+        f"registry delta is journaled at {SETUP_STAGED.as_posix()}; {DEVICE_REGISTRY} is still "
+        "the exact prior digest until a first producer artifact is confirmed"
+    )
+    steps.append(device_row)
+
+    def on_attempt(step: str, argv: List[str], producer_root: str) -> None:
+        logged = _logged_producer_argv(argv)
+        actual.append(" ".join(logged))
+        journal["phase"] = "MEASURING"
+        journal["interruption_point"] = step
+        journal["producers"].append({
+            "step": step, "root": producer_root, "argv": logged, "attempt": 1,
+            "result": "PENDING", "exit": None, "artifact_ids": [],
+        })
+        journal["events"].append({
+            "event": "producer-attempt", "step": step, "argv": logged,
+            "journal_fsync": "DONE",
+        })
+        _write_setup_journal(root, journal)
+
+    def on_result(row: Dict[str, Any]) -> None:
+        entry = journal["producers"][-1]
+        for key in (
+            "result", "exit", "artifact_ids", "timed_out", "truncated", "elapsed_s",
+        ):
+            entry[key] = row.get(key)
+        journal["artifact_ids"] = sorted(set(
+            list(journal.get("artifact_ids", [])) + list(row.get("artifact_ids", []))
+        ))
+        journal["events"].append({
+            "event": "producer-result", "step": row.get("step"),
+            "result": row.get("result"), "exit": row.get("exit"),
+            "artifact_ids": row.get("artifact_ids", []), "journal_fsync": "DONE",
+        })
+        _write_setup_journal(root, journal)
+
+    try:
+        first_rows = _measure(
+            label, pre, True, plat, root=root, phase="pre", runner=runner,
+            on_attempt=on_attempt, on_result=on_result,
+        )
+        steps.extend(first_rows)
+        first_failure = next((row for row in first_rows if row["status"] == "FAILED"), None)
+        confirmed = sorted({artifact_id for row in first_rows if row["status"] == "OK"
+                            for artifact_id in row.get("artifact_ids", [])})
+        if first_failure is not None:
+            journal = _rollback_setup(
+                root, journal, prior, reason="PRODUCER_FAILED", exit_code=EXIT_FINDINGS,
+            )
+            after = instance_state(root)
+            nxt = "gb setup --apply" if after.unconfigured else "gb triage"
+            steps.append(_step(
+                "verify", "FAILED",
+                f"transaction restored after {first_failure['step']} failed; "
+                f"{after.state} — {after.why}", nxt,
+                state=after.state, next_command=nxt,
+            ))
+            return _setup_finish(
+                apply=True, before=before, after=after, label=label, steps=steps,
+                actual=actual, nxt=nxt, rc=EXIT_FINDINGS, transaction=journal,
+            )
+        if before.unconfigured and not confirmed:
+            guard = _step(
+                "measurement-guard", "FAILED",
+                "no newly confirmed dated producer artifact exists; registry commit refused",
+                "fix the producer result and re-run gb setup --apply",
+            )
+            steps.append(guard)
+            journal = _rollback_setup(
+                root, journal, prior, reason="ZERO_AUTHORITATIVE_ARTIFACTS",
+                exit_code=EXIT_FINDINGS,
+            )
+            after = instance_state(root)
+            nxt = "gb setup --apply"
+            steps.append(_step("verify", "FAILED", f"{after.state} — {after.why}", nxt,
+                               state=after.state, next_command=nxt))
+            return _setup_finish(
+                apply=True, before=before, after=after, label=label, steps=steps,
+                actual=actual, nxt=nxt, rc=EXIT_FINDINGS, transaction=journal,
+            )
+
+        journal["phase"] = "COMMITTING_REGISTRY"
+        journal["interruption_point"] = "registry commit"
+        journal["events"].append({
+            "event": "registry-commit-attempt",
+            "prior_digest": prior.digest,
+            "staged_digest": registry["staged"]["digest"],
+            "journal_fsync": "DONE",
+        })
+        _write_setup_journal(root, journal)
+        with durable_transition():
+            if changed:
+                atomic_write_bytes(root / DEVICE_REGISTRY, staged_body)
+                actual.append(f"committed {DEVICE_REGISTRY}")
+            committed = FileSnapshot.capture(root / DEVICE_REGISTRY)
+            if committed.digest != registry["staged"]["digest"]:
+                raise RuntimeError(
+                    "committed registry digest does not match the journaled staged digest"
+                )
+            journal["registry"]["committed"] = {
+                "exists": committed.existed, "digest": committed.digest,
+            }
+            journal["phase"] = "REGISTRY_COMMITTED"
+            journal["interruption_point"] = "post-registry inventory"
+            journal["events"].append({
+                "event": "registry-commit", "prior_digest": prior.digest,
+                "staged_digest": registry["staged"]["digest"],
+                "committed_digest": committed.digest,
+                "registry_fsync": "DONE" if changed else "NOT_NEEDED",
+                "journal_fsync": "DONE",
+            })
+            _write_setup_journal(root, journal)
+
+        device_row["status"] = "OK"
+        device_row["detail"] = (
+            f"{DEVICE_REGISTRY} committed only after {len(confirmed)} new authoritative "
+            "artifact(s)" if changed else
+            f"{DEVICE_REGISTRY} already matched the staged digest; no registry write needed"
+        )
+        post_rows = _measure(
+            label, pre, True, plat, root=root, phase="post", runner=runner,
+            on_attempt=on_attempt, on_result=on_result,
+        )
+        steps.extend(post_rows)
+        post_failure = next((row for row in post_rows if row["status"] == "FAILED"), None)
+        if post_failure is not None:
+            journal = _rollback_setup(
+                root, journal, prior, reason="POST_COMMIT_PRODUCER_FAILED",
+                exit_code=EXIT_FINDINGS,
+            )
+            after = instance_state(root)
+            nxt = "gb setup --apply" if after.unconfigured else "gb triage"
+            steps.append(_step(
+                "verify", "FAILED",
+                f"transaction restored after {post_failure['step']} failed; "
+                f"{after.state} — {after.why}", nxt,
+                state=after.state, next_command=nxt,
+            ))
+            return _setup_finish(
+                apply=True, before=before, after=after, label=label, steps=steps,
+                actual=actual, nxt=nxt, rc=EXIT_FINDINGS, transaction=journal,
+            )
+
+        after = instance_state(root)
+        if after.unconfigured:
+            journal = _rollback_setup(
+                root, journal, prior, reason="VERIFY_UNCONFIGURED", exit_code=EXIT_ENVIRONMENT,
+            )
+            after = instance_state(root)
+            nxt = "gb setup --apply"
+            steps.append(_step(
+                "verify", "FAILED",
+                "registry was not allowed to substitute for an authoritative artifact; "
+                f"{after.state} — {after.why}", nxt,
+                state=after.state, next_command=nxt,
+            ))
+            return _setup_finish(
+                apply=True, before=before, after=after, label=label, steps=steps,
+                actual=actual, nxt=nxt, rc=EXIT_ENVIRONMENT, transaction=journal,
+            )
+
+        journal["phase"] = "COMMITTED"
+        journal["verdict"] = "APPLIED" if actual or journal["artifact_ids"] else "UNCHANGED"
+        journal["exit"] = EXIT_OK
+        journal["state_after"] = after.state
+        journal["next_command_after"] = "gb triage"
+        journal["interruption_point"] = None
+        journal["events"].append({
+            "event": "transaction-commit", "state": after.state,
+            "artifact_ids": journal["artifact_ids"], "journal_fsync": "DONE",
+        })
+        _write_setup_journal(root, journal)
+        steps.append(_step(
+            "verify", "OK", f"{after.state} — {after.why}; journal committed", None,
+            state=after.state, next_command="gb triage",
+        ))
+        return _setup_finish(
+            apply=True, before=before, after=after, label=label, steps=steps,
+            actual=actual, nxt="gb triage", rc=EXIT_OK, transaction=journal,
+        )
+    except BaseException as exc:
+        interrupted = isinstance(exc, (Cancelled, KeyboardInterrupt))
+        exit_code = exc.exit_code if isinstance(exc, Cancelled) else 130 if isinstance(
+            exc, KeyboardInterrupt
+        ) else EXIT_ENVIRONMENT
+        if journal.get("producers") and journal["producers"][-1].get("result") == "PENDING":
+            journal["producers"][-1]["result"] = (
+                "INTERRUPTED" if interrupted else "FAILED_EXCEPTION"
+            )
+            journal["producers"][-1]["exit"] = exit_code
+        journal["interruption_point"] = journal.get("interruption_point") or "setup"
+        reason = ("INTERRUPTED" if interrupted else "FAILED") + f"_{type(exc).__name__}"
+        failure_journal = _rollback_setup(
+            root, journal, prior, reason=reason, exit_code=exit_code
+        )
+        if interrupted or not isinstance(exc, Exception):
+            raise
+        after = instance_state(root)
+        nxt = "gb setup --apply" if after.unconfigured else "gb triage"
+        steps.append(_step(
+            "transaction", "FAILED",
+            f"setup raised {type(exc).__name__}; registry and owned artifacts were restored", nxt,
+        ))
+        steps.append(_step("verify", "FAILED", f"{after.state} — {after.why}", nxt,
+                           state=after.state, next_command=nxt))
+        return _setup_finish(
+            apply=True, before=before, after=after, label=label, steps=steps,
+            actual=actual, nxt=nxt, rc=EXIT_ENVIRONMENT, transaction=failure_journal,
+        )
+
+
+def _fake_preflight() -> List[Dict[str, Any]]:
+    return [
+        _step("platform", "OK", "selftest platform"),
+        _step("python", "OK", "selftest python"),
+        _step("cli", "OK", "selftest producers"),
+        _step("desktop-app", "OK", "selftest desktop"),
+        _step("keychain", "OK", "selftest keychain"),
+        _step("crypto", "OK", "selftest crypto"),
+        _step("network", "OK", "selftest network"),
+    ]
+
+
+def _setup_selftest(as_json: bool) -> int:
+    """Offline fake-producer fixtures routed through the production transaction."""
+    fixtures: List[Dict[str, Any]] = []
+    plat = platform_support()
+
+    def exercise(name: str, mode: str, *, stale: bool = False) -> None:
+        with tempfile.TemporaryDirectory(prefix="gb-setup-selftest-") as tmp:
+            root = pathlib.Path(tmp)
+            if stale:
+                atomic_write_bytes(
+                    root / DEVICE_REGISTRY,
+                    b'{"desktops": [{"label": "old", "hostname": "old-host"}]}\n',
+                )
+            prior = FileSnapshot.capture(root / DEVICE_REGISTRY)
+            calls: List[str] = []
+            guard_seen = False
+            mode_box = [mode]
+
+            def fake(step: str, argv: List[str], _timeout_s: float) -> Dict[str, Any]:
+                nonlocal guard_seen
+                calls.append(step)
+                if step in ("surface", "deployment"):
+                    current = FileSnapshot.capture(root / DEVICE_REGISTRY)
+                    guard_seen = (
+                        current.digest == prior.digest
+                        and (root / SETUP_STAGED).is_file()
+                        and _setup_journal_path(root).is_file()
+                    )
+                    if not guard_seen:
+                        return _step(
+                            step, "FAILED", "registry was committed before first measurement",
+                            result="TRANSACTION_GUARD_MISSING", exit=9,
+                        )
+                logged = _logged_producer_argv(argv)
+                if step == "surface" and mode_box[0] == "timeout":
+                    return _step(
+                        step, "FAILED", "fake timeout", result="TIMEOUT", exit=None,
+                        timed_out=True, truncated=False, argv=logged, attempt=1,
+                    )
+                if step == "surface" and mode_box[0] == "fail":
+                    return _step(
+                        step, "FAILED", "fake failure", result="EXIT_NONZERO", exit=17,
+                        timed_out=False, truncated=False, argv=logged, attempt=1,
+                    )
+                if step == "surface" and mode_box[0] == "interrupt":
+                    raise Cancelled(2)
+                if step == "surface" and mode_box[0] == "zero":
+                    return _step(
+                        step, "OK", "fake exited without artifact", result="EXIT_ZERO", exit=0,
+                        timed_out=False, truncated=False, argv=logged, attempt=1,
+                    )
+                artifact_name = (
+                    "2026-09-13.selftest.json"
+                    if step == "inventory" else f"2026-09-13-{step}.json"
+                )
+                target = root / SETUP_ARTIFACT_ROOT[step] / artifact_name
+                atomic_write_json(target, {"producer": step, "selftest": True})
+                if step == "surface" and mode_box[0] == "partial-fail":
+                    return _step(
+                        step, "FAILED", "fake partial failure", result="EXIT_NONZERO", exit=23,
+                        timed_out=False, truncated=False, argv=logged, attempt=1,
+                    )
+                return _step(
+                    step, "OK", "fake measured", result="EXIT_ZERO", exit=0,
+                    timed_out=False, truncated=False, argv=logged, attempt=1,
+                )
+
+            payload: Dict[str, Any] = {}
+            caught = False
+            try:
+                rc, payload, _human = _setup_transaction(
+                    label="selftest", apply=True, plat=plat, pre_rows=_fake_preflight(),
+                    root=root, runner=fake, hostname="selftest-host",
+                )
+            except Cancelled:
+                caught = True
+                rc = 130
+            journal_any = read_json_capped(_setup_journal_path(root))
+            journal = journal_any if isinstance(journal_any, dict) else {}
+            after = FileSnapshot.capture(root / DEVICE_REGISTRY)
+            recovered_mode = mode in ("fail", "timeout", "interrupt", "partial-fail", "zero")
+            checks = [guard_seen]
+            if recovered_mode:
+                checks.extend([
+                    after.digest == prior.digest,
+                    instance_state(root).unconfigured,
+                    journal.get("phase") == "RECOVERED",
+                    (journal.get("restore") or {}).get("registry_matches_prior") is True,
+                    (journal.get("restore") or {}).get("state") == "DONE",
+                    journal.get("recovery_argv") == list(SETUP_RECOVERY_ARGV),
+                    journal.get("state_after") == "UNCONFIGURED",
+                    journal.get("next_command_after") == "gb setup --apply",
+                    not _artifact_ids(root),
+                ])
+            else:
+                checks.extend([
+                    rc == 0,
+                    after.existed,
+                    instance_state(root).state == "CONFIGURED",
+                    journal.get("phase") == "COMMITTED",
+                    bool(journal.get("artifact_ids")),
+                    ((journal.get("registry") or {}).get("committed") or {}).get("digest")
+                    == after.digest,
+                ])
+            if mode == "interrupt":
+                checks.append(caught)
+            if mode == "timeout":
+                checks.append(any(row.get("result") == "TIMEOUT"
+                                  for row in journal.get("producers", [])))
+            if mode == "partial-fail":
+                checks.append(bool(journal.get("artifact_ids")))
+                checks.append(bool((journal.get("restore") or {}).get("artifact_ids_removed")))
+            if stale:
+                checks.append(prior.existed and instance_state(root).unconfigured)
+            producers = journal.get("producers", [])
+            logging_shape = bool(producers) and all(
+                key in producers[0] for key in ("argv", "result", "artifact_ids", "exit")
+            ) and all(key in journal for key in (
+                "registry", "journal", "restore", "state_before", "state_after",
+                "verdict", "exit", "recovery_argv",
+            ))
+            checks.append(logging_shape)
+            reapply_exit: Optional[int] = None
+            reapply_state: Optional[str] = None
+            if mode == "success":
+                calls_before = len(calls)
+                committed_digest = after.digest
+
+                def must_not_run(*_args: Any) -> Dict[str, Any]:
+                    raise AssertionError("idempotent reapply spawned a producer")
+
+                reapply_exit, _again, _again_human = _setup_transaction(
+                    label="selftest", apply=True, plat=plat, pre_rows=_fake_preflight(),
+                    root=root, runner=must_not_run, hostname="selftest-host",
+                )
+                reapply_state = instance_state(root).state
+                checks.extend([
+                    reapply_exit == 0,
+                    reapply_state == "CONFIGURED",
+                    FileSnapshot.capture(root / DEVICE_REGISTRY).digest == committed_digest,
+                    len(calls) == calls_before,
+                ])
+            elif mode == "fail" and not stale:
+                mode_box[0] = "success"
+                reapply_exit, _again, _again_human = _setup_transaction(
+                    label="selftest", apply=True, plat=plat, pre_rows=_fake_preflight(),
+                    root=root, runner=fake, hostname="selftest-host",
+                )
+                reapply_state = instance_state(root).state
+                checks.extend([reapply_exit == 0, reapply_state == "CONFIGURED"])
+            fixtures.append({
+                "fixture": name, "status": "PASS" if all(checks) else "FAIL",
+                "mode": mode, "calls": calls, "registry_prior_digest": prior.digest,
+                "registry_after_digest": after.digest, "guard_seen": guard_seen,
+                "journal_phase": journal.get("phase"),
+                "artifact_ids": journal.get("artifact_ids", []),
+                "restore": journal.get("restore"), "exit": rc,
+                "recovery_argv": journal.get("recovery_argv"),
+                "reapply_exit": reapply_exit, "reapply_state": reapply_state,
+                "registry": journal.get("registry"),
+                "producers": producers,
+                "journal": journal.get("journal"),
+                "state_before": journal.get("state_before"),
+                "state_after": journal.get("state_after"),
+                "next_command_after": journal.get("next_command_after"),
+                "interruption_point": journal.get("interruption_point"),
+                "verdict": journal.get("verdict"),
+            })
+
+    with tempfile.TemporaryDirectory(prefix="gb-setup-selftest-") as tmp:
+        dry_root = pathlib.Path(tmp)
+        before_paths = tuple(dry_root.iterdir())
+        rc, payload, _human = _setup_transaction(
+            label="selftest", apply=False, plat=plat, pre_rows=_fake_preflight(),
+            root=dry_root, runner=lambda *_args: (_ for _ in ()).throw(
+                AssertionError("dry-run spawned fake producer")
+            ), hostname="selftest-host",
+        )
+        after_paths = tuple(dry_root.iterdir())
+        transaction = payload.get("transaction") or {}
+        dry_ok = (
+            rc == 0 and before_paths == after_paths == ()
+            and transaction.get("phase") == "PLANNED"
+            and (transaction.get("journal") or {}).get("fsync") == "NOT_RUN"
+            and bool(transaction.get("producer_prerequisites"))
+            and (transaction.get("registry") or {}).get("operation") == "CREATE"
+        )
+        fixtures.append({
+            "fixture": "dry-run-zero-writes", "status": "PASS" if dry_ok else "FAIL",
+            "registry": transaction.get("registry"),
+            "producer_prerequisites": transaction.get("producer_prerequisites"),
+            "paths_before": [], "paths_after": [path.name for path in after_paths], "exit": rc,
+        })
+
+    exercise("preflight-pass-producer-fail", "fail")
+    exercise("timeout-after-registry-staging", "timeout")
+    exercise("partial-artifact-compensation", "partial-fail")
+    exercise("interruption-restores", "interrupt")
+    exercise("stale-registry-zero-artifacts", "zero", stale=True)
+    exercise("successful-first-measurement", "success")
+
+    failed = [row for row in fixtures if row["status"] != "PASS"]
+    rc = EXIT_FINDINGS if failed else EXIT_OK
+    result = envelope(
+        "setup", selftest=True, offline=True,
+        verdict="FAIL" if failed else "PASS", fixtures=fixtures,
+        passed=len(fixtures) - len(failed), total=len(fixtures), exit=rc,
+    )
+    emit(
+        result, as_json,
+        f"setup selftest {'FAIL' if failed else 'PASS'} · "
+        f"{len(fixtures) - len(failed)}/{len(fixtures)} offline transaction fixtures",
+    )
+    return rc
+
+
+def cmd_setup(a: SetupArgs) -> int:
+    """Zero to measured: journal, measure, then atomically commit the desktop registry."""
+    if a.selftest:
+        if a.apply or a.device or a.persona or a.list_personas:
+            print("gb setup: --selftest is offline and cannot be combined with setup actions",
+                  file=sys.stderr)
+            return EXIT_USAGE
+        return _setup_selftest(a.json)
+    if a.list_personas:
+        if a.apply or a.device or a.persona:
+            return _role_redirect_error(
+                "setup", "first hour", a.json,
+                "--list-personas cannot be combined with setup actions", refused=bool(a.apply),
+            )
+        return _delegate_role(None, a.json, "setup role list")
+    if a.persona:
+        if a.apply or a.device:
+            return _role_redirect_error(
+                "setup", a.persona, a.json,
+                "persona setup is navigation only; run the canonical role plan first",
+                refused=bool(a.apply),
+            )
+        return _delegate_role(a.persona, a.json, "setup role")
     label, bad = _device_label(a.device)
     if label is None:
         print(f"gb: {bad}", file=sys.stderr)
         return EXIT_USAGE
-
-    before = instance_state()
     plat = platform_support()
-    pre_rows = _preflight(plat)
-    pre = {r["step"]: r["status"] for r in pre_rows}
-
-    # Fatal, in dry-run as much as under --apply: without the interpreter or the producers there
-    # is no plan to print either. ENVIRONMENT, because the machine is what is missing.
-    fatal = [r for r in pre_rows if r["step"] in ("python", "cli") and r["status"] != "OK"]
-    # The only route out of UNCONFIGURED runs through at least one producer. The surface snapshot
-    # needs the network; the deployment audit needs the app. Neither means nothing can be
-    # measured, and registering a desktop anyway would flip this root to CONFIGURED with zero
-    # measurements behind it — the check wall, restored, with a registry on top.
-    measurable = pre.get("network") == "OK" or pre.get("desktop-app") == "OK"
-
-    dev_doc: Optional[Dict[str, Any]] = None
-    if fatal:
-        dev_row = _step("device", "SKIPPED", "preflight is fatal — nothing was planned",
-                        "fix the preflight rows above")
-    else:
-        dev_row, dev_doc = _plan_device(label)
-
-    refused = bool(a.apply) and not measurable and before.unconfigured and not fatal
-    steps: List[Dict[str, Any]] = list(pre_rows)
-    actual: List[str] = []
-
-    if fatal:
-        steps.append(dev_row)
-        steps.append(_step("measure", "SKIPPED", "preflight is fatal", None))
-    elif refused:
-        steps.append(_step(
-            "device", "SKIPPED",
-            f"refusing to write {DEVICE_REGISTRY}: nothing can be measured from this machine "
-            f"(no network, no desktop app), and registering a desktop is on its own enough to "
-            f"make this root look CONFIGURED — that would hand you the 22-check wall with a "
-            f"registry on top instead of a measured instance. Nothing was written.",
-            "get network access to docs.x.ai, or install the Grok Bot desktop app, then "
-            "re-run `gb setup --apply`"))
-        steps.append(_step("measure", "SKIPPED", "no producer can run here", None))
-    else:
-        if a.apply and dev_doc is not None:
-            atomic_write_json(ROOT / DEVICE_REGISTRY, dev_doc)
-            dev_row = _step("device", "OK", dev_row["detail"].replace("would ", "", 1),
-                            device=label, hostname=dev_row.get("hostname"),
-                            desktops=dev_row.get("desktops"))
-            actual.append(f"wrote {DEVICE_REGISTRY}")
-        steps.append(dev_row)
-        measured = _measure(label, pre, bool(a.apply), plat)
-        steps.extend(measured)
-        # Only steps that actually SPAWNED a child go in `actual_actions`. `_run_producer` is
-        # the only thing that stamps `exit`; an already-measured row is OK without having run,
-        # and reporting its command as an action taken is the lie that would make a second
-        # `--apply` look like a re-fetch it deliberately did not perform.
-        actual += [str(r.get("command")) for r in measured if "exit" in r]
-
-    after = instance_state()
-    # The single sentence that answers "so what do I type now". `--apply` is only the right
-    # answer when applying could actually change something: when preflight is fatal, or when
-    # the run was REFUSED, the next command is the remediation for that, not a re-run that
-    # would take exactly the same decision again.
-    blocked = (fatal[0] if fatal else None)
-    if blocked is not None:
-        nxt = str(blocked.get("remediation") or "gb setup")
-    elif refused:
-        nxt = "curl -sSI " + DOCS_PROBE_URL
-    elif after.unconfigured:
-        nxt = "gb setup --apply"
-    else:
-        nxt = "gb triage"
-    # A plan that wrote nothing is not a FAILURE — it is a plan. Only `--apply` that finished
-    # with the root still unconfigured has actually failed to do its job.
-    verify = _step(
-        "verify",
-        "OK" if not after.unconfigured else ("FAILED" if a.apply else "PLANNED"),
-        f"{after.state} — {after.why}",
-        None if not after.unconfigured else
-        ("nothing here can run setup — see the ABSENT preflight row(s) above" if fatal else
-         "nothing can be measured from this machine, so nothing was written — see the device row"
-         if refused else
-         "nothing was written, so the root is still UNCONFIGURED — that is what a plan means; "
-         "re-run with --apply" if not a.apply else
-         "no step produced an artifact; fix the SKIPPED/FAILED rows above and re-run"),
-        state=after.state, next_command=nxt)
-    steps.append(verify)
-
-    failed = [r for r in steps if r["status"] == "FAILED"]
-    if fatal:
-        rc = EXIT_ENVIRONMENT
-    elif refused:
-        rc = EXIT_REFUSED
-    elif not a.apply:
-        rc = EXIT_OK
-    elif after.unconfigured:
-        rc = EXIT_ENVIRONMENT
-    else:
-        rc = EXIT_FINDINGS if failed else EXIT_OK
-
-    payload = envelope(
-        "setup",
-        dry_run=not a.apply,
-        state=after.state,
-        device=label,
-        hostname=socket.gethostname(),
-        state_before=before.state,
-        state_after=after.state,
-        refused=refused,
-        steps=steps,
-        # Actions only. `verify` is an OBSERVATION, and listing it beside "would run X" makes
-        # the plan look like it intends to do something it merely intends to check.
-        planned=[r["detail"] for r in steps
-                 if r["status"] == "PLANNED" and r["step"] != "verify"],
-        actual_actions=actual,
-        next_command=nxt,
-        commands=[r["remediation"] for r in steps if r.get("remediation")] or [nxt],
+    rc, payload, human = _setup_transaction(
+        label=label, apply=bool(a.apply), plat=plat, pre_rows=_preflight(plat),
     )
-
-    head = ("gb setup — PLAN (nothing was written; re-run with --apply)" if not a.apply
-            else ("gb setup — REFUSED (nothing was written)" if refused
-                  else "gb setup — APPLIED"))
-    human = [head, ""]
-    for row in steps:
-        # 16, not 9: NOT_IMPLEMENTED is the longest status a row can carry, and a column that
-        # the widest value overflows collides with the next one (`NOT_IMPLEMENTEDkeychain`).
-        human.append(f"  {row['status']:<16}{row['step']:<12}{row['detail'][:110]}")
-        if row.get("remediation"):
-            human.append(f"  {'':<16}{'':<12}fix: {str(row['remediation'])[:110]}")
-    human += ["", f"state: {before.state} -> {after.state}"]
-    if refused:
-        human += ["", "plan first (drop --apply):", "  gb setup"]
-    human += ["", "next:",
-              f"  {payload['next_command']}",
-              "",
-              "new-user pack (first-hour):",
-              f"  {FIRST_HOUR_SETUP}",
-              "  gb setup --list-personas",
-              f"  {FIRST_HOUR_WALK}"]
-    emit(payload, a.json, "\n".join(human))
+    emit(payload, a.json, human)
     return rc
+
+def cmd_role(a: RoleArgs) -> int:
+    """Canonical role phrase -> one exact public journey grammar."""
+    argv: List[str] = [sys.executable, str(BIN / "gb-role-journey.py")]
+    transitions = [a.apply, bool(a.status), bool(a.resume), bool(a.rollback), a.list]
+    if sum(bool(value) for value in transitions) > 1:
+        print("gb role: choose exactly one of --apply/--status/--resume/--rollback/--list", file=sys.stderr)
+        return EXIT_USAGE
+    if a.selftest or a.capabilities:
+        if any(transitions) or a.role:
+            print("gb role: --selftest/--capabilities cannot select a transition", file=sys.stderr)
+            return EXIT_USAGE
+        argv.append("--selftest" if a.selftest else "--capabilities")
+    elif a.list:
+        argv.append("--list")
+    elif a.apply:
+        if not a.role or not a.plan_hash:
+            print("gb role: --apply requires ROLE and --plan-hash", file=sys.stderr)
+            return EXIT_USAGE
+        argv += ["apply", a.role, "--plan-hash", a.plan_hash, "--yes", "--approve-all"]
+    elif a.status:
+        if a.role:
+            print("gb role: --status takes ATTEMPT_ID, not a role", file=sys.stderr)
+            return EXIT_USAGE
+        argv += ["status", "--correlation-id", a.status]
+    elif a.resume:
+        if a.role or not a.checkpoint:
+            print("gb role: --resume requires ATTEMPT_ID and --checkpoint, not a role", file=sys.stderr)
+            return EXIT_USAGE
+        argv += [
+            "resume", "--correlation-id", a.resume, "--ack", a.checkpoint,
+            "--yes", "--approve-all",
+        ]
+    elif a.rollback:
+        if a.role:
+            print("gb role: --rollback takes ATTEMPT_ID, not a role", file=sys.stderr)
+            return EXIT_USAGE
+        argv += [
+            "rollback", "--correlation-id", a.rollback, "--yes", "--approve-all",
+        ]
+    else:
+        if not a.role:
+            print('gb role: supply a role phrase or use --list', file=sys.stderr)
+            return EXIT_USAGE
+        argv += ["plan", a.role]
+    if a.input:
+        argv += ["--input", a.input]
+    if a.attempt_id:
+        argv += ["--attempt-id", a.attempt_id]
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=1800, label="role journey")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -2839,22 +3830,21 @@ taking seconds or not returning. It is the second stop, after `gb setup --apply`
     gb platform --json     | jq -r .status                is this OS even measured here
     gb mirror                                             your own fleet, off disk, no token
 
-FIRST HOUR. Copy-paste these five argv (same list as `gb bootstrap`). Never --apply.
-hello-computer is the first-hour template; first-hour is the new-user persona.
+FIRST HOUR. One canonical no-write plan owns every stage and digest.
 
-    {FIRST_HOUR_PLATFORM}
-    {FIRST_HOUR_WALK}
-    {FIRST_HOUR_DEPLOY}
-    {FIRST_HOUR_SETUP}
-    {FIRST_HOUR_VERIFY}
-
-    gb bootstrap --json | jq -r '.commands[]'     the same five
-    gb bootstrap --for-agent                      machine contract + exact next argv
+    {FIRST_HOUR_ROLE}
+    gb role --list                              bounded roles and persona versions
+    gb bootstrap --for-agent                   compatibility redirect to the same plan
 
 ONCE CONFIGURED, triage is the loop.
 
     gb triage --json | jq '.red[].check'      what is not green
     gb triage --json | jq -r '.commands[]'    what to run next
+
+DAILY. One call tells you what moved since yesterday.
+
+    gb daily --no-fetch --json | jq .summary     small: rows capped at 20, counts full
+    gb daily proof --json | jq '{{rows, counts}}'  receipted new-since-last-run (+post draft)
 
 NOT SET UP YET. On a root where nothing has ever been measured, `triage`, `health`, `work` and
 `doctor` do NOT emit one ERROR per unmeasured check. They emit one route and exit 3:
@@ -2921,9 +3911,8 @@ gb — quickstart
 This repo watches one thing: a live Grok Bot deployment (the account, its Bots, its plugins, and
 the vendor surface those depend on). The producers in bin/ measure it; `gb` is how you ask.
 
-First hour (new-user pack `first-hour`):
-  {FIRST_HOUR_WALK}
-  {FIRST_HOUR_SETUP}
+First hour (canonical role plan):
+  {FIRST_HOUR_ROLE}
 
   0. gb setup             fresh clone? this registers this machine and takes the first
                           measurements (dry run unless --apply). Until something has been
@@ -3085,6 +4074,47 @@ def _passthrough(argv: List[str], *, budget_s: int, label: str) -> int:
     return int(proc.code)
 
 
+def _role_public_argv(role: str, *, as_json: bool = True) -> List[str]:
+    argv = ["gb", "role", role]
+    if as_json:
+        argv.append("--json")
+    return argv
+
+
+def _render_public_argv(argv: Sequence[str]) -> str:
+    return subprocess.list2cmdline(list(argv)) if os.name == "nt" else shlex.join(argv)
+
+
+def _delegate_role(role: Optional[str], as_json: bool, label: str) -> int:
+    argv = [sys.executable, str(BIN / "gb-role-journey.py")]
+    argv += ["--list"] if role is None else ["plan", role]
+    if as_json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=1800, label=label)
+
+
+def _role_redirect_error(
+    source: str,
+    role: str,
+    as_json: bool,
+    reason: str,
+    *,
+    refused: bool,
+) -> int:
+    plan_argv = _role_public_argv(role)
+    status = "REFUSED" if refused else "USAGE"
+    payload = envelope(
+        source,
+        status=status,
+        mutates=False,
+        error=reason,
+        plan_argv=plan_argv,
+        recovery_argv=plan_argv,
+    )
+    human = f"gb {source}: {reason}\n    plan: {_render_public_argv(plan_argv)}"
+    emit(payload, as_json, human)
+    return EXIT_REFUSED if refused else EXIT_USAGE
+
 def cmd_templates(a: TemplatesArgs) -> int:
     """Pass through to `bin/gb-templates.py` — the proposed Bot templates and their rules.
 
@@ -3094,6 +4124,25 @@ def cmd_templates(a: TemplatesArgs) -> int:
     through the CLI it was documented against. That is the exact failure the dogfooding rule
     exists to catch, and it caught its author.
     """
+    if a.role:
+        mixed = (
+            a.action != "list" or a.id or a.apply or a.screened or a.force
+            or a.source or a.path
+        )
+        if mixed:
+            return _role_redirect_error(
+                "templates", a.role, a.json,
+                "--role cannot be combined with template actions", refused=bool(a.apply),
+            )
+        return _delegate_role(a.role, a.json, "templates role")
+    if a.action == "deploy" and a.id == "hello-computer":
+        if a.apply:
+            return _role_redirect_error(
+                "templates", "first hour", a.json,
+                "hello-computer deployment moved to the canonical role transaction",
+                refused=True,
+            )
+        return _delegate_role("first hour", a.json, "templates first hour")
     argv: List[str] = [sys.executable, str(BIN / "gb-templates.py"), a.action]
     if a.action in ("show", "deploy", "publish"):
         if not a.id:
@@ -3171,18 +4220,26 @@ def cmd_templates(a: TemplatesArgs) -> int:
 
 
 def cmd_walk(a: WalkArgs) -> int:
-    """Pass through to `bin/gb-walk.py` — the guided tour of the CLI and the Bot templates."""
+    """Walk content, while every role-shaped invocation delegates to `gb role`."""
+    if a.role:
+        mixed = bool(a.paste or a.galaxy or a.step or a.track == "cli")
+        if mixed:
+            return _role_redirect_error(
+                "walk", a.role, a.json,
+                "--role cannot be combined with paste, Galaxy, step, or the CLI track",
+                refused=False,
+            )
+        return _delegate_role(a.role, a.json, "walk role")
+    if a.paste == "hello-computer":
+        if a.galaxy or a.step or a.track == "cli":
+            return _role_redirect_error(
+                "walk", "first hour", a.json,
+                "hello-computer is the canonical first-hour role journey",
+                refused=False,
+            )
+        return _delegate_role("first hour", a.json, "walk first hour")
     if a.paste:
         argv: List[str] = [sys.executable, str(BIN / "gb-walk.py"), "bots", "--paste", a.paste]
-        if a.role:
-            argv += ["--role", a.role]
-        if a.galaxy:
-            argv += ["--galaxy", a.galaxy]
-        if a.json:
-            argv.append("--json")
-        return _passthrough(argv, budget_s=300, label="walk")
-    if a.role:
-        argv = [sys.executable, str(BIN / "gb-walk.py"), "bots", "--role", a.role]
         if a.galaxy:
             argv += ["--galaxy", a.galaxy]
         if a.json:
@@ -3196,7 +4253,7 @@ def cmd_walk(a: WalkArgs) -> int:
     if not a.track:
         print(
             "gb: walk needs a track: cli | bots\n"
-            f"    first hour:  {FIRST_HOUR_WALK}\n"
+            f"    first hour:  {FIRST_HOUR_ROLE}\n"
             "    CLI tour:    gb walk cli\n"
             "    Bot tour:    gb walk bots\n"
             "    see:         gb walk --help",
@@ -3208,9 +4265,10 @@ def cmd_walk(a: WalkArgs) -> int:
                 status="USAGE",
                 error="walk needs a track: cli | bots",
                 tracks=["cli", "bots"],
-                next=FIRST_HOUR_WALK,
-                hint=FIRST_HOUR_WALK,
-                did_you_mean="gb walk bots",
+                next=FIRST_HOUR_ROLE,
+                hint=FIRST_HOUR_ROLE,
+                plan_argv=_role_public_argv("first hour"),
+                did_you_mean=FIRST_HOUR_ROLE,
             ), True, "")
         return EXIT_USAGE
     argv = [sys.executable, str(BIN / "gb-walk.py"), a.track]
@@ -3220,99 +4278,9 @@ def cmd_walk(a: WalkArgs) -> int:
         argv.append("--json")
     return _passthrough(argv, budget_s=300, label="walk")
 
-def _bootstrap_steps() -> List[Dict[str, Any]]:
-    """The first-hour argv, in order. Dry-run; never --apply."""
-    return [
-        {
-            "action": "platform",
-            "command": FIRST_HOUR_PLATFORM,
-            "destructive": False,
-            "purpose": "is this OS even measured here",
-        },
-        {
-            "action": "paste",
-            "command": FIRST_HOUR_WALK,
-            "destructive": False,
-            "purpose": "charter text for the app, ready to paste",
-        },
-        {
-            "action": "deploy",
-            "command": FIRST_HOUR_DEPLOY,
-            "destructive": False,
-            "purpose": "dry-run FromTemplate deploy of hello-computer (no --apply)",
-        },
-        {
-            "action": "setup",
-            "command": FIRST_HOUR_SETUP,
-            "destructive": False,
-            "purpose": "new-user persona pack first-hour",
-        },
-        {
-            "action": "verify",
-            "command": FIRST_HOUR_VERIFY,
-            "destructive": False,
-            "purpose": "what is wrong right now after the plan",
-        },
-    ]
-
-
 def cmd_bootstrap(a: BootstrapArgs) -> int:
-    """One call: paste + dry-run deploy + persona setup + verify argv. Never --apply."""
-    steps = _bootstrap_steps()
-    commands = [str(s["command"]) for s in steps]
-    digest = hashlib.sha256("\n".join(commands).encode()).hexdigest()[:12]
-    payload = envelope(
-        "bootstrap",
-        dry_run=True,
-        mutates=False,
-        data_hash=digest,
-        quick_ref={
-            "summary": "first-hour setup+launch: paste, dry-run deploy, persona, verify",
-            "template": "hello-computer",
-            "persona": "first-hour",
-            "apply": False,
-        },
-        commands=commands,
-        steps=steps,
-        warnings=[
-            "this verb never applies; "
-            "`gb templates deploy hello-computer --apply` is a follow-up "
-            "after a signed-in desktop session",
-        ],
-    )
-    # Axiom 12: bootstrap is a static plan, not a measurement. Wall-clock on
-    # stdout makes two identical runs byte-unequal. data_hash is already over
-    # the command list only.
-    payload.pop("measured_at", None)
-    if a.for_agent and not a.json:
-        width = max(len(str(s["action"])) for s in steps)
-        lines = [
-            "gb bootstrap — first-hour contract (read; never --apply)",
-            f"schema: gb-bootstrap/{CONTRACT_VERSION}",
-            "mutates: false",
-            "dry_run: true",
-            "",
-        ]
-        for s in steps:
-            lines.append(f"{s['action']:<{width}}  {s['command']}")
-        print("\n".join(lines))
-        return EXIT_OK
-    human = [
-        "gb bootstrap — first-hour plan (nothing was written; this verb never --apply)",
-        "",
-        f"quick_ref: {payload['quick_ref']['summary']}",
-        "",
-        "copy-paste next:",
-    ]
-    for cmd in commands:
-        human.append(f"  {cmd}")
-    human += [
-        "",
-        "deploy is a dry run. Add --apply only after a signed-in desktop session,",
-        "as a follow-up — never this command.",
-    ]
-    emit(payload, a.json, "\n".join(human))
-    return EXIT_OK
+    """Compatibility on-ramp; the role orchestrator owns every stage and digest."""
+    return _delegate_role(a.role or "first hour", a.json, "bootstrap role")
 
 
 
@@ -3322,8 +4290,12 @@ def cmd_daily(a: DailyArgs) -> int:
         argv: List[str] = [sys.executable, str(BIN / "gb-daily-proof.py")]
         if a.json:
             argv.append("--json")
+        if a.full:
+            argv.append("--full")
         if a.selftest:
             argv.append("--selftest")
+        if a.share:
+            argv.append("--share")
         return _passthrough(argv, budget_s=120, label="daily proof")
     argv = [str(BIN / "gb-daily.sh")]
     if a.no_fetch:
@@ -3332,6 +4304,8 @@ def cmd_daily(a: DailyArgs) -> int:
         argv += ["--kind", k]
     if a.json:
         argv.append("--json")
+    if a.full:
+        argv.append("--full")
     return _passthrough(argv, budget_s=3600, label="the daily tick")
 
 
@@ -3414,6 +4388,8 @@ def cmd_jobs(a: JobsArgs) -> int:
         argv += ["--verdict", a.verdict]
     if a.note:
         argv += ["--note", a.note]
+    if a.file:
+        argv += ["--file", a.file]
     if a.live:
         argv.append("--live")
     if a.json:
@@ -3436,7 +4412,14 @@ def cmd_demand(a: DemandArgs) -> int:
 
 
 def cmd_galaxy(a: GalaxyArgs) -> int:
-    """Pass through to `bin/gb-galaxy.py` — baseline/diff across the Sep 15-17 livestream."""
+    """Event measurement plus an explicit role-navigation seam."""
+    if a.role:
+        if a.action != "sessions":
+            return _role_redirect_error(
+                "galaxy", a.role, a.json,
+                "--role cannot be combined with baseline or diff", refused=False,
+            )
+        return _delegate_role(a.role, a.json, "galaxy role")
     argv: List[str] = [sys.executable, str(BIN / "gb-galaxy.py"), a.action]
     if a.json:
         argv.append("--json")
@@ -3451,17 +4434,33 @@ def cmd_fleet(a: FleetArgs) -> int:
     where the automations read demands a UUID, a roster read off the per-machine cache that
     reported a live Bot as deleted, and an `updatedAtMs` that arrives as a str on one path.
     """
+    if a.role:
+        mixed = (
+            a.action != "roster" or a.bot or a.text or a.yes or a.only
+            or a.spec or a.apply or a.manifest
+        )
+        if mixed:
+            return _role_redirect_error(
+                "fleet", a.role, a.json,
+                "--role cannot be combined with fleet reads or mutations",
+                refused=bool(a.yes or a.apply or a.action in ("send", "rebuild", "rollback")),
+            )
+        return _delegate_role(a.role, a.json, "fleet role")
     if a.action in ("rebuild", "rollback"):
-        # --plan is the default (producer plans when --apply is absent); --apply is explicit
-        # only. Rollback deletes exactly manifest["created"] by new_numeric_id, nothing else.
-        # Annotated HERE, at the first binding, because the fall-through path below used to
-        # carry the annotation and a later-added branch turned that into a redefinition.
+        # Both mutations plan by default. Rollback is the sharper edge and the producer refuses
+        # it unless BOTH --apply and --yes survive this pass-through; the bound manifest and
+        # fresh server absence readback decide whether it actually completed.
         argv: List[str] = [sys.executable, str(BIN / "gb-rebuild-fleet.py")]
         if a.action == "rollback":
             if not a.manifest:
                 print("gb: fleet rollback needs a manifest path", file=sys.stderr)
                 return EXIT_USAGE
-            return _passthrough(argv + ["--rollback", a.manifest], budget_s=600, label="fleet rollback")
+            argv += ["--rollback", a.manifest]
+            if a.apply:
+                argv.append("--apply")
+            if a.yes:
+                argv.append("--yes")
+            return _passthrough(argv, budget_s=600, label="fleet rollback")
         if a.only:
             argv += ["--only", a.only]
         if a.spec:
@@ -3505,8 +4504,27 @@ def cmd_dogfood(a: DogfoodArgs) -> int:
         argv += ["--accept", a.accept]
     if a.why:
         argv += ["--why", a.why]
+    for disposition in a.dispose or []:
+        argv += ["--dispose", disposition]
+    for flag, value in (
+        ("--owner", a.owner),
+        ("--evidence", a.evidence),
+        ("--falsifier", a.falsifier),
+        ("--expires", a.expires),
+        ("--review", a.review),
+        ("--ne", a.ne),
+        ("--decisions", a.decisions),
+    ):
+        if value:
+            argv += [flag, value]
+    if a.no_probe:
+        argv.append("--no-probe")
+    if a.dry_run:
+        argv.append("--dry-run")
+    if a.selftest:
+        argv.append("--selftest")
     if a.json:
-        argv.append("--json")
+        argv.append("--json-out")
     return _passthrough(argv, budget_s=600, label="dogfood")
 
 
@@ -3554,6 +4572,16 @@ def cmd_advise(a: AdviseArgs) -> int:
     argv: List[str] = [sys.executable, str(BIN / "gb-advise.py")]
     if a.json:
         argv.append("--json")
+    if a.full:
+        argv.append("--full")
+    if a.limit is not None:
+        argv += ["--limit", str(a.limit)]
+    for s in a.source:
+        argv += ["--source", s]
+    if a.dry_run:
+        argv.append("--dry-run")
+    if a.selftest:
+        argv.append("--selftest")
     return _passthrough(argv, budget_s=600, label="advise")
 
 def cmd_research(a: ResearchArgs) -> int:
@@ -3794,11 +4822,15 @@ def cmd_post(a: PostArgs) -> int:
         argv += ["--limit", str(a.limit)]
     if a.out:
         argv.append("--out")
-    if a.include_published:
-        argv.append("--include-published")
     if a.json:
         argv.append("--json")
-    return _passthrough(argv, budget_s=1800, label="post")
+    rc = _passthrough(argv, budget_s=1800, label="post")
+    if rc == 0 and a.out:
+        print(
+            "share it:  bin/gb-share-post.sh --save ~/posts/ < posts/<ISO>.md",
+            file=sys.stderr,
+        )
+    return rc
 
 
 def cmd_roadmap(a: RoadmapArgs) -> int:
@@ -3906,6 +4938,13 @@ def cmd_handover(a: HandoverArgs) -> int:
 
 def cmd_record(a: RecordArgs) -> int:
     """Pass through to `bin/gb-record-inventory.py` — the structured hand record."""
+    if not (a.device or a.root or a.validate or a.list or a.template or a.no_roster):
+        print(
+            "gb record: give it a job — --device LABEL --template, --validate FILE, or --list\n"
+            "    try: gb record --list",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
     argv: List[str] = [sys.executable, str(BIN / "gb-record-inventory.py")]
     if a.device:
         argv += ["--device", a.device]
@@ -4051,6 +5090,8 @@ def cmd_grokbotdev(a: GrokbotdevArgs) -> int:
         argv.append("--selftest")
         return _passthrough(argv, budget_s=30, label="grokbotdev")
     argv.append(a.action)
+    if a.json:
+        argv.append("--json")
     return _passthrough(argv, budget_s=60, label="grokbotdev")
 
 
@@ -4204,7 +5245,7 @@ def cmd_dm(a: DmArgs) -> int:
 
 
 HANDLERS: Dict[str, Callable[[Any], int]] = {
-    "setup": cmd_setup, "bootstrap": cmd_bootstrap, "platform": cmd_platform, "mine": cmd_mine, "monitor": cmd_monitor,
+    "setup": cmd_setup, "role": cmd_role, "bootstrap": cmd_bootstrap, "platform": cmd_platform, "mine": cmd_mine, "monitor": cmd_monitor,
     "templates": cmd_templates, "walk": cmd_walk, "daily": cmd_daily, "digest": cmd_digest,
     "mirror": cmd_mirror, "demand": cmd_demand, "plugins": cmd_plugins, "jobs": cmd_jobs, "galaxy": cmd_galaxy, "fleet": cmd_fleet,
     "blast": cmd_blast,
@@ -4236,6 +5277,27 @@ HANDLERS: Dict[str, Callable[[Any], int]] = {
     "examples": cmd_examples, "info": cmd_info, "help": cmd_help, "completion": cmd_completion,
 }
 
+
+DIFF_GUESSES = frozenset({"diff", "changed", "whatchanged", "what-changed", "whats-new", "whatsnew"})
+
+
+def _is_diff_guess(token: str) -> bool:
+    """True when the unknown verb is an agent's name for the day-diff."""
+    folded = token.lower().replace("_", "-")
+    return folded in DIFF_GUESSES or folded.replace("-", "") in {
+        g.replace("-", "") for g in DIFF_GUESSES
+    }
+
+
+def _hint_diff(token: str) -> int:
+    """Unknown-command error that names the exact day-diff argv. Stderr = diag."""
+    print(
+        f"gb: no command {token!r}.\n"
+        f"    day diff:  gb daily --no-fetch --json",
+        file=sys.stderr,
+    )
+    return EXIT_USAGE
+
 def _is_first_hour_guess(token: str) -> bool:
     """True when the unknown verb is a newbie's name for the first-hour on-ramp."""
     folded = token.lower().replace("_", "-")
@@ -4245,26 +5307,27 @@ def _is_first_hour_guess(token: str) -> bool:
     }
 
 
-def _hint_first_hour(token: str) -> int:
-    """Unknown-command error that names the exact next commands. Stderr = diag."""
-    print(
-        f"gb: no command {token!r}.\n"
-        f"    first hour:  {FIRST_HOUR_WALK}\n"
-        f"    new user:    {FIRST_HOUR_SETUP}\n"
-        f"    list packs:  gb setup --list-personas",
-        file=sys.stderr,
-    )
+def _hint_first_hour(token: str, as_json: bool) -> int:
+    """Bounded newbie redirect into the only public journey grammar."""
+    plan_argv = _role_public_argv("first hour")
+    if as_json:
+        emit(envelope(
+            "role-redirect",
+            status="USAGE",
+            error=f"no command {token!r}",
+            mutates=False,
+            plan_argv=plan_argv,
+            recovery_argv=plan_argv,
+            list_argv=["gb", "role", "--list", "--json"],
+        ), True, "")
+    else:
+        print(
+            f"gb: no command {token!r}.\n"
+            f"    first hour:  {FIRST_HOUR_ROLE}\n"
+            "    list roles:   gb role --list",
+            file=sys.stderr,
+        )
     return EXIT_USAGE
-
-
-def _first_hour_human_lines() -> List[str]:
-    """The short FIRST HOUR block appended to human (non-JSON) operator output."""
-    return [
-        "",
-        "FIRST HOUR:",
-        f"  {FIRST_HOUR_WALK}",
-        f"  {FIRST_HOUR_SETUP}",
-    ]
 
 
 def body() -> int:
@@ -4290,7 +5353,10 @@ def body() -> int:
     # Intent-legible newbie verbs (start/launch/hello/onboard/init) must not fall through
     # to Levenshtein (`start`→`store`, `hello`→`help`, `init`→`info`) or the 58-verb wall.
     if pos and pos[0] not in COMMANDS and _is_first_hour_guess(pos[0]):
-        return _hint_first_hour(pos[0])
+        return _hint_first_hour(pos[0], "--json" in rest)
+    # Day-diff guesses (diff/changed/whatchanged) name the exact argv, same contract.
+    if pos and pos[0] not in COMMANDS and _is_diff_guess(pos[0]):
+        return _hint_diff(pos[0])
     if not pos and not any(a in ("-h", "--help") for a in rest):
         if any(a != "--json" for a in rest):
             name, args = parse_sub(
@@ -4299,29 +5365,18 @@ def body() -> int:
                 description="gb — operate a live Grok Bot deployment.",
             )
             return HANDLERS[name](args)
-        as_json = "--json" in rest
-        st = instance_state()
-        if st.unconfigured:
-            return route_unconfigured("gb", as_json, st)
-        rc = cmd_triage(TriageArgs(check=None, json=as_json))
-        if not as_json:
-            print("\n".join(_first_hour_human_lines()))
-        return rc
+        return _delegate_role("first hour", "--json" in rest, "bare role")
     name, args = parse_sub(
         COMMANDS,
         prog="gb",
         description=(
             "gb — set up, run and grow a Grok Bot deployment from one command."
         ),
-        # FIRST HOUR / AGENT is the discoverability contract (pass 3). Bootstrap is the
-        # mega-command; the two copy-paste lines are the pass-1 first-try verbs, kept
-        # verbatim. Do not dump AGENTS.md here. Honest limits live in the README after
-        # the pitch, not in this epilog.
+        # All legacy first-hour navigation points at the one role plan.
         epilog=(
             "FIRST HOUR / AGENT:\n"
-            "  gb bootstrap --for-agent\n"
-            f"  {FIRST_HOUR_WALK}\n"
-            f"  {FIRST_HOUR_SETUP}"
+            f"  {FIRST_HOUR_ROLE}\n"
+            "  gb role --list"
         ),
     )
     return HANDLERS[name](args)

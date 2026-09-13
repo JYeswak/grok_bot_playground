@@ -811,6 +811,7 @@ def render_json(tids, cells, notes, sc, acct, tscores, kscores, globs, clauses):
     return (
         json.dumps(
             {
+                "schema": "gb-template-conformance/1",
                 "spec": "gb-template/1",
                 "templates": tids,
                 "keys": list(KEYS),

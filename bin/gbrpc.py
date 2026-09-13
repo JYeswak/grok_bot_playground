@@ -23,14 +23,14 @@ That produced three separate costs, each measured:
   3. The 3.9.6 dance repeated in fifteen files, each an opportunity to forget the
      `sys.modules` line and get an `AttributeError` from inside the standard library.
 
-NOTHING HERE IS NEW BEHAVIOUR. The four functions are moved verbatim. `gb-pull-inventory.py`
-re-exports them, so all fifteen existing callers keep working unchanged; new code imports
-`gbrpc` directly and skips the dance entirely.
+The credential and request mechanics remain single-sourced here. The read entry point keeps its
+prefix refusal; the fleet write entry point is a separate exact allowlist so producers can mutate
+only the three receipted lifecycle methods without copying transport code.
 
 THE READ-ONLY CONTRACT STAYS HERE, deliberately. `rpc` is the read transport and refuses
-anything that is not a `List`/`Get`. The WRITE path is `gb-handover.py`'s own POST, and
-`gb-rebuild-fleet.py`'s `rpc_write`. Keeping the refusal in the shared reader is what makes
-"this tool is read-only by contract" a fact about the code rather than a claim in a docstring.
+anything that is not a `List`/`Get`. The narrowly allowlisted `write_rpc` is the fleet
+rebuild transport; its caller must still provide the approval and durable receipt. Keeping those
+entry points separate makes "this reader cannot mutate" a code fact, not a docstring claim.
 """
 
 from __future__ import annotations
@@ -52,9 +52,14 @@ from gblib import platform_support  # noqa: E402
 HOST = "api2.cursor.sh"
 SERVICE = "aiserver.v1.GrokBotService"
 KEYCHAIN = ("Grok Bot Safe Storage", "Grok Bot Key")
-# The transport is a READER. Anything outside these prefixes is a write and is refused; the
-# write paths are gb-handover.py's POST and gb-rebuild-fleet.py's rpc_write, on purpose.
+# Reads remain prefix-allowlisted because the service adds read methods over time. Writes are
+# exact-allowlisted because an accidentally callable new mutation is the dangerous direction.
 READ_ONLY_PREFIXES = ("List", "Get")
+FLEET_WRITE_METHODS: Final[Tuple[str, ...]] = (
+    "CreateGrokBotAgentFromTemplate",
+    "UpdateGrokBotAgent",
+    "DeleteGrokBotAgent",
+)
 
 # The keychain read is the credential path, so it carries both bounds this repo demands of
 # every child: a deadline (a GUI Allow prompt the human never clicks is a hang, not a wait)
@@ -157,23 +162,14 @@ def access_token(support: pathlib.Path) -> str:
     return decrypt(accounts["accounts"][accounts["active"]]["cursor-access-token"], key)
 
 
-def rpc(
+def _request(
     token: str,
     method: str,
-    body: Optional[Dict[str, Any]] = None,
-    timeout: float = 45.0,
-    service: str = SERVICE,
+    body: Optional[Dict[str, Any]],
+    timeout: float,
+    service: str,
 ) -> RpcResult:
-    """One read RPC. Refuses any method that is not a `List`/`Get` — see the module docstring.
-
-    Never raises for a transport failure: a dead network, a 401, or a 400 all come back as
-    `(code, body)` so the caller can RECORD the refusal instead of crashing. `(0, "...")` means
-    the request never reached the server at all, which is a different fact from a 500.
-    """
-    if not method.startswith(READ_ONLY_PREFIXES):
-        raise SystemExit(
-            f"refusing to call {method}: this tool is read-only by contract"
-        )
+    """POST one Connect RPC; policy belongs to the read/write entry point above it."""
     req = urllib.request.Request(
         f"https://{HOST}/{service}/{method}",
         data=json.dumps(body or {}).encode(),
@@ -191,6 +187,36 @@ def rpc(
         return e.code, (e.read().decode("utf-8", "replace") if e.fp else "")
     except Exception as e:  # noqa: BLE001 - a transport failure is DATA, not an exception
         return 0, f"{type(e).__name__}: {e}"
+
+
+def rpc(
+    token: str,
+    method: str,
+    body: Optional[Dict[str, Any]] = None,
+    timeout: float = 45.0,
+    service: str = SERVICE,
+) -> RpcResult:
+    """One read RPC. Refuse every method outside the `List`/`Get` contract."""
+    if not method.startswith(READ_ONLY_PREFIXES):
+        raise SystemExit(
+            f"refusing to call {method}: this tool is read-only by contract"
+        )
+    return _request(token, method, body, timeout, service)
+
+
+def write_rpc(
+    token: str,
+    method: str,
+    body: Dict[str, Any],
+    timeout: float = 60.0,
+    service: str = SERVICE,
+) -> RpcResult:
+    """One fleet mutation, exact-allowlisted; approval and journaling stay with the producer."""
+    if method not in FLEET_WRITE_METHODS:
+        raise SystemExit(
+            f"refusing to call {method}: not an allowlisted fleet mutation"
+        )
+    return _request(token, method, body, timeout, service)
 
 
 def selftest() -> int:
@@ -236,6 +262,23 @@ def selftest() -> int:
     check(
         "List" in READ_ONLY_PREFIXES and "Get" in READ_ONLY_PREFIXES, "prefixes changed"
     )
+    check(
+        set(FLEET_WRITE_METHODS)
+        == {
+            "CreateGrokBotAgentFromTemplate",
+            "UpdateGrokBotAgent",
+            "DeleteGrokBotAgent",
+        },
+        "fleet write allowlist drifted",
+    )
+    try:
+        write_rpc("t", "SendGrokBotUserMessage", {})
+        check(False, "write_rpc allowed a non-fleet mutation")
+    except SystemExit as e:
+        check(
+            "not an allowlisted fleet mutation" in str(e),
+            "write_rpc refusal lost its reason",
+        )
 
     # 4. the key derivation is pinned: 1003 rounds, 16 bytes, b"saltysalt" is Chromium's
     check(

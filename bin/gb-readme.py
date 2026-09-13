@@ -15,9 +15,9 @@ number. So the README has two halves, and only one of them is written by a perso
 
   HANDWRITTEN   the hero, "First hour", "What this is", "Install", "What it does not do" —
                 judgement, voice, and the promises a tool makes. The first-hour pitch
-                (`gb bootstrap --for-agent`, paste hello-computer, `gb setup --persona
-                first-hour`) lives HERE, never in the derived block. A generator has no
-                business writing these, and this file never touches them.
+                (`gb role --list`, then `gb role "first hour"`) lives HERE, never in the
+                derived block. A generator has no business writing these, and this file
+                never touches them.
   DERIVED       the verbs, the exit codes, the oracles, the layout, the build stamp. Every one
                 is a measurement, so every one comes from `gb capabilities --json`, the gate
                 producer, the selftests, and the exporter's own allowlist.
@@ -75,9 +75,8 @@ EXIT_ENVIRONMENT = 3
 # First-hour pitch MUST stay in the handwritten head. A derive that moved it
 # into render() would replace the capability pitch with measurement tables.
 PITCH_NEEDLES = (
-    "gb bootstrap --for-agent",
-    "gb walk bots --paste hello-computer",
-    "gb setup --persona first-hour",
+    "gb role --list",
+    'gb role "first hour"',
 )
 PITCH_COP_OUT = "Honest limit, stated before you start"
 

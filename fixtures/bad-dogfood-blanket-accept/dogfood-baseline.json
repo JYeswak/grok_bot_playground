@@ -1,0 +1,43 @@
+{
+ "schema": "gb-dogfood-baseline/2",
+ "recorded_at": "2026-09-11T00:00:00+00:00",
+ "gap_count": 2,
+ "gaps": {
+  "unreachable:gb-fixture.py": {
+   "score": 40,
+   "kind": "unreachable",
+   "signals": {
+    "importers": 0,
+    "callers": 0,
+    "docs": 0,
+    "tick": 0,
+    "public": 0
+   },
+   "detail": "fixture: unreachable:gb-fixture.py"
+  },
+  "unreachable:gb-second.py": {
+   "score": 40,
+   "kind": "unreachable",
+   "signals": {
+    "importers": 0,
+    "callers": 0,
+    "docs": 0,
+    "tick": 0,
+    "public": 0
+   },
+   "detail": "fixture: unreachable:gb-second.py"
+  }
+ },
+ "acceptances": [
+  {
+   "at": "2026-09-11T00:00:00+00:00",
+   "by": "fixture",
+   "why": "fixture: free-form blanket",
+   "keys": [
+    "unreachable:gb-fixture.py",
+    "unreachable:gb-second.py"
+   ]
+  }
+ ],
+ "decisions": []
+}

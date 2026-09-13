@@ -1,0 +1,6477 @@
+{
+ "schema": "gb-command-surface/1",
+ "dispatcher": {
+  "path": "bin/gb",
+  "sha256": "391d3beeadfc853d93a093db6cbe31e353c713931ca944911b557c1d25ab1384"
+ },
+ "command_count": 70,
+ "row_order": "bin/gb COMMANDS insertion order",
+ "command_order": [
+  "mcp",
+  "bot",
+  "group",
+  "dm",
+  "handover",
+  "record",
+  "matrix",
+  "export",
+  "gates",
+  "bench",
+  "findings",
+  "inventory",
+  "spend",
+  "deployment",
+  "feeds",
+  "grokbotdev",
+  "github",
+  "links",
+  "sources",
+  "store",
+  "skills",
+  "skill-coverage",
+  "advise",
+  "research",
+  "schema",
+  "bot-conformance",
+  "template-conformance",
+  "skill-conformance",
+  "plugin-conformance",
+  "compliance",
+  "x",
+  "post",
+  "roadmap",
+  "setup",
+  "role",
+  "bootstrap",
+  "teach",
+  "daily",
+  "walk",
+  "templates",
+  "digest",
+  "mirror",
+  "demand",
+  "plugins",
+  "jobs",
+  "blast",
+  "galaxy",
+  "fleet",
+  "corpus",
+  "dogfood",
+  "gatesdoc",
+  "readme",
+  "mine",
+  "monitor",
+  "platform",
+  "triage",
+  "work",
+  "doctor",
+  "health",
+  "repair",
+  "validate",
+  "audit",
+  "why",
+  "capabilities",
+  "robot-docs",
+  "quickstart",
+  "examples",
+  "info",
+  "help",
+  "completion"
+ ],
+ "exit_family": {
+  "schema": "gb-exit-codes/1",
+  "codes": {
+   "0": "ok",
+   "1": "findings",
+   "2": "usage",
+   "3": "environment",
+   "4": "upstream",
+   "5": "refused",
+   "130": "cancelled"
+  }
+ },
+ "rows": [
+  {
+   "command": "mcp",
+   "argv": {
+    "prefix": [
+     "gb",
+     "mcp"
+    ],
+    "fields": [
+     {
+      "name": "action",
+      "kind": "positional",
+      "tokens": [
+       "<add|tools|call|allowlist|list>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [
+       "add",
+       "tools",
+       "call",
+       "allowlist",
+       "list"
+      ],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "target",
+      "kind": "positional",
+      "tokens": [
+       "<TARGET>"
+      ],
+      "option_strings": [],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "tool",
+      "kind": "positional",
+      "tokens": [
+       "<TOOL>"
+      ],
+      "option_strings": [],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "args_json",
+      "kind": "positional",
+      "tokens": [
+       "<ARGS_JSON>"
+      ],
+      "option_strings": [],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "name",
+      "kind": "option",
+      "tokens": [
+       "--name",
+       "<NAME>"
+      ],
+      "option_strings": [
+       "--name"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "agent",
+      "kind": "option",
+      "tokens": [
+       "--agent",
+       "<AGENT>"
+      ],
+      "option_strings": [
+       "--agent"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "note",
+      "kind": "option",
+      "tokens": [
+       "--note",
+       "<NOTE>"
+      ],
+      "option_strings": [
+       "--note"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "keep",
+      "kind": "option",
+      "tokens": [
+       "--keep",
+       "<KEEP>"
+      ],
+      "option_strings": [
+       "--keep"
+      ],
+      "type": "Tuple[str, ...]",
+      "required": false,
+      "choices": [],
+      "repeatable": true,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "artifact-side-effect",
+    "signals": [],
+    "artifact_side_effect": true
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W8"
+   ]
+  },
+  {
+   "command": "bot",
+   "argv": {
+    "prefix": [
+     "gb",
+     "bot"
+    ],
+    "fields": [
+     {
+      "name": "action",
+      "kind": "positional",
+      "tokens": [
+       "<send|read|log|ask|resolve>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [
+       "send",
+       "read",
+       "log",
+       "ask",
+       "resolve"
+      ],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "target",
+      "kind": "positional",
+      "tokens": [
+       "<TARGET>"
+      ],
+      "option_strings": [],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "text",
+      "kind": "positional",
+      "tokens": [
+       "<TEXT>"
+      ],
+      "option_strings": [],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "timeout",
+      "kind": "option",
+      "tokens": [
+       "--timeout",
+       "<TIMEOUT>"
+      ],
+      "option_strings": [
+       "--timeout"
+      ],
+      "type": "float",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": 300.0
+     },
+     {
+      "name": "expect",
+      "kind": "option",
+      "tokens": [
+       "--expect",
+       "<EXPECT>"
+      ],
+      "option_strings": [
+       "--expect"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "limit",
+      "kind": "option",
+      "tokens": [
+       "--limit",
+       "<LIMIT>"
+      ],
+      "option_strings": [
+       "--limit"
+      ],
+      "type": "int",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": 10
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W7"
+   ]
+  },
+  {
+   "command": "group",
+   "argv": {
+    "prefix": [
+     "gb",
+     "group"
+    ],
+    "fields": [
+     {
+      "name": "action",
+      "kind": "positional",
+      "tokens": [
+       "<list|create|members|send>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [
+       "list",
+       "create",
+       "members",
+       "send"
+      ],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "target",
+      "kind": "positional",
+      "tokens": [
+       "<TARGET>"
+      ],
+      "option_strings": [],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "text",
+      "kind": "positional",
+      "tokens": [
+       "<TEXT>"
+      ],
+      "option_strings": [],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "members",
+      "kind": "option",
+      "tokens": [
+       "--members",
+       "<MEMBERS>"
+      ],
+      "option_strings": [
+       "--members"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "set",
+      "kind": "option",
+      "tokens": [
+       "--set",
+       "<SET>"
+      ],
+      "option_strings": [
+       "--set"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "mention",
+      "kind": "option",
+      "tokens": [
+       "--mention",
+       "<MENTION>"
+      ],
+      "option_strings": [
+       "--mention"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "yes",
+      "kind": "option",
+      "tokens": [
+       "--yes"
+      ],
+      "option_strings": [
+       "--yes"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "explicit-write-mode",
+    "signals": [
+     "yes"
+    ],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W7"
+   ]
+  },
+  {
+   "command": "dm",
+   "argv": {
+    "prefix": [
+     "gb",
+     "dm"
+    ],
+    "fields": [
+     {
+      "name": "from_bot",
+      "kind": "positional",
+      "tokens": [
+       "<FROM_BOT>"
+      ],
+      "option_strings": [],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "to_bot",
+      "kind": "positional",
+      "tokens": [
+       "<TO_BOT>"
+      ],
+      "option_strings": [],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "text",
+      "kind": "positional",
+      "tokens": [
+       "<TEXT>"
+      ],
+      "option_strings": [],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "yes",
+      "kind": "option",
+      "tokens": [
+       "--yes"
+      ],
+      "option_strings": [
+       "--yes"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "explicit-write-mode",
+    "signals": [
+     "yes"
+    ],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W7"
+   ]
+  },
+  {
+   "command": "handover",
+   "argv": {
+    "prefix": [
+     "gb",
+     "handover"
+    ],
+    "fields": [
+     {
+      "name": "bot",
+      "kind": "option",
+      "tokens": [
+       "--bot",
+       "<BOT>"
+      ],
+      "option_strings": [
+       "--bot"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "send",
+      "kind": "option",
+      "tokens": [
+       "--send"
+      ],
+      "option_strings": [
+       "--send"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "explicit-write-mode",
+    "signals": [
+     "send"
+    ],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W7"
+   ]
+  },
+  {
+   "command": "record",
+   "argv": {
+    "prefix": [
+     "gb",
+     "record"
+    ],
+    "fields": [
+     {
+      "name": "device",
+      "kind": "option",
+      "tokens": [
+       "--device",
+       "<DEVICE>"
+      ],
+      "option_strings": [
+       "--device"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "root",
+      "kind": "option",
+      "tokens": [
+       "--root",
+       "<ROOT>"
+      ],
+      "option_strings": [
+       "--root"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "template",
+      "kind": "option",
+      "tokens": [
+       "--template"
+      ],
+      "option_strings": [
+       "--template"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "no_roster",
+      "kind": "option",
+      "tokens": [
+       "--no-roster"
+      ],
+      "option_strings": [
+       "--no-roster"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "validate",
+      "kind": "option",
+      "tokens": [
+       "--validate",
+       "<VALIDATE>"
+      ],
+      "option_strings": [
+       "--validate"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "list",
+      "kind": "option",
+      "tokens": [
+       "--list"
+      ],
+      "option_strings": [
+       "--list"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "matrix",
+   "argv": {
+    "prefix": [
+     "gb",
+     "matrix"
+    ],
+    "fields": [
+     {
+      "name": "id",
+      "kind": "option",
+      "tokens": [
+       "--id",
+       "<ID>"
+      ],
+      "option_strings": [
+       "--id"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "root",
+      "kind": "option",
+      "tokens": [
+       "--root",
+       "<ROOT>"
+      ],
+      "option_strings": [
+       "--root"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "todo",
+      "kind": "option",
+      "tokens": [
+       "--todo"
+      ],
+      "option_strings": [
+       "--todo"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "export",
+   "argv": {
+    "prefix": [
+     "gb",
+     "export"
+    ],
+    "fields": [
+     {
+      "name": "out",
+      "kind": "positional",
+      "tokens": [
+       "<DIR>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "force",
+      "kind": "option",
+      "tokens": [
+       "--force"
+      ],
+      "option_strings": [
+       "--force"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "no_git",
+      "kind": "option",
+      "tokens": [
+       "--no-git"
+      ],
+      "option_strings": [
+       "--no-git"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "artifact-and-explicit-write-mode",
+    "signals": [
+     "force"
+    ],
+    "artifact_side_effect": true
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "gates",
+   "argv": {
+    "prefix": [
+     "gb",
+     "gates"
+    ],
+    "fields": [
+     {
+      "name": "family",
+      "kind": "option",
+      "tokens": [
+       "--family",
+       "<FAMILY>"
+      ],
+      "option_strings": [
+       "--family"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "markdown",
+      "kind": "option",
+      "tokens": [
+       "--markdown"
+      ],
+      "option_strings": [
+       "--markdown"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "bench",
+   "argv": {
+    "prefix": [
+     "gb",
+     "bench"
+    ],
+    "fields": [
+     {
+      "name": "repeat",
+      "kind": "option",
+      "tokens": [
+       "--repeat",
+       "<REPEAT>"
+      ],
+      "option_strings": [
+       "--repeat"
+      ],
+      "type": "int",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": 5
+     },
+     {
+      "name": "verb",
+      "kind": "option",
+      "tokens": [
+       "--verb",
+       "<VERB>"
+      ],
+      "option_strings": [
+       "--verb"
+      ],
+      "type": "Tuple[str, ...]",
+      "required": false,
+      "choices": [],
+      "repeatable": true,
+      "default": null
+     },
+     {
+      "name": "dry_run",
+      "kind": "option",
+      "tokens": [
+       "--dry-run"
+      ],
+      "option_strings": [
+       "--dry-run"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "findings",
+   "argv": {
+    "prefix": [
+     "gb",
+     "findings"
+    ],
+    "fields": [
+     {
+      "name": "verify_commands",
+      "kind": "option",
+      "tokens": [
+       "--verify-commands"
+      ],
+      "option_strings": [
+       "--verify-commands"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "no_write",
+      "kind": "option",
+      "tokens": [
+       "--no-write"
+      ],
+      "option_strings": [
+       "--no-write"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "artifact-and-explicit-write-mode",
+    "signals": [
+     "no_write"
+    ],
+    "artifact_side_effect": true
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W9"
+   ]
+  },
+  {
+   "command": "inventory",
+   "argv": {
+    "prefix": [
+     "gb",
+     "inventory"
+    ],
+    "fields": [
+     {
+      "name": "read",
+      "kind": "positional",
+      "tokens": [
+       "<account|usage|computers|plugins|mcp|skills|pull>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [
+       "account",
+       "usage",
+       "computers",
+       "plugins",
+       "mcp",
+       "skills",
+       "pull"
+      ],
+      "repeatable": false,
+      "default": "account"
+     },
+     {
+      "name": "device",
+      "kind": "option",
+      "tokens": [
+       "--device",
+       "<DEVICE>"
+      ],
+      "option_strings": [
+       "--device"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "apply",
+      "kind": "option",
+      "tokens": [
+       "--apply"
+      ],
+      "option_strings": [
+       "--apply"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "artifact-and-explicit-write-mode",
+    "signals": [
+     "apply"
+    ],
+    "artifact_side_effect": true
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W8"
+   ]
+  },
+  {
+   "command": "spend",
+   "argv": {
+    "prefix": [
+     "gb",
+     "spend"
+    ],
+    "fields": [
+     {
+      "name": "out",
+      "kind": "option",
+      "tokens": [
+       "--out",
+       "<OUT>"
+      ],
+      "option_strings": [
+       "--out"
+      ],
+      "type": "str",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": "spend"
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W8"
+   ]
+  },
+  {
+   "command": "deployment",
+   "argv": {
+    "prefix": [
+     "gb",
+     "deployment"
+    ],
+    "fields": [
+     {
+      "name": "action",
+      "kind": "positional",
+      "tokens": [
+       "<audit>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [
+       "audit"
+      ],
+      "repeatable": false,
+      "default": "audit"
+     },
+     {
+      "name": "live",
+      "kind": "option",
+      "tokens": [
+       "--live"
+      ],
+      "option_strings": [
+       "--live"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "label",
+      "kind": "option",
+      "tokens": [
+       "--label",
+       "<LABEL>"
+      ],
+      "option_strings": [
+       "--label"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "artifact-side-effect",
+    "signals": [],
+    "artifact_side_effect": true
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W8"
+   ]
+  },
+  {
+   "command": "feeds",
+   "argv": {
+    "prefix": [
+     "gb",
+     "feeds"
+    ],
+    "fields": [
+     {
+      "name": "action",
+      "kind": "positional",
+      "tokens": [
+       "<collect|probe>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [
+       "collect",
+       "probe"
+      ],
+      "repeatable": false,
+      "default": "probe"
+     },
+     {
+      "name": "retired",
+      "kind": "option",
+      "tokens": [
+       "--retired"
+      ],
+      "option_strings": [
+       "--retired"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "root",
+      "kind": "option",
+      "tokens": [
+       "--root",
+       "<ROOT>"
+      ],
+      "option_strings": [
+       "--root"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W5"
+   ]
+  },
+  {
+   "command": "grokbotdev",
+   "argv": {
+    "prefix": [
+     "gb",
+     "grokbotdev"
+    ],
+    "fields": [
+     {
+      "name": "action",
+      "kind": "positional",
+      "tokens": [
+       "<collect|probe|mine>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [
+       "collect",
+       "probe",
+       "mine"
+      ],
+      "repeatable": false,
+      "default": "probe"
+     },
+     {
+      "name": "selftest",
+      "kind": "option",
+      "tokens": [
+       "--selftest"
+      ],
+      "option_strings": [
+       "--selftest"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W5"
+   ]
+  },
+  {
+   "command": "github",
+   "argv": {
+    "prefix": [
+     "gb",
+     "github"
+    ],
+    "fields": [
+     {
+      "name": "action",
+      "kind": "positional",
+      "tokens": [
+       "<collect|selftest>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [
+       "collect",
+       "selftest"
+      ],
+      "repeatable": false,
+      "default": "collect"
+     },
+     {
+      "name": "apply",
+      "kind": "option",
+      "tokens": [
+       "--apply"
+      ],
+      "option_strings": [
+       "--apply"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "explicit-write-mode",
+    "signals": [
+     "apply"
+    ],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W5"
+   ]
+  },
+  {
+   "command": "links",
+   "argv": {
+    "prefix": [
+     "gb",
+     "links"
+    ],
+    "fields": [
+     {
+      "name": "action",
+      "kind": "positional",
+      "tokens": [
+       "<collect|probe>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [
+       "collect",
+       "probe"
+      ],
+      "repeatable": false,
+      "default": "probe"
+     },
+     {
+      "name": "limit",
+      "kind": "option",
+      "tokens": [
+       "--limit",
+       "<LIMIT>"
+      ],
+      "option_strings": [
+       "--limit"
+      ],
+      "type": "Optional[int]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "max_age",
+      "kind": "option",
+      "tokens": [
+       "--max-age",
+       "<MAX_AGE>"
+      ],
+      "option_strings": [
+       "--max-age"
+      ],
+      "type": "Optional[float]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "refusals",
+      "kind": "option",
+      "tokens": [
+       "--refusals"
+      ],
+      "option_strings": [
+       "--refusals"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W5"
+   ]
+  },
+  {
+   "command": "sources",
+   "argv": {
+    "prefix": [
+     "gb",
+     "sources"
+    ],
+    "fields": [
+     {
+      "name": "action",
+      "kind": "positional",
+      "tokens": [
+       "<collect|velocity>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [
+       "collect",
+       "velocity"
+      ],
+      "repeatable": false,
+      "default": "velocity"
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W5"
+   ]
+  },
+  {
+   "command": "store",
+   "argv": {
+    "prefix": [
+     "gb",
+     "store"
+    ],
+    "fields": [
+     {
+      "name": "action",
+      "kind": "positional",
+      "tokens": [
+       "<ingest|diff|stats|compact|selftest>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [
+       "ingest",
+       "diff",
+       "stats",
+       "compact",
+       "selftest"
+      ],
+      "repeatable": false,
+      "default": "stats"
+     },
+     {
+      "name": "kind",
+      "kind": "option",
+      "tokens": [
+       "--kind",
+       "<KIND>"
+      ],
+      "option_strings": [
+       "--kind"
+      ],
+      "type": "Tuple[str, ...]",
+      "required": false,
+      "choices": [],
+      "repeatable": true,
+      "default": null
+     },
+     {
+      "name": "limit",
+      "kind": "option",
+      "tokens": [
+       "--limit",
+       "<LIMIT>"
+      ],
+      "option_strings": [
+       "--limit"
+      ],
+      "type": "Optional[int]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json_out",
+      "kind": "option",
+      "tokens": [
+       "--json-out"
+      ],
+      "option_strings": [
+       "--json-out"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "skills",
+   "argv": {
+    "prefix": [
+     "gb",
+     "skills"
+    ],
+    "fields": [
+     {
+      "name": "action",
+      "kind": "positional",
+      "tokens": [
+       "<list|probe|attach|try|hunt|enable|roundtrip|disk|census|outcome|bandit>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [
+       "list",
+       "probe",
+       "attach",
+       "try",
+       "hunt",
+       "enable",
+       "roundtrip",
+       "disk",
+       "census",
+       "outcome",
+       "bandit"
+      ],
+      "repeatable": false,
+      "default": "list"
+     },
+     {
+      "name": "bot",
+      "kind": "option",
+      "tokens": [
+       "--bot",
+       "<BOT>"
+      ],
+      "option_strings": [
+       "--bot"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "file",
+      "kind": "option",
+      "tokens": [
+       "--file",
+       "<FILE>"
+      ],
+      "option_strings": [
+       "--file"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "method",
+      "kind": "option",
+      "tokens": [
+       "--method",
+       "<METHOD>"
+      ],
+      "option_strings": [
+       "--method"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "payload",
+      "kind": "option",
+      "tokens": [
+       "--payload",
+       "<PAYLOAD>"
+      ],
+      "option_strings": [
+       "--payload"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "service",
+      "kind": "option",
+      "tokens": [
+       "--service",
+       "<SERVICE>"
+      ],
+      "option_strings": [
+       "--service"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "skill",
+      "kind": "option",
+      "tokens": [
+       "--skill",
+       "<SKILL>"
+      ],
+      "option_strings": [
+       "--skill"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "result",
+      "kind": "option",
+      "tokens": [
+       "--result",
+       "<RESULT>"
+      ],
+      "option_strings": [
+       "--result"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "yes",
+      "kind": "option",
+      "tokens": [
+       "--yes"
+      ],
+      "option_strings": [
+       "--yes"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "selftest",
+      "kind": "option",
+      "tokens": [
+       "--selftest"
+      ],
+      "option_strings": [
+       "--selftest"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "explicit-write-mode",
+    "signals": [
+     "yes"
+    ],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W7"
+   ]
+  },
+  {
+   "command": "skill-coverage",
+   "argv": {
+    "prefix": [
+     "gb",
+     "skill-coverage"
+    ],
+    "fields": [
+     {
+      "name": "top",
+      "kind": "option",
+      "tokens": [
+       "--top",
+       "<TOP>"
+      ],
+      "option_strings": [
+       "--top"
+      ],
+      "type": "int",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": 10
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "artifact-side-effect",
+    "signals": [],
+    "artifact_side_effect": true
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "advise",
+   "argv": {
+    "prefix": [
+     "gb",
+     "advise"
+    ],
+    "fields": [
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "full",
+      "kind": "option",
+      "tokens": [
+       "--full"
+      ],
+      "option_strings": [
+       "--full"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "limit",
+      "kind": "option",
+      "tokens": [
+       "--limit",
+       "<LIMIT>"
+      ],
+      "option_strings": [
+       "--limit"
+      ],
+      "type": "Optional[int]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "source",
+      "kind": "option",
+      "tokens": [
+       "--source",
+       "<SOURCE>"
+      ],
+      "option_strings": [
+       "--source"
+      ],
+      "type": "Tuple[str, ...]",
+      "required": false,
+      "choices": [],
+      "repeatable": true,
+      "default": null
+     },
+     {
+      "name": "dry_run",
+      "kind": "option",
+      "tokens": [
+       "--dry-run"
+      ],
+      "option_strings": [
+       "--dry-run"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "selftest",
+      "kind": "option",
+      "tokens": [
+       "--selftest"
+      ],
+      "option_strings": [
+       "--selftest"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "artifact-side-effect",
+    "signals": [],
+    "artifact_side_effect": true
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W9"
+   ]
+  },
+  {
+   "command": "research",
+   "argv": {
+    "prefix": [
+     "gb",
+     "research"
+    ],
+    "fields": [
+     {
+      "name": "question",
+      "kind": "positional",
+      "tokens": [
+       "<QUESTION>"
+      ],
+      "option_strings": [],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "depth",
+      "kind": "option",
+      "tokens": [
+       "--depth",
+       "<DEPTH>"
+      ],
+      "option_strings": [
+       "--depth"
+      ],
+      "type": "str",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": "sweep"
+     },
+     {
+      "name": "source",
+      "kind": "option",
+      "tokens": [
+       "--source",
+       "<STR>"
+      ],
+      "option_strings": [
+       "--source"
+      ],
+      "type": "Optional[List[str]]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "max_calls",
+      "kind": "option",
+      "tokens": [
+       "--max-calls",
+       "<N>"
+      ],
+      "option_strings": [
+       "--max-calls"
+      ],
+      "type": "Optional[int]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "resume",
+      "kind": "option",
+      "tokens": [
+       "--resume",
+       "<STAMP>"
+      ],
+      "option_strings": [
+       "--resume"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "dry_run",
+      "kind": "option",
+      "tokens": [
+       "--dry-run"
+      ],
+      "option_strings": [
+       "--dry-run"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "selftest",
+      "kind": "option",
+      "tokens": [
+       "--selftest"
+      ],
+      "option_strings": [
+       "--selftest"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "capabilities",
+      "kind": "option",
+      "tokens": [
+       "--capabilities"
+      ],
+      "option_strings": [
+       "--capabilities"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "explicit-write-mode",
+    "signals": [
+     "resume"
+    ],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W9"
+   ]
+  },
+  {
+   "command": "schema",
+   "argv": {
+    "prefix": [
+     "gb",
+     "schema"
+    ],
+    "fields": [
+     {
+      "name": "asar",
+      "kind": "option",
+      "tokens": [
+       "--asar",
+       "<PATH>"
+      ],
+      "option_strings": [
+       "--asar"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "selftest",
+      "kind": "option",
+      "tokens": [
+       "--selftest"
+      ],
+      "option_strings": [
+       "--selftest"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "capabilities",
+      "kind": "option",
+      "tokens": [
+       "--capabilities"
+      ],
+      "option_strings": [
+       "--capabilities"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "bot-conformance",
+   "argv": {
+    "prefix": [
+     "gb",
+     "bot-conformance"
+    ],
+    "fields": [
+     {
+      "name": "md",
+      "kind": "option",
+      "tokens": [
+       "--md"
+      ],
+      "option_strings": [
+       "--md"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "selftest",
+      "kind": "option",
+      "tokens": [
+       "--selftest"
+      ],
+      "option_strings": [
+       "--selftest"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "template-conformance",
+   "argv": {
+    "prefix": [
+     "gb",
+     "template-conformance"
+    ],
+    "fields": [
+     {
+      "name": "md",
+      "kind": "option",
+      "tokens": [
+       "--md"
+      ],
+      "option_strings": [
+       "--md"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "selftest",
+      "kind": "option",
+      "tokens": [
+       "--selftest"
+      ],
+      "option_strings": [
+       "--selftest"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "skill-conformance",
+   "argv": {
+    "prefix": [
+     "gb",
+     "skill-conformance"
+    ],
+    "fields": [
+     {
+      "name": "md",
+      "kind": "option",
+      "tokens": [
+       "--md"
+      ],
+      "option_strings": [
+       "--md"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "selftest",
+      "kind": "option",
+      "tokens": [
+       "--selftest"
+      ],
+      "option_strings": [
+       "--selftest"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "plugin-conformance",
+   "argv": {
+    "prefix": [
+     "gb",
+     "plugin-conformance"
+    ],
+    "fields": [
+     {
+      "name": "md",
+      "kind": "option",
+      "tokens": [
+       "--md"
+      ],
+      "option_strings": [
+       "--md"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "selftest",
+      "kind": "option",
+      "tokens": [
+       "--selftest"
+      ],
+      "option_strings": [
+       "--selftest"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "compliance",
+   "argv": {
+    "prefix": [
+     "gb",
+     "compliance"
+    ],
+    "fields": [
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "selftest",
+      "kind": "option",
+      "tokens": [
+       "--selftest"
+      ],
+      "option_strings": [
+       "--selftest"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "x",
+   "argv": {
+    "prefix": [
+     "gb",
+     "x"
+    ],
+    "fields": [
+     {
+      "name": "action",
+      "kind": "positional",
+      "tokens": [
+       "<reclassify|collect|matrix|fetch>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [
+       "reclassify",
+       "collect",
+       "matrix",
+       "fetch"
+      ],
+      "repeatable": false,
+      "default": "reclassify"
+     },
+     {
+      "name": "max_calls",
+      "kind": "option",
+      "tokens": [
+       "--max-calls",
+       "<MAX_CALLS>"
+      ],
+      "option_strings": [
+       "--max-calls"
+      ],
+      "type": "Optional[int]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "dry_run",
+      "kind": "option",
+      "tokens": [
+       "--dry-run"
+      ],
+      "option_strings": [
+       "--dry-run"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "apply",
+      "kind": "option",
+      "tokens": [
+       "--apply"
+      ],
+      "option_strings": [
+       "--apply"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "explicit-write-mode",
+    "signals": [
+     "apply"
+    ],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W5"
+   ]
+  },
+  {
+   "command": "post",
+   "argv": {
+    "prefix": [
+     "gb",
+     "post"
+    ],
+    "fields": [
+     {
+      "name": "action",
+      "kind": "positional",
+      "tokens": [
+       "<draft|verify|ledger|record>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [
+       "draft",
+       "verify",
+       "ledger",
+       "record"
+      ],
+      "repeatable": false,
+      "default": "draft"
+     },
+     {
+      "name": "limit",
+      "kind": "option",
+      "tokens": [
+       "--limit",
+       "<LIMIT>"
+      ],
+      "option_strings": [
+       "--limit"
+      ],
+      "type": "Optional[int]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "out",
+      "kind": "option",
+      "tokens": [
+       "--out"
+      ],
+      "option_strings": [
+       "--out"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "include_published",
+      "kind": "option",
+      "tokens": [
+       "--include-published"
+      ],
+      "option_strings": [
+       "--include-published"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "ids",
+      "kind": "option",
+      "tokens": [
+       "--ids",
+       "<IDS>"
+      ],
+      "option_strings": [
+       "--ids"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W2"
+   ]
+  },
+  {
+   "command": "roadmap",
+   "argv": {
+    "prefix": [
+     "gb",
+     "roadmap"
+    ],
+    "fields": [
+     {
+      "name": "detail",
+      "kind": "option",
+      "tokens": [
+       "--detail"
+      ],
+      "option_strings": [
+       "--detail"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "artifact-side-effect",
+    "signals": [],
+    "artifact_side_effect": true
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W9"
+   ]
+  },
+  {
+   "command": "setup",
+   "argv": {
+    "prefix": [
+     "gb",
+     "setup"
+    ],
+    "fields": [
+     {
+      "name": "apply",
+      "kind": "option",
+      "tokens": [
+       "--apply"
+      ],
+      "option_strings": [
+       "--apply"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "device",
+      "kind": "option",
+      "tokens": [
+       "--device",
+       "<DEVICE>"
+      ],
+      "option_strings": [
+       "--device"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "persona",
+      "kind": "option",
+      "tokens": [
+       "--persona",
+       "<PERSONA>"
+      ],
+      "option_strings": [
+       "--persona",
+       "--personas"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "list_personas",
+      "kind": "option",
+      "tokens": [
+       "--list-personas"
+      ],
+      "option_strings": [
+       "--list-personas"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "selftest",
+      "kind": "option",
+      "tokens": [
+       "--selftest"
+      ],
+      "option_strings": [
+       "--selftest"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "explicit-write-mode",
+    "signals": [
+     "apply"
+    ],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W6"
+   ]
+  },
+  {
+   "command": "role",
+   "argv": {
+    "prefix": [
+     "gb",
+     "role"
+    ],
+    "fields": [
+     {
+      "name": "role",
+      "kind": "positional",
+      "tokens": [
+       "<ROLE>"
+      ],
+      "option_strings": [],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "apply",
+      "kind": "option",
+      "tokens": [
+       "--apply"
+      ],
+      "option_strings": [
+       "--apply"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "plan_hash",
+      "kind": "option",
+      "tokens": [
+       "--plan-hash",
+       "<PLAN_HASH>"
+      ],
+      "option_strings": [
+       "--plan-hash"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "status",
+      "kind": "option",
+      "tokens": [
+       "--status",
+       "<STATUS>"
+      ],
+      "option_strings": [
+       "--status"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "resume",
+      "kind": "option",
+      "tokens": [
+       "--resume",
+       "<RESUME>"
+      ],
+      "option_strings": [
+       "--resume"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "checkpoint",
+      "kind": "option",
+      "tokens": [
+       "--checkpoint",
+       "<CHECKPOINT>"
+      ],
+      "option_strings": [
+       "--checkpoint"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "rollback",
+      "kind": "option",
+      "tokens": [
+       "--rollback",
+       "<ROLLBACK>"
+      ],
+      "option_strings": [
+       "--rollback"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "list",
+      "kind": "option",
+      "tokens": [
+       "--list"
+      ],
+      "option_strings": [
+       "--list"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "input",
+      "kind": "option",
+      "tokens": [
+       "--input",
+       "<INPUT>"
+      ],
+      "option_strings": [
+       "--input"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "attempt_id",
+      "kind": "option",
+      "tokens": [
+       "--attempt-id",
+       "<ATTEMPT_ID>"
+      ],
+      "option_strings": [
+       "--attempt-id"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "selftest",
+      "kind": "option",
+      "tokens": [
+       "--selftest"
+      ],
+      "option_strings": [
+       "--selftest"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "capabilities",
+      "kind": "option",
+      "tokens": [
+       "--capabilities"
+      ],
+      "option_strings": [
+       "--capabilities"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "explicit-write-mode",
+    "signals": [
+     "apply",
+     "resume",
+     "rollback"
+    ],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W6"
+   ],
+   "journey_grammar": {
+    "plan": [
+     "gb",
+     "role",
+     "<role phrase>",
+     "--json"
+    ],
+    "apply": [
+     "gb",
+     "role",
+     "<role phrase>",
+     "--apply",
+     "--plan-hash",
+     "<HASH>"
+    ],
+    "status": [
+     "gb",
+     "role",
+     "--status",
+     "<ATTEMPT_ID>"
+    ],
+    "resume": [
+     "gb",
+     "role",
+     "--resume",
+     "<ATTEMPT_ID>",
+     "--checkpoint",
+     "<CHECKPOINT_ID>"
+    ],
+    "rollback": [
+     "gb",
+     "role",
+     "--rollback",
+     "<ATTEMPT_ID>"
+    ],
+    "list": [
+     "gb",
+     "role",
+     "--list"
+    ]
+   }
+  },
+  {
+   "command": "bootstrap",
+   "argv": {
+    "prefix": [
+     "gb",
+     "bootstrap"
+    ],
+    "fields": [
+     {
+      "name": "role",
+      "kind": "option",
+      "tokens": [
+       "--role",
+       "<ROLE>"
+      ],
+      "option_strings": [
+       "--role"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "for_agent",
+      "kind": "option",
+      "tokens": [
+       "--for-agent"
+      ],
+      "option_strings": [
+       "--for-agent"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W6"
+   ]
+  },
+  {
+   "command": "teach",
+   "argv": {
+    "prefix": [
+     "gb",
+     "teach"
+    ],
+    "fields": [
+     {
+      "name": "action",
+      "kind": "positional",
+      "tokens": [
+       "<forms|absences|authors|posts|census>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [
+       "forms",
+       "absences",
+       "authors",
+       "posts",
+       "census"
+      ],
+      "repeatable": false,
+      "default": "forms"
+     },
+     {
+      "name": "write",
+      "kind": "option",
+      "tokens": [
+       "--write"
+      ],
+      "option_strings": [
+       "--write"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "explicit-write-mode",
+    "signals": [
+     "write"
+    ],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "daily",
+   "argv": {
+    "prefix": [
+     "gb",
+     "daily"
+    ],
+    "fields": [
+     {
+      "name": "action",
+      "kind": "positional",
+      "tokens": [
+       "<collect|proof>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [
+       "collect",
+       "proof"
+      ],
+      "repeatable": false,
+      "default": "collect"
+     },
+     {
+      "name": "no_fetch",
+      "kind": "option",
+      "tokens": [
+       "--no-fetch"
+      ],
+      "option_strings": [
+       "--no-fetch"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "kind",
+      "kind": "option",
+      "tokens": [
+       "--kind",
+       "<KIND>"
+      ],
+      "option_strings": [
+       "--kind"
+      ],
+      "type": "Tuple[str, ...]",
+      "required": false,
+      "choices": [],
+      "repeatable": true,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "full",
+      "kind": "option",
+      "tokens": [
+       "--full"
+      ],
+      "option_strings": [
+       "--full"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "selftest",
+      "kind": "option",
+      "tokens": [
+       "--selftest"
+      ],
+      "option_strings": [
+       "--selftest"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "share",
+      "kind": "option",
+      "tokens": [
+       "--share"
+      ],
+      "option_strings": [
+       "--share"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "explicit-write-mode",
+    "signals": [
+     "share"
+    ],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W2"
+   ]
+  },
+  {
+   "command": "walk",
+   "argv": {
+    "prefix": [
+     "gb",
+     "walk"
+    ],
+    "fields": [
+     {
+      "name": "track",
+      "kind": "positional",
+      "tokens": [
+       "<cli|bots>"
+      ],
+      "option_strings": [],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [
+       "cli",
+       "bots"
+      ],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "paste",
+      "kind": "option",
+      "tokens": [
+       "--paste",
+       "<PASTE>"
+      ],
+      "option_strings": [
+       "--paste"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "role",
+      "kind": "option",
+      "tokens": [
+       "--role",
+       "<ROLE>"
+      ],
+      "option_strings": [
+       "--role"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "galaxy",
+      "kind": "option",
+      "tokens": [
+       "--galaxy",
+       "<GALAXY>"
+      ],
+      "option_strings": [
+       "--galaxy"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "step",
+      "kind": "option",
+      "tokens": [
+       "--step"
+      ],
+      "option_strings": [
+       "--step"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W6"
+   ]
+  },
+  {
+   "command": "templates",
+   "argv": {
+    "prefix": [
+     "gb",
+     "templates"
+    ],
+    "fields": [
+     {
+      "name": "action",
+      "kind": "positional",
+      "tokens": [
+       "<list|show|validate|stats|deploy|publish>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [
+       "list",
+       "show",
+       "validate",
+       "stats",
+       "deploy",
+       "publish"
+      ],
+      "repeatable": false,
+      "default": "list"
+     },
+     {
+      "name": "id",
+      "kind": "positional",
+      "tokens": [
+       "<ID>"
+      ],
+      "option_strings": [],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "role",
+      "kind": "option",
+      "tokens": [
+       "--role",
+       "<ROLE>"
+      ],
+      "option_strings": [
+       "--role"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "apply",
+      "kind": "option",
+      "tokens": [
+       "--apply"
+      ],
+      "option_strings": [
+       "--apply"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "screened",
+      "kind": "option",
+      "tokens": [
+       "--screened"
+      ],
+      "option_strings": [
+       "--screened"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "force",
+      "kind": "option",
+      "tokens": [
+       "--force"
+      ],
+      "option_strings": [
+       "--force"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "source",
+      "kind": "option",
+      "tokens": [
+       "--source",
+       "<SOURCE>"
+      ],
+      "option_strings": [
+       "--source"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "path",
+      "kind": "option",
+      "tokens": [
+       "--path",
+       "<PATH>"
+      ],
+      "option_strings": [
+       "--path"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "explicit-write-mode",
+    "signals": [
+     "apply",
+     "force",
+     "screened"
+    ],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W6"
+   ]
+  },
+  {
+   "command": "digest",
+   "argv": {
+    "prefix": [
+     "gb",
+     "digest"
+    ],
+    "fields": [
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "mirror",
+   "argv": {
+    "prefix": [
+     "gb",
+     "mirror"
+    ],
+    "fields": [
+     {
+      "name": "deep",
+      "kind": "option",
+      "tokens": [
+       "--deep"
+      ],
+      "option_strings": [
+       "--deep"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "save",
+      "kind": "option",
+      "tokens": [
+       "--save"
+      ],
+      "option_strings": [
+       "--save"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "since",
+      "kind": "option",
+      "tokens": [
+       "--since",
+       "<PATH|latest>"
+      ],
+      "option_strings": [
+       "--since"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "explicit-write-mode",
+    "signals": [
+     "save"
+    ],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "demand",
+   "argv": {
+    "prefix": [
+     "gb",
+     "demand"
+    ],
+    "fields": [
+     {
+      "name": "action",
+      "kind": "positional",
+      "tokens": [
+       "<rank|gaps>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [
+       "rank",
+       "gaps"
+      ],
+      "repeatable": false,
+      "default": "rank"
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "plugins",
+   "argv": {
+    "prefix": [
+     "gb",
+     "plugins"
+    ],
+    "fields": [
+     {
+      "name": "action",
+      "kind": "positional",
+      "tokens": [
+       "<universe|catalog|installed|new|show|kinds|create-brief|refresh>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [
+       "universe",
+       "catalog",
+       "installed",
+       "new",
+       "show",
+       "kinds",
+       "create-brief",
+       "refresh"
+      ],
+      "repeatable": false,
+      "default": "universe"
+     },
+     {
+      "name": "name",
+      "kind": "positional",
+      "tokens": [
+       "<NAME>"
+      ],
+      "option_strings": [],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "kind",
+      "kind": "option",
+      "tokens": [
+       "--kind",
+       "<KIND>"
+      ],
+      "option_strings": [
+       "--kind"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "q",
+      "kind": "option",
+      "tokens": [
+       "--q",
+       "<Q>"
+      ],
+      "option_strings": [
+       "--q"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "job",
+      "kind": "option",
+      "tokens": [
+       "--job",
+       "<JOB>"
+      ],
+      "option_strings": [
+       "--job"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "selftest",
+      "kind": "option",
+      "tokens": [
+       "--selftest"
+      ],
+      "option_strings": [
+       "--selftest"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W8"
+   ]
+  },
+  {
+   "command": "jobs",
+   "argv": {
+    "prefix": [
+     "gb",
+     "jobs"
+    ],
+    "fields": [
+     {
+      "name": "action",
+      "kind": "positional",
+      "tokens": [
+       "<matrix|next|record|coverage|prove|ingest|tick|drain|preregister>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [
+       "matrix",
+       "next",
+       "record",
+       "coverage",
+       "prove",
+       "ingest",
+       "tick",
+       "drain",
+       "preregister"
+      ],
+      "repeatable": false,
+      "default": "matrix"
+     },
+     {
+      "name": "id",
+      "kind": "option",
+      "tokens": [
+       "--id",
+       "<ID>"
+      ],
+      "option_strings": [
+       "--id"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "verdict",
+      "kind": "option",
+      "tokens": [
+       "--verdict",
+       "<VERDICT>"
+      ],
+      "option_strings": [
+       "--verdict"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "note",
+      "kind": "option",
+      "tokens": [
+       "--note",
+       "<NOTE>"
+      ],
+      "option_strings": [
+       "--note"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "file",
+      "kind": "option",
+      "tokens": [
+       "--file",
+       "<FILE>"
+      ],
+      "option_strings": [
+       "--file"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "live",
+      "kind": "option",
+      "tokens": [
+       "--live"
+      ],
+      "option_strings": [
+       "--live"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "limit",
+      "kind": "option",
+      "tokens": [
+       "--limit",
+       "<LIMIT>"
+      ],
+      "option_strings": [
+       "--limit"
+      ],
+      "type": "int",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": 109
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W7"
+   ]
+  },
+  {
+   "command": "blast",
+   "argv": {
+    "prefix": [
+     "gb",
+     "blast"
+    ],
+    "fields": [
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "selftest",
+      "kind": "option",
+      "tokens": [
+       "--selftest"
+      ],
+      "option_strings": [
+       "--selftest"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "galaxy",
+   "argv": {
+    "prefix": [
+     "gb",
+     "galaxy"
+    ],
+    "fields": [
+     {
+      "name": "action",
+      "kind": "positional",
+      "tokens": [
+       "<baseline|diff|sessions>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [
+       "baseline",
+       "diff",
+       "sessions"
+      ],
+      "repeatable": false,
+      "default": "sessions"
+     },
+     {
+      "name": "role",
+      "kind": "option",
+      "tokens": [
+       "--role",
+       "<ROLE>"
+      ],
+      "option_strings": [
+       "--role"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W6"
+   ]
+  },
+  {
+   "command": "fleet",
+   "argv": {
+    "prefix": [
+     "gb",
+     "fleet"
+    ],
+    "fields": [
+     {
+      "name": "action",
+      "kind": "positional",
+      "tokens": [
+       "<roster|routines|send|rebuild|rollback>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [
+       "roster",
+       "routines",
+       "send",
+       "rebuild",
+       "rollback"
+      ],
+      "repeatable": false,
+      "default": "roster"
+     },
+     {
+      "name": "bot",
+      "kind": "option",
+      "tokens": [
+       "--bot",
+       "<BOT>"
+      ],
+      "option_strings": [
+       "--bot"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "role",
+      "kind": "option",
+      "tokens": [
+       "--role",
+       "<ROLE>"
+      ],
+      "option_strings": [
+       "--role"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "text",
+      "kind": "option",
+      "tokens": [
+       "--text",
+       "<TEXT>"
+      ],
+      "option_strings": [
+       "--text"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "yes",
+      "kind": "option",
+      "tokens": [
+       "--yes"
+      ],
+      "option_strings": [
+       "--yes"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "only",
+      "kind": "option",
+      "tokens": [
+       "--only",
+       "<ONLY>"
+      ],
+      "option_strings": [
+       "--only"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "spec",
+      "kind": "option",
+      "tokens": [
+       "--spec",
+       "<SPEC>"
+      ],
+      "option_strings": [
+       "--spec"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "apply",
+      "kind": "option",
+      "tokens": [
+       "--apply"
+      ],
+      "option_strings": [
+       "--apply"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "manifest",
+      "kind": "option",
+      "tokens": [
+       "--manifest",
+       "<MANIFEST>"
+      ],
+      "option_strings": [
+       "--manifest"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "explicit-write-mode",
+    "signals": [
+     "apply",
+     "yes"
+    ],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W6"
+   ]
+  },
+  {
+   "command": "corpus",
+   "argv": {
+    "prefix": [
+     "gb",
+     "corpus"
+    ],
+    "fields": [
+     {
+      "name": "action",
+      "kind": "positional",
+      "tokens": [
+       "<stats|builders|categories|freshness>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [
+       "stats",
+       "builders",
+       "categories",
+       "freshness"
+      ],
+      "repeatable": false,
+      "default": "stats"
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "dogfood",
+   "argv": {
+    "prefix": [
+     "gb",
+     "dogfood"
+    ],
+    "fields": [
+     {
+      "name": "action",
+      "kind": "positional",
+      "tokens": [
+       "<audit|baseline>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [
+       "audit",
+       "baseline"
+      ],
+      "repeatable": false,
+      "default": "audit"
+     },
+     {
+      "name": "accept",
+      "kind": "option",
+      "tokens": [
+       "--accept",
+       "<ACCEPT>"
+      ],
+      "option_strings": [
+       "--accept"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "why",
+      "kind": "option",
+      "tokens": [
+       "--why",
+       "<WHY>"
+      ],
+      "option_strings": [
+       "--why"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "dispose",
+      "kind": "option",
+      "tokens": [
+       "--dispose",
+       "<DISPOSE>"
+      ],
+      "option_strings": [
+       "--dispose"
+      ],
+      "type": "Optional[List[str]]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "owner",
+      "kind": "option",
+      "tokens": [
+       "--owner",
+       "<OWNER>"
+      ],
+      "option_strings": [
+       "--owner"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "evidence",
+      "kind": "option",
+      "tokens": [
+       "--evidence",
+       "<EVIDENCE>"
+      ],
+      "option_strings": [
+       "--evidence"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "falsifier",
+      "kind": "option",
+      "tokens": [
+       "--falsifier",
+       "<FALSIFIER>"
+      ],
+      "option_strings": [
+       "--falsifier"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "expires",
+      "kind": "option",
+      "tokens": [
+       "--expires",
+       "<EXPIRES>"
+      ],
+      "option_strings": [
+       "--expires"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "review",
+      "kind": "option",
+      "tokens": [
+       "--review",
+       "<REVIEW>"
+      ],
+      "option_strings": [
+       "--review"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "ne",
+      "kind": "option",
+      "tokens": [
+       "--ne",
+       "<NE>"
+      ],
+      "option_strings": [
+       "--ne"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "decisions",
+      "kind": "option",
+      "tokens": [
+       "--decisions",
+       "<DECISIONS>"
+      ],
+      "option_strings": [
+       "--decisions"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "no_probe",
+      "kind": "option",
+      "tokens": [
+       "--no-probe"
+      ],
+      "option_strings": [
+       "--no-probe"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "dry_run",
+      "kind": "option",
+      "tokens": [
+       "--dry-run"
+      ],
+      "option_strings": [
+       "--dry-run"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "selftest",
+      "kind": "option",
+      "tokens": [
+       "--selftest"
+      ],
+      "option_strings": [
+       "--selftest"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "explicit-write-mode",
+    "signals": [
+     "accept",
+     "dispose"
+    ],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "gatesdoc",
+   "argv": {
+    "prefix": [
+     "gb",
+     "gatesdoc"
+    ],
+    "fields": [
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "readme",
+   "argv": {
+    "prefix": [
+     "gb",
+     "readme"
+    ],
+    "fields": [
+     {
+      "name": "write",
+      "kind": "option",
+      "tokens": [
+       "--write"
+      ],
+      "option_strings": [
+       "--write"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "check",
+      "kind": "option",
+      "tokens": [
+       "--check"
+      ],
+      "option_strings": [
+       "--check"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "selftest",
+      "kind": "option",
+      "tokens": [
+       "--selftest"
+      ],
+      "option_strings": [
+       "--selftest"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "artifact-and-explicit-write-mode",
+    "signals": [
+     "write"
+    ],
+    "artifact_side_effect": true
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "mine",
+   "argv": {
+    "prefix": [
+     "gb",
+     "mine"
+    ],
+    "fields": [
+     {
+      "name": "query",
+      "kind": "option",
+      "tokens": [
+       "--query",
+       "<QUERY>"
+      ],
+      "option_strings": [
+       "--query"
+      ],
+      "type": "Tuple[str, ...]",
+      "required": false,
+      "choices": [],
+      "repeatable": true,
+      "default": null
+     },
+     {
+      "name": "limit",
+      "kind": "option",
+      "tokens": [
+       "--limit",
+       "<LIMIT>"
+      ],
+      "option_strings": [
+       "--limit"
+      ],
+      "type": "int",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": 10
+     },
+     {
+      "name": "mirror",
+      "kind": "option",
+      "tokens": [
+       "--mirror",
+       "<MIRROR>"
+      ],
+      "option_strings": [
+       "--mirror"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "dry_run",
+      "kind": "option",
+      "tokens": [
+       "--dry-run"
+      ],
+      "option_strings": [
+       "--dry-run"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "artifact-side-effect",
+    "signals": [],
+    "artifact_side_effect": true
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W9"
+   ]
+  },
+  {
+   "command": "monitor",
+   "argv": {
+    "prefix": [
+     "gb",
+     "monitor"
+    ],
+    "fields": [
+     {
+      "name": "once",
+      "kind": "option",
+      "tokens": [
+       "--once"
+      ],
+      "option_strings": [
+       "--once"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "watch",
+      "kind": "option",
+      "tokens": [
+       "--watch"
+      ],
+      "option_strings": [
+       "--watch"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "interval",
+      "kind": "option",
+      "tokens": [
+       "--interval",
+       "<INTERVAL>"
+      ],
+      "option_strings": [
+       "--interval"
+      ],
+      "type": "int",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": 300
+     },
+     {
+      "name": "budget_pct",
+      "kind": "option",
+      "tokens": [
+       "--budget-pct",
+       "<BUDGET_PCT>"
+      ],
+      "option_strings": [
+       "--budget-pct"
+      ],
+      "type": "Optional[float]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "max_age_days",
+      "kind": "option",
+      "tokens": [
+       "--max-age-days",
+       "<MAX_AGE_DAYS>"
+      ],
+      "option_strings": [
+       "--max-age-days"
+      ],
+      "type": "Optional[int]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "dry_run",
+      "kind": "option",
+      "tokens": [
+       "--dry-run"
+      ],
+      "option_strings": [
+       "--dry-run"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "artifact-side-effect",
+    "signals": [],
+    "artifact_side_effect": true
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W9"
+   ]
+  },
+  {
+   "command": "platform",
+   "argv": {
+    "prefix": [
+     "gb",
+     "platform"
+    ],
+    "fields": [
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "selftest",
+      "kind": "option",
+      "tokens": [
+       "--selftest"
+      ],
+      "option_strings": [
+       "--selftest"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "triage",
+   "argv": {
+    "prefix": [
+     "gb",
+     "triage"
+    ],
+    "fields": [
+     {
+      "name": "check",
+      "kind": "positional",
+      "tokens": [
+       "<CHECK>"
+      ],
+      "option_strings": [],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "work",
+   "argv": {
+    "prefix": [
+     "gb",
+     "work"
+    ],
+    "fields": [
+     {
+      "name": "limit",
+      "kind": "option",
+      "tokens": [
+       "--limit",
+       "<LIMIT>"
+      ],
+      "option_strings": [
+       "--limit"
+      ],
+      "type": "int",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": 10
+     },
+     {
+      "name": "source",
+      "kind": "option",
+      "tokens": [
+       "--source",
+       "<SOURCE>"
+      ],
+      "option_strings": [
+       "--source"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "doctor",
+   "argv": {
+    "prefix": [
+     "gb",
+     "doctor"
+    ],
+    "fields": [
+     {
+      "name": "scope",
+      "kind": "option",
+      "tokens": [
+       "--scope",
+       "<SCOPE>"
+      ],
+      "option_strings": [
+       "--scope"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "quiet",
+      "kind": "option",
+      "tokens": [
+       "--quiet"
+      ],
+      "option_strings": [
+       "--quiet"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "artifact-side-effect",
+    "signals": [],
+    "artifact_side_effect": true
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "health",
+   "argv": {
+    "prefix": [
+     "gb",
+     "health"
+    ],
+    "fields": [
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "watch",
+      "kind": "option",
+      "tokens": [
+       "--watch"
+      ],
+      "option_strings": [
+       "--watch"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "interval",
+      "kind": "option",
+      "tokens": [
+       "--interval",
+       "<INTERVAL>"
+      ],
+      "option_strings": [
+       "--interval"
+      ],
+      "type": "int",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": 60
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "repair",
+   "argv": {
+    "prefix": [
+     "gb",
+     "repair"
+    ],
+    "fields": [
+     {
+      "name": "scope",
+      "kind": "option",
+      "tokens": [
+       "--scope",
+       "<SCOPE>"
+      ],
+      "option_strings": [
+       "--scope"
+      ],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "apply",
+      "kind": "option",
+      "tokens": [
+       "--apply"
+      ],
+      "option_strings": [
+       "--apply"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "explicit-write-mode",
+    "signals": [
+     "apply"
+    ],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "validate",
+   "argv": {
+    "prefix": [
+     "gb",
+     "validate"
+    ],
+    "fields": [
+     {
+      "name": "thing",
+      "kind": "positional",
+      "tokens": [
+       "<THING>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "audit",
+   "argv": {
+    "prefix": [
+     "gb",
+     "audit"
+    ],
+    "fields": [
+     {
+      "name": "limit",
+      "kind": "option",
+      "tokens": [
+       "--limit",
+       "<LIMIT>"
+      ],
+      "option_strings": [
+       "--limit"
+      ],
+      "type": "int",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": 15
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "why",
+   "argv": {
+    "prefix": [
+     "gb",
+     "why"
+    ],
+    "fields": [
+     {
+      "name": "id",
+      "kind": "positional",
+      "tokens": [
+       "<ID>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     },
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W11"
+   ]
+  },
+  {
+   "command": "capabilities",
+   "argv": {
+    "prefix": [
+     "gb",
+     "capabilities"
+    ],
+    "fields": [
+     {
+      "name": "json",
+      "kind": "option",
+      "tokens": [
+       "--json"
+      ],
+      "option_strings": [
+       "--json"
+      ],
+      "type": "bool",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "supported",
+    "flag": "--json",
+    "recovery_argv": null
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W4"
+   ]
+  },
+  {
+   "command": "robot-docs",
+   "argv": {
+    "prefix": [
+     "gb",
+     "robot-docs"
+    ],
+    "fields": [
+     {
+      "name": "topic",
+      "kind": "positional",
+      "tokens": [
+       "<TOPIC>"
+      ],
+      "option_strings": [],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "explicit-refusal",
+    "flag": null,
+    "recovery_argv": [
+     "gb",
+     "robot-docs",
+     "--help"
+    ]
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W4"
+   ]
+  },
+  {
+   "command": "quickstart",
+   "argv": {
+    "prefix": [
+     "gb",
+     "quickstart"
+    ],
+    "fields": []
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "explicit-refusal",
+    "flag": null,
+    "recovery_argv": [
+     "gb",
+     "quickstart",
+     "--help"
+    ]
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W4"
+   ]
+  },
+  {
+   "command": "examples",
+   "argv": {
+    "prefix": [
+     "gb",
+     "examples"
+    ],
+    "fields": []
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "explicit-refusal",
+    "flag": null,
+    "recovery_argv": [
+     "gb",
+     "examples",
+     "--help"
+    ]
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W4"
+   ]
+  },
+  {
+   "command": "info",
+   "argv": {
+    "prefix": [
+     "gb",
+     "info"
+    ],
+    "fields": []
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "explicit-refusal",
+    "flag": null,
+    "recovery_argv": [
+     "gb",
+     "info",
+     "--help"
+    ]
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W4"
+   ]
+  },
+  {
+   "command": "help",
+   "argv": {
+    "prefix": [
+     "gb",
+     "help"
+    ],
+    "fields": [
+     {
+      "name": "topic",
+      "kind": "positional",
+      "tokens": [
+       "<TOPIC>"
+      ],
+      "option_strings": [],
+      "type": "Optional[str]",
+      "required": false,
+      "choices": [],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "explicit-refusal",
+    "flag": null,
+    "recovery_argv": [
+     "gb",
+     "help",
+     "--help"
+    ]
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W4"
+   ]
+  },
+  {
+   "command": "completion",
+   "argv": {
+    "prefix": [
+     "gb",
+     "completion"
+    ],
+    "fields": [
+     {
+      "name": "shell",
+      "kind": "positional",
+      "tokens": [
+       "<bash|zsh>"
+      ],
+      "option_strings": [],
+      "type": "str",
+      "required": false,
+      "choices": [
+       "bash",
+       "zsh"
+      ],
+      "repeatable": false,
+      "default": null
+     }
+    ]
+   },
+   "mutability": {
+    "class": "read-only",
+    "signals": [],
+    "artifact_side_effect": false
+   },
+   "json": {
+    "disposition": "explicit-refusal",
+    "flag": null,
+    "recovery_argv": [
+     "gb",
+     "completion",
+     "--help"
+    ]
+   },
+   "exit_family": "gb-exit-codes/1",
+   "wave_owners": [
+    "W4"
+   ]
+  }
+ ],
+ "generated_at": "2026-09-13T12:28:56+00:00",
+ "surface_digest": "ed162417deab42ebf8bb22ca7b96b9c4a7a58be55eafe1e5cc29fa9d2b2a2f66"
+}

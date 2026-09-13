@@ -1,22 +1,22 @@
 # Quickstart — five minutes, start to finish
 
-Launch a Bot, then optionally install a desk. Copy-paste these:
+Choose a bounded role, then inspect the no-write plan:
 
 ```sh
-gb bootstrap --for-agent
-gb walk bots --paste hello-computer | pbcopy   # Linux: | xclip -sel c
-gb setup --persona first-hour                  # plan only until --apply
+gb role --list
+gb role "first hour"
 ```
 
-Paste the charter into Grok Bot. This repo ships **73 templates**, **13 persona packs**,
-and Galaxy seats in [GALAXY.md](GALAXY.md).
+The plan resolves one versioned persona and returns exact plan, apply, status,
+resume, and rollback argv. Nothing touches the account until you run the emitted
+apply argv with its current plan hash and approvals. This repo ships **73
+templates**, **14 persona packs**, and Galaxy seats in [GALAXY.md](GALAXY.md).
+`gb role --list` is authoritative: two packs are active; legacy packs remain
+visible as `legacy-unavailable` until they carry the current schema and version.
 
-**Here for Galaxy week (Sept 15-17)?** Find your session in [GALAXY.md](GALAXY.md), run
-the three lines above, and paste one charter. New users start with `hello-computer`
-(the VM answers) then `gb setup --persona first-hour` (one file read, one plugin proof).
-`routine-proof` is the schedule canary — one dated line a week — after the computer has
-answered, not instead of it. Swap the id for the one your session uses;
-[docs/ROLES.md](docs/ROLES.md) maps every pack to its templates.
+**Here for Galaxy week (Sept 15-17)?** Find your session in
+[GALAXY.md](GALAXY.md), then pass its supported role phrase to `gb role`.
+[docs/ROLES.md](docs/ROLES.md) maps every pack to its templates and availability.
 
 Two things you will actually do in the next five minutes:
 
@@ -115,15 +115,16 @@ Useful flags: `--step` pages one stop at a time (and never blocks in a pipe), `-
 clipping long output at 14 lines, `--json` gives you the whole tour as data, and `NO_COLOR=1`
 strips every escape.
 
-Then type the first-hour commands — they work before you have configured anything:
+Then run the canonical first-hour plan; it works before account mutation:
 
 ```sh
-gb bootstrap --for-agent
-gb walk bots --paste hello-computer | pbcopy
-gb setup --persona first-hour
+gb role --list
+gb role "first hour"
 ```
 
-`gb bootstrap --for-agent` prints paste + dry-run deploy + setup + verify argv and stops.
+`gb bootstrap --for-agent`, `gb walk bots --paste hello-computer`, and
+`gb setup --persona first-hour` remain bounded compatibility redirects to this
+same plan. They cannot execute a second paste/deploy/setup sequence.
 `gb mirror` is the later, read-only look at *your* fleet off this machine — no token, no
 network. Measured 2026-09-12 on a clean run: **0.18s**, six ranked findings.
 
@@ -230,7 +231,7 @@ gb doctor --scope <subsystem>
 
 | you want | read |
 |---|---|
-| the first-hour argv, for an agent | `gb bootstrap --for-agent` |
+| the canonical first-hour plan | `gb role "first hour"` |
 | the whole surface, written for an agent | `gb robot-docs` |
 | the machine contract (verbs, exit codes, subsystems) | `gb capabilities --json` |
 | the template schema and the vendor boundary | `templates/SCHEMA.md` |

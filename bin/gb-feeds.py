@@ -155,6 +155,22 @@ FEEDS: tuple[Feed, ...] = (
 )
 
 
+# These live feeds are deliberately owned by gb-grokbotdev.py. Polling either here would make
+# the same practitioner rows look like independent corroboration and defeat its added_at cursor.
+DELEGATED_SOURCES: tuple[dict[str, str], ...] = (
+    {
+        "url": "https://grokbot.dev/rss.xml",
+        "producer": "gb-grokbotdev.py",
+        "why": "feed.json is the authoritative cursor-addressable form; do not double-count RSS",
+    },
+    {
+        "url": "https://grokbot.dev/news/rss.xml",
+        "producer": "gb-grokbotdev.py",
+        "why": "news rows already arrive through feed.json; do not count its RSS mirror",
+    },
+)
+
+
 class Retired(NamedTuple):
     """A candidate that was measured DEAD and is therefore not polled daily.
 
@@ -813,6 +829,7 @@ def build_document(
         # revive one on evidence. Not fetched by `collect`: a daily request to a known 404 buys
         # nothing, and its status is recorded here with the date it was measured.
         "retired_sources": [r._asdict() for r in RETIRED],
+        "delegated_sources": [dict(source) for source in DELEGATED_SOURCES],
         "rows": merged,
     }
 
@@ -1178,6 +1195,13 @@ def selftest() -> int:
             for r in doc_a["retired_sources"]
         ),
         "a pruned candidate without a status and a date is folklore, not evidence",
+    )
+    check(
+        "grokbotdev-rss-is-delegated-not-polled",
+        not (live_urls & {source["url"] for source in DELEGATED_SOURCES})
+        and {source["producer"] for source in doc_a["delegated_sources"]}
+        == {"gb-grokbotdev.py"},
+        "grokbot.dev RSS mirrors must have one producer and zero gb-feeds requests",
     )
 
     mirror_row = [

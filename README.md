@@ -17,37 +17,37 @@
 
 ## First hour (five minutes)
 
-A person or an agent can go from clone to a paste-ready Bot without opening AGENTS.md.
+A person or an agent can resolve a supported role without opening AGENTS.md.
 
 ```sh
-gb bootstrap --for-agent
-gb walk bots --paste hello-computer | pbcopy   # Linux: | xclip -sel c
-gb setup --persona first-hour
+gb role --list
+gb role "first hour"
 ```
 
-`gb bootstrap --for-agent` prints the first-hour argv (paste, dry-run deploy, persona
-setup, verify) and stops. Paste the charter into Grok Bot. `gb setup --persona first-hour`
-prints the plan and writes nothing until you add `--apply`.
+The list preserves all 14 persona packs with version and availability. The
+plan returns literal plan, apply, status, resume, and rollback argv and writes
+nothing to the account. `first-hour` and `founder-operator` are active; the
+other 12 packs remain visible as `legacy-unavailable` until migrated.
 
-This repo ships **73 templates**, **13 persona packs**, and Galaxy seats. Every command
-above is copy-pasteable.
+This repo ships **73 templates**, **14 persona packs**, and Galaxy seats.
 
-**Here for Grok Bot Galaxy (Sept 15-17)?** Skip the rest of this page. Pick your seat in
-[GALAXY.md](GALAXY.md), paste one charter, and watch it fire.
+**Here for Grok Bot Galaxy (Sept 15-17)?** Pick your seat in
+[GALAXY.md](GALAXY.md), then use the listed role only when `gb role --list`
+marks it active.
 
-| I am a... | Paste this Bot | Or install the whole desk |
+| I am a... | Suggested first Bot | Role phrase / status |
 |---|---|---|
-| New to Grok Bot | `hello-computer` | `gb setup --persona first-hour` |
-| Founder | `morning-briefing` | `gb setup --persona founder-operator` |
-| Engineer | `galaxy-engineering` | `gb setup --persona eng-lead` |
-| Product manager | `vendor-watch` | `gb setup --persona product-manager` |
-| Sales / SDR | `galaxy-sdr-desk` | `gb setup --persona sales-outbound` |
-| Support / post-sales | `first-reply-desk` | `gb setup --persona success-support` |
-| Marketing / marketing ops | `galaxy-marketing-ops` | `gb setup --persona marketing-content` |
+| New to Grok Bot | `hello-computer` | `first hour` — active |
+| Founder | `morning-briefing` | `founder operator` — active |
+| Engineer | `galaxy-engineering` | `engineering lead` — legacy-unavailable |
+| Product manager | `vendor-watch` | `product manager` — legacy-unavailable |
+| Sales / SDR | `galaxy-sdr-desk` | `sales outbound` — legacy-unavailable |
+| Support / post-sales | `first-reply-desk` | `success support` — legacy-unavailable |
+| Marketing / marketing ops | `galaxy-marketing-ops` | `marketing content` — legacy-unavailable |
 
-Every id above is a real template in this tree and every persona is a real pack;
-[docs/ROLES.md](docs/ROLES.md) binds each pack to the ids it installs. `gb setup` prints its
-plan and changes nothing until you add `--apply`.
+Every template and persona id above exists in this tree.
+[docs/ROLES.md](docs/ROLES.md) carries the complete mapping; `gb role --list`
+is the machine authority for whether a row can produce a plan.
 
 ## Prove a job (the coverage loop)
 
@@ -74,11 +74,10 @@ curl -fsSL https://raw.githubusercontent.com/JYeswak/grok_bot_playground/main/in
 ```
 
 ```console
-$ gb bootstrap --for-agent
-$ gb walk bots --paste hello-computer | pbcopy   # Linux: | xclip -sel c
-$ gb setup --persona first-hour
+$ gb role --list
+$ gb role "first hour"
 $ gb walk cli            # guided tour of the read-only verbs
-$ gb walk bots           # the 62 Bots this repo proposes, and the charter to paste
+$ gb walk bots           # the 73 Bots this repo proposes
 ```
 
 ### Honest limits
@@ -108,7 +107,7 @@ It does three jobs:
   the reply. Every run writes a rollback manifest naming the Bots it created. Measured caveat:
   deleting a Bot does **not** delete its routine record, so the manifest reverses the Bot and
   not the schedule.
-- **Operate.** Read the account and the vendor surface, judge both against 28 checks, and say
+- **Operate.** Read the account and the vendor surface, judge both against 30 checks, and say
   which command fixes what is wrong.
 - **Grow.** Rank your fleet against a public corpus of real Bots, show what the strongest
   builders do differently, and name the next thing worth adding.
@@ -116,7 +115,7 @@ It does three jobs:
 **Built for an agent as much as for a person.** Every verb takes `--json` and returns a
 schema-stamped envelope; exit codes are semantic, not cosmetic; `gb robot-docs` is a handbook
 written for a model rather than a human; and `gb capabilities --json` describes the whole
-surface so an agent can plan without reading `bin/`. Start with `gb bootstrap --for-agent`.
+surface so an agent can plan without reading `bin/`. Start with `gb role "first hour"`.
 
 **It refuses rather than guesses.** An unmeasured check is an error, never a pass. A verb with
 no data says which command produces it. Numbers ship with their denominators, and a claim whose
@@ -139,8 +138,8 @@ your `PATH`, is safe to re-run, **verifies itself by running `gb capabilities --
 what it answered**, and removes only what it created on `--uninstall`. `bash install.sh --dry-run`
 prints the exact plan and touches nothing.
 
-New here? **[QUICKSTART.md](QUICKSTART.md)** is the five-minute path: `gb bootstrap --for-agent`,
-paste `hello-computer`, `gb setup --persona first-hour`, verify it fired.
+New here? **[QUICKSTART.md](QUICKSTART.md)** is the five-minute path: list roles,
+run `gb role "first hour"`, then follow the exact emitted checkpoints.
 
 Python 3.9 or newer. **No required runtime dependencies**: the tool is stdlib only, and the
 exporter that builds this tree resolves every import in it against the interpreter's standard
@@ -159,7 +158,7 @@ Two forms, one implementation: the console script runs the very same `bin/gb` th
 The difference is what is on disk around it. See [what it does not do](#limitations-what-this-does-not-do).
 
 ```sh
-gb bootstrap --for-agent   # first-hour argv for an agent; never --apply
+gb role "first hour"     # canonical no-write role plan
 gb quickstart              # the orientation page
 gb robot-docs              # the same thing for an agent
 gb capabilities --json     # the machine-readable contract
@@ -172,8 +171,8 @@ of this repository.
 
 ```sh
 gb walk cli      # the tool: 11 stops covering every verb, in the order a new operator needs them
-gb walk bots     # the 62 Bots this repo proposes, each with a charter you can paste
-gb walk bots --paste hello-computer | pbcopy    # just the charter, clean
+gb walk bots     # the 73 Bots this repo proposes, each with a charter you can paste
+gb templates show hello-computer    # inspect the template without starting a journey
 ```
 
 The `cli` track **runs the read-only verbs live** and shows their real output inline. It runs
@@ -193,7 +192,7 @@ clone. Run `install.sh` from one and the `gb-walk` launcher is pointed at it aut
 
 ## The Bots this repo proposes
 
-This repo ships **73 templates**, **13 persona packs**, and Galaxy seats. Every template is
+This repo ships **73 templates**, **14 persona packs**, and Galaxy seats. Every template is
 one routine, at most one integration, an explicit approval boundary, and a `verify` line naming
 the number that should change once it runs. Pick a seat from the table above, or
 `gb setup --list-personas`.
@@ -218,7 +217,7 @@ states the whole boundary, including what is still unverified.
      `gb readme --check` exits 1 when it drifts, and `gb-gatesdoc.py` fails on a stale count.
      Prose outside the markers is handwritten and this generator never touches it. -->
 
-## Command reference: the verbs (67)
+## Command reference: the verbs (70)
 
 Derived from `gb capabilities --json`. Each line is the verb's own docstring, so this table cannot describe a verb the tool does not have, or miss one it does.
 
@@ -228,14 +227,14 @@ Derived from `gb capabilities --json`. Each line is the verb's own docstring, so
 | `gb audit` | Recent mutations to this repo's artifacts, with provenance. |
 | `gb bench` | Measure the latency of the hot operator surface. Measures only; changes nothing. |
 | `gb blast` | What your Bots can do UNATTENDED, and how bad it could get. |
-| `gb bootstrap` | First-hour plan: paste, dry-run deploy, persona setup, and verify argv in one call. |
+| `gb bootstrap` | Compatibility on-ramp that delegates to the canonical role plan. |
 | `gb bot` | Talk to Bots and read them back — dispatch turns, read previews, full ask lifecycle. |
 | `gb bot-conformance` | Bot charter conformance, gated before a Bot ships. |
 | `gb capabilities` | The machine-readable contract: version, commands, exit codes, subsystems. |
 | `gb completion` | Print a shell completion script. |
 | `gb compliance` | The MATRIX aggregator over goldens + C1-C4, every suite run live. |
 | `gb corpus` | The 645-Bot corpus, with every figure's DENOMINATOR stated. |
-| `gb daily` | The daily tick: run the collection fleet, ingest, compact, then diff against yesterday. |
+| `gb daily` | The daily tick: collect (default) or proof (new-since-last-run). |
 | `gb demand` | Integrations builders ask for that no installable connector serves. |
 | `gb deployment` | The deployment audit: offline by default, --live reads the account. |
 | `gb digest` | What changed, in prose, with an executable action on every row. |
@@ -247,11 +246,11 @@ Derived from `gb capabilities --json`. Each line is the verb's own docstring, so
 | `gb feeds` | Daily-tick feed collection. Probe by default (never touches network). |
 | `gb findings` | The claim SUPPLY: every teachable thing the verbs can prove, bound to its command. |
 | `gb fleet` | Talk to the live fleet: roster and routines from the SERVER, or one message to one Bot. |
-| `gb galaxy` | Baseline and diff the ecosystem across the Sep 15-17 Grok Bot Galaxy livestream. |
+| `gb galaxy` | Baseline/diff the event, or delegate a role to the canonical plan. |
 | `gb gates` | What this account can use, by family, with the unnameable remainder stated. |
 | `gb gatesdoc` | Fail when GATES.md and the gate producer disagree about the gate. |
 | `gb github` | Daily-tick GitHub collection. Dry-run unless --apply writes. |
-| `gb goldens` | Capture or verify the CLI's observable behaviour (golden baselines). |
+| `gb grokbotdev` | grokbot.dev lean feed + status. Community-claim. Offline --selftest. |
 | `gb group` | Rooms (multi-Bot groups): list, create, members, send. Dry run unless --yes. |
 | `gb handover` | Give a rebuilt Bot its predecessor's context back (dry run unless --send). |
 | `gb health` | Single-shot state of the deployment — lighter than doctor, safe in a loop. |
@@ -267,6 +266,7 @@ Derived from `gb capabilities --json`. Each line is the verb's own docstring, so
 | `gb monitor` | Named thresholds over the artifacts already on disk, for a scheduler to branch on. |
 | `gb platform` | Which OS this is, whether this tool is verified on it, and what works here. |
 | `gb plugin-conformance` | Plugin conformance over the publishable plugin manifest. |
+| `gb plugins` | Every marketplace plugin, this account's installs, a create-plugin brief. |
 | `gb post` | Posts that RUN their own numbers before they ship, and refuse themselves if they fail. |
 | `gb quickstart` | No arguments. |
 | `gb readme` | Derive the public README's factual half from the running tool. |
@@ -274,7 +274,9 @@ Derived from `gb capabilities --json`. Each line is the verb's own docstring, so
 | `gb repair` | Idempotently rebuild a derived artifact. Dry-run unless --apply is given. |
 | `gb research` | Ask one research question across every specialty source, receipted. |
 | `gb roadmap` | The open product gaps, each re-proved on every run so the list cannot go stale. |
-| `gb robot-docs` | Agent handbook: first-hour paste, deploy, setup, and verify argv. |
+| `gb robot-docs` | Agent handbook for the canonical role plan and operator surfaces. |
+| `gb role` | Turn one role phrase into a resumable, receipted Bot journey. |
+| `gb schema` | Mine the versioned RPC schema out of the shipped desktop bundle. |
 | `gb setup` | Take this machine from a fresh clone to a measured instance. Dry-run unless --apply. |
 | `gb skill-conformance` | Skill conformance over the skills a Bot can attach. |
 | `gb skill-coverage` | Operations × skills coverage: every op reachable, every skill earning. |
@@ -287,7 +289,7 @@ Derived from `gb capabilities --json`. Each line is the verb's own docstring, so
 | `gb templates` | The Bot templates this repo proposes, and the rules that keep them runnable. |
 | `gb triage` | What is wrong right now, and the exact command that addresses it. |
 | `gb validate` | Verify a thing without changing it. Pure read. |
-| `gb walk` | Guided tour: walk the CLI, or walk the Bot templates this repo proposes. |
+| `gb walk` | Guided tour, or a redirect into the canonical role plan. |
 | `gb why` | Provenance for one check or facet: what it reads, and what it last said. |
 | `gb work` | What to pick up next here, and whether that ranking can be trusted. |
 | `gb x` | What practitioners are ACTUALLY doing with Grok Bot, ranked by distinct authors. |
@@ -306,7 +308,7 @@ Read from the CLI's own table. Every verb obeys it; the gate asserts agreement p
 | 5 | REFUSED — a mutation was requested without the gate that permits it |
 | 130 | CANCELLED — SIGINT arrived; no partial artifact was written |
 
-## The gate: 28 checks, 59 fixtures
+## The gate: 30 checks, 66 fixtures
 
 `bin/gb-surface-gate.py` judges artifacts already on disk: pure stdlib, no network. Every check ships a known-bad fixture proven to make it RED, and `--selftest --disable <check>` must FAIL for each one. A check with no exclusive known-bad is carried by the suite, not proven by it.
 
@@ -320,10 +322,10 @@ Read from the CLI's own table. Every verb obeys it; the gate asserts agreement p
   g19-fleet-earning-its-keep    g20-context-archived          g21-usecase-corpus-reviewed
   g22-durable-io                g23-types-ratcheted           g24-cli-contract
   g25-routine-liveness          g26-jobs-proof-calls          g27-surface-drift
-  g28-grokbotdev-fresh
+  g28-grokbotdev-fresh          g29-dogfood-dispositions      g30-score-ordering
 ```
 
-## Producers that prove themselves (32)
+## Producers that prove themselves (54)
 
 Each row was RUN to produce this table. A count here is the producer's own report, not a promise made on its behalf.
 
@@ -331,36 +333,58 @@ Each row was RUN to produce this table. A count here is the producer's own repor
 |---|---|
 | `bin/gb-advise.py` | 21/21 |
 | `bin/gb-blast.py` | 20/20 |
+| `bin/gb-bot-conformance.py` | pass |
+| `bin/gb-byom-compat.py` | 35/35 |
+| `bin/gb-capability-stage.py` | 13/13 |
+| `bin/gb-coach.py` | 5/5 |
 | `bin/gb-corpus.py` | 23/23 |
+| `bin/gb-daily-proof.py` | 77/77 |
 | `bin/gb-demand.py` | 16/16 |
 | `bin/gb-digest.py` | 10/10 |
-| `bin/gb-dogfood.py` | 48/48 |
-| `bin/gb-feeds.py` | 48/48 |
+| `bin/gb-dogfood.py` | 70/70 |
+| `bin/gb-ergonomics-denominator.py` | 10/10 |
+| `bin/gb-eval-frame.py` | 10/10 |
+| `bin/gb-feeds.py` | 50/50 |
 | `bin/gb-findings.py` | 22/22 |
+| `bin/gb-first-job.py` | 26/26 |
 | `bin/gb-fleet.py` | 11/11 |
 | `bin/gb-galaxy.py` | 23/23 |
 | `bin/gb-gaps.py` | 28/28 |
-| `bin/gb-gatesdoc.py` | 19/19 |
+| `bin/gb-gatesdoc.py` | 46/46 |
+| `bin/gb-gateway.py` | 11/11 |
 | `bin/gb-github.py` | 42/42 |
+| `bin/gb-grokbotdev.py` | 23/23 |
+| `bin/gb-host-fingerprint.py` | 36/36 |
+| `bin/gb-identity-stage.py` | 10/10 |
 | `bin/gb-inventory.py` | 59/59 |
-| `bin/gb-links.py` | 77/77 |
+| `bin/gb-leak-scan.py` | pass |
+| `bin/gb-links.py` | 78/78 |
+| `bin/gb-mcp-conformance.py` | pass |
 | `bin/gb-mcp-validate.py` | 21/21 |
 | `bin/gb-mirror.py` | 69/69 |
+| `bin/gb-muse-observe.py` | 14/14 |
 | `bin/gb-plugin-conformance.py` | pass |
 | `bin/gb-plugin-validate.py` | pass |
+| `bin/gb-plugins.py` | 11/11 |
 | `bin/gb-post.py` | 45/45 |
 | `bin/gb-readme.py` | 25/25 |
-| `bin/gb-research.py` | 7/7 |
+| `bin/gb-rebuild-fleet.py` | 12/12 |
+| `bin/gb-research.py` | 24/24 |
+| `bin/gb-role-journey.py` | 39/39 |
+| `bin/gb-role-transaction.py` | pass |
+| `bin/gb-room-topology.py` | 21/21 |
 | `bin/gb-schema.py` | pass |
-| `bin/gb-sources.py` | 13/13 |
-| `bin/gb-surface-gate.py` | 57/57 |
-| `bin/gb-teach.py` | 28/28 |
-| `bin/gb-template-conformance.py` | 24/24 |
+| `bin/gb-sources.py` | 14/14 |
+| `bin/gb-surface-gate.py` | 66/66 |
+| `bin/gb-surface-snapshot.py` | pass |
+| `bin/gb-template-conformance.py` | 25/25 |
+| `bin/gb-templates.py` | 58/58 |
 | `bin/gb-usecases.py` | 16/16 |
-| `bin/gb-walk.py` | 52/52 |
-| `bin/gb-x-sweep.py` | 39/39 |
+| `bin/gb-walk.py` | 59/59 |
+| `bin/gb-wire-honored.py` | 24/24 |
+| `bin/gb-x-sweep.py` | 41/41 |
 | `bin/gb-x.py` | 55/55 |
-| `bin/gbrpc.py` | 9/9 |
+| `bin/gbrpc.py` | 11/11 |
 
 ## What travels in this tree
 
@@ -368,9 +392,10 @@ The public tree ships the TOOLING, not the corpus. Directories below are inputs 
 
 | directory | why it travels |
 |---|---|
+| `ergonomics/` | the versioned dispatcher denominator every ergonomics wave joins against |
 | `fixtures/` | the gate's known-good/known-bad corpus — synthetic, and a gate with no known-bad is not a gate |
 | `library/` | Bot templates and `gbx`, the template CLI |
-| `personas/` | the persona packs `gb setup --persona` installs |
+| `personas/` | all persona packs cataloged by gb role --list, with bounded availability |
 | `plugin/` | the publishable Cursor/Grok plugin and its skills |
 | `templates/` | the gb-template/1 Bot templates `gb-walk.py bots` walks, and their schema |
 
@@ -380,11 +405,11 @@ The public tree ships the TOOLING, not the corpus. Directories below are inputs 
 gb --version      # version, a DERIVED build stamp, and the verb count
 ```
 
-This tree is **gb 1.0.0**, 69 verbs over 71 producers. The build STAMP is deliberately not printed here: it is a hash over every producer on disk, so it changes on any edit, and a generated document that carries a value which rots on every commit is a document that reports itself stale every day until everyone learns to ignore the alarm. The command is the current answer; this file is not.
+This tree is **gb 1.0.0**, 70 verbs over 87 producers. The build STAMP is deliberately not printed here: it is a hash over every producer on disk, so it changes on any edit, and a generated document that carries a value which rots on every commit is a document that reports itself stale every day until everyone learns to ignore the alarm. The command is the current answer; this file is not.
 
 The stamp exists because nothing else could catch a stale publish. `version` is a hand-edited constant that three files merely agree on, so a months-old export and today's export produce identical metadata and `pip install -U` sees no upgrade, and nothing could catch it. Two exports of different trees cannot agree on the derived stamp: a published mirror previously sat at 18 verbs, and it used to be undetectable.
 
-<!-- generated 2026-09-12 by `gb readme --write` -->
+<!-- generated 2026-09-13 by `gb readme --write` -->
 <!-- gb:derived:end -->
 
 ## Limitations: what this does not do
@@ -429,7 +454,7 @@ tools usually lie about themselves.
   3.12, and asserts each runner classifies itself correctly. Windows cancel-correctness is
   unmeasured: the spine's SIGINT proof has no Windows equivalent, so that step is scoped to
   POSIX rather than weakened until it passes.
-- **`pip install` installs the CLI and the producers, not the corpus.** The gate's 55-case
+- **`pip install` installs the CLI and the producers, not the corpus.** The gate's 66-case
   fixture corpus, the plugin manifest, the Bot template library and the hero art ship in this
   repository but are not copied into `site-packages`: they are ~9 MB of material that grades
   repository content, not a running deployment. `gb validate fixtures` and `gb validate

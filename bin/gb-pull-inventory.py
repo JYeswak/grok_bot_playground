@@ -35,18 +35,19 @@ import argparse
 import base64
 import datetime as dt
 import hashlib
+import importlib.util
 import json
 import pathlib
 import subprocess
 import sys
+import time
+import urllib.error
+import urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from gblib import newest_audit as gblib_newest  # noqa: E402
 from gblib import platform_refusal, platform_support  # noqa: E402
 from gbtypes import atomic_write_text  # noqa: E402
-import urllib.error
-import urllib.request
-
 # THE TRANSPORT MOVED TO `gbrpc.py` on 2026-09-12 and is RE-EXPORTED here, verbatim, because
 # fifteen files name this producer by path to borrow it. Keeping the names bound here means none
 # of them changed; new code should `from gbrpc import access_token, rpc` and skip the
@@ -327,6 +328,31 @@ def routine_rows(token: str, bots: list[dict], durable: dict[str, dict]) -> list
     return out
 
 
+def account_fingerprint(account: dict) -> str:
+    stable = {
+        "user_time_zone": account.get("user_time_zone"),
+        "computer_ids": sorted(
+            str(item.get("machine_id"))
+            for item in (account.get("computers") or [])
+            if item.get("machine_id")
+        ),
+    }
+    return hashlib.sha256(
+        json.dumps(stable, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def inventory_validator():
+    path = pathlib.Path(__file__).with_name("gb-record-inventory.py")
+    spec = importlib.util.spec_from_file_location("gb_record_inventory", path)
+    if spec is None or spec.loader is None:
+        raise SystemExit("cannot load gb-record-inventory.py validator")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def device_document(
     root: pathlib.Path,
     label: str,
@@ -362,9 +388,17 @@ def device_document(
         "app_version": (audit.get("app") or {}).get("version"),
         "source": "gb-pull-inventory (authenticated read) + human for the desktop-local fields",
         # Desktop-local: these two have no server record at all, so they come from the dated hand
-        # record in policy/<label>.json. Absent file => null => g8 says "not checked". The record's
-        # OWN date travels with it: a fresh pull must never make a stale policy look current.
-        # The ONE field with no server record: Execution on Local Computer is set per desktop and
+        "read_route": "authenticated account RPC + policy/<device>.json",
+        "account_fingerprint": account_fingerprint(account),
+        "recapture_argv": [
+            "bin/gb",
+            "inventory",
+            "pull",
+            "--device",
+            label,
+            "--apply",
+            "--json",
+        ],
         # nothing serves it back (measured across all six services, 2026-09-11).
         "local_exec_policy": (pol.get("local_exec_policy") if pol else None),
         "local_exec_reason": (pol.get("local_exec_reason") if pol else None),
@@ -405,6 +439,71 @@ def device_document(
     }
 
 
+def receipt_for(
+    root: pathlib.Path,
+    doc: dict,
+    validation_errors: list[str],
+    payload: str,
+    artifact: pathlib.Path | None,
+) -> dict:
+    bots = doc.get("bots") or []
+    routines = [routine for bot in bots for routine in (bot.get("routines") or [])]
+    skills = [skill for bot in bots for skill in (bot.get("skills") or [])]
+    outcomes: dict[str, int] = {}
+    for routine in routines:
+        for outcome in routine.get("recent_runs") or []:
+            key = str(outcome)
+            outcomes[key] = outcomes.get(key, 0) + 1
+    checked_empty = [
+        field
+        for field in ("auto_review_rules", "plugins", "mcp_servers", "bots")
+        if doc.get(field) == []
+    ]
+    for index, bot in enumerate(bots):
+        for field in ("skills", "routines"):
+            if bot.get(field) == []:
+                checked_empty.append(f"bots[{index}].{field}")
+    policy = {
+        "local_exec_policy": doc.get("local_exec_policy"),
+        "local_exec_reason": doc.get("local_exec_reason"),
+        "policy_recorded_at": doc.get("policy_recorded_at"),
+        "auto_review_rules": doc.get("auto_review_rules"),
+    }
+    return {
+        "device": doc.get("device"),
+        "producer": "bin/gb-pull-inventory.py",
+        "read_route": doc.get("read_route"),
+        "captured_at": doc.get("recorded_at"),
+        "freshness": "fresh" if not validation_errors else "invalid",
+        "counts": {
+            "bots": len(bots),
+            "routines": len(routines),
+            "skills": len(skills),
+            "plugins": len(doc.get("plugins") or []),
+            "mcp_servers": len(doc.get("mcp_servers") or []),
+            "auto_review_rules": len(doc.get("auto_review_rules") or []),
+        },
+        "checked_empty": checked_empty,
+        "null_required": [error for error in validation_errors if "null" in error],
+        "routine_status": {
+            "enabled": sum(routine.get("enabled") is True for routine in routines),
+            "disabled": sum(routine.get("enabled") is False for routine in routines),
+            "run_outcomes": outcomes,
+        },
+        "policy_digest": hashlib.sha256(
+            json.dumps(policy, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+        "document_sha256": hashlib.sha256(payload.encode()).hexdigest(),
+        "artifact": str(artifact.relative_to(root)) if artifact is not None else None,
+        "artifact_sha256": hashlib.sha256(payload.encode()).hexdigest()
+        if artifact is not None
+        else None,
+        "verdict": "GREEN" if not validation_errors else "ERROR",
+        "validation_errors": validation_errors,
+        "recapture_argv": doc.get("recapture_argv"),
+    }
+
+
 def summarize(
     bots: list, writable: int, total: int, dead: int, usage: dict | None, account: dict
 ) -> None:
@@ -436,15 +535,44 @@ def summarize(
         "the answerable one."
     )
 
+def selftest() -> int:
+    validator = inventory_validator()
+    document = validator._fixture_document("brain", "Brain.local")
+    payload = json.dumps(document, indent=1) + "\n"
+    artifact = pathlib.Path("/repo/inventory/fixture.brain.json")
+    good = receipt_for(pathlib.Path("/repo"), document, [], payload, artifact)
+    bad = receipt_for(
+        pathlib.Path("/repo"), document, ["documents[0].plugins: null"], payload, None
+    )
+    legs = [
+        ("receipt-green", good["verdict"] == "GREEN" and good["freshness"] == "fresh"),
+        ("receipt-counts", good["counts"] == {"bots": 1, "routines": 1, "skills": 0, "plugins": 1, "mcp_servers": 0, "auto_review_rules": 0}),
+        ("receipt-artifact-hash", good["artifact"] == "inventory/fixture.brain.json" and good["artifact_sha256"] == good["document_sha256"]),
+        ("receipt-policy-digest", len(good["policy_digest"]) == 64),
+        ("receipt-error-no-artifact", bad["verdict"] == "ERROR" and bad["artifact"] is None and bad["null_required"]),
+        ("receipt-recapture-argv", good["recapture_argv"] == validator.recapture_argv("brain")),
+    ]
+    for name, passed in legs:
+        print(f"  {'ok  ' if passed else 'FAIL'} {name}")
+    passed = sum(ok for _, ok in legs)
+    print(f"SELFTEST {'PASS' if passed == len(legs) else 'FAIL'} - {passed}/{len(legs)}")
+    return 0 if passed == len(legs) else 1
+
+
 
 def main() -> int:
     root = pathlib.Path(__file__).resolve().parents[1]
     ap = argparse.ArgumentParser()
-    ap.add_argument(
-        "--device", action="append", required=True, help="label(s) from desktops.json"
-    )
+    ap.add_argument("--device", action="append", help="label(s) from desktops.json")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
+    if args.selftest:
+        return selftest()
+    if not args.device:
+        ap.error("--device is required")
+    started = time.perf_counter()
 
     # THE PLATFORM GATE. The whole pull hangs off one macOS-only fact: the desktop client's
     # session is sealed with Electron safeStorage, and only macOS exposes it through a command
@@ -524,31 +652,98 @@ def main() -> int:
     computers = {
         c["hello"]["label"]: c for c in (comps.get("computers") or []) if c.get("hello")
     }
-    stamp = f"{dt.datetime.now(dt.timezone.utc):%Y-%m-%dT%H%M}"
-    written = []
+    captured_now = dt.datetime.now(dt.timezone.utc)
+    stamp = f"{captured_now:%Y-%m-%dT%H%M%S}"
+    documents: list[dict] = []
     for label in args.device:
-        doc = device_document(
-            root,
-            label,
-            known[label].get("hostname"),
-            audit=audit,
-            settings=settings,
-            computers=computers,
-            caps=caps,
-            tmpl=tmpl,
-            usage=usage,
-            server_bots=server_bots,
-            bots=bots,
-            account=account,
+        documents.append(
+            device_document(
+                root,
+                label,
+                known[label].get("hostname"),
+                audit=audit,
+                settings=settings,
+                computers=computers,
+                caps=caps,
+                tmpl=tmpl,
+                usage=usage,
+                server_bots=server_bots,
+                bots=bots,
+                account=account,
+            )
         )
+
+    validator = inventory_validator()
+    expected = {label: known[label].get("hostname") for label in args.device}
+    validation_errors = validator.validate_set(documents, expected, now=captured_now)
+    payloads = [json.dumps(document, indent=1) + "\n" for document in documents]
+    if validation_errors:
+        receipts = [
+            receipt_for(root, document, validation_errors, payload, None)
+            for document, payload in zip(documents, payloads)
+        ]
+        error_envelope = {
+            "schema": "gb-inventory-pull/2",
+            "mode": "dry-run" if args.dry_run else "apply",
+            "verdict": "ERROR",
+            "producer": "bin/gb-pull-inventory.py",
+            "expected_devices": args.device,
+            "attempted": len(documents),
+            "succeeded": 0,
+            "failed": len(documents),
+            "devices": documents,
+            "artifacts": [],
+            "receipts": receipts,
+            "validation_errors": validation_errors,
+            "timing_ms": {"total": round((time.perf_counter() - started) * 1000)},
+        }
+        if args.json:
+            print(json.dumps(error_envelope, indent=1))
+        else:
+            for error in validation_errors:
+                print(f"ERROR {error}", file=sys.stderr)
+        return 1
+
+    written: list[pathlib.Path] = []
+    receipts = []
+    for document, payload in zip(documents, payloads):
+        label = document["device"]
         out = root / "inventory" / f"{stamp}.{label}.json"
+        artifact = None
         if args.dry_run:
-            print(json.dumps(doc, indent=1)[:2000])
+            if not args.json:
+                print(payload[:2000])
         else:
             out.parent.mkdir(parents=True, exist_ok=True)
-            atomic_write_text(out, json.dumps(doc, indent=1) + "\n")
+            atomic_write_text(out, payload)
             written.append(out)
+            artifact = out
+        receipts.append(receipt_for(root, document, [], payload, artifact))
 
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "schema": "gb-inventory-pull/2",
+                    "mode": "dry-run" if args.dry_run else "apply",
+                    "verdict": "GREEN",
+                    "producer": "bin/gb-pull-inventory.py",
+                    "expected_devices": args.device,
+                    "attempted": len(documents),
+                    "succeeded": len(documents),
+                    "failed": 0,
+                    "devices": documents,
+                    "artifacts": [str(path.relative_to(root)) for path in written],
+                    "receipts": receipts,
+                    "validation_errors": [],
+                    "timing_ms": {
+                        "total": round((time.perf_counter() - started) * 1000)
+                    },
+                },
+                indent=1,
+            )
+        )
+        return 0
     writable = sum(1 for b in bots if b["api_addressable"])
     total = sum(len(b["routines"]) for b in bots)
     dead = sum(1 for b in bots for r in b["routines"] if not r["enabled"])

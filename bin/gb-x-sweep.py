@@ -1490,6 +1490,8 @@ def reclassify(first: dict[str, Any], sweep: dict[str, Any]) -> dict[str, Any]:
         seen_authors |= authors
         authored_authors |= mine_authored
         relayed_ids |= {u["id"] for u in uses if u.get("relay")}
+    ranked = rank_uses(rank_rows)
+    resid = next((r for r in ranked if r["category"] == "uncategorised"), None)
     return {
         "schema": SCHEMA,
         "mode": "reclassify",
@@ -1509,7 +1511,32 @@ def reclassify(first: dict[str, Any], sweep: dict[str, Any]) -> dict[str, Any]:
                 )
             ),
         },
-        "uses_ranked_combined": rank_uses(rank_rows),
+        "residual": (
+            {
+                "category": "uncategorised",
+                "posts": resid["posts"],
+                "distinct_authors": resid["distinct_authors"],
+                "tiers": resid["tiers"],
+                "reproduce": "python3 bin/gb x --json reclassify",
+            }
+            if resid is not None
+            else None
+        ),
+        "taxonomy_health": {
+            "rule": "a category ships only with 3+ distinct authors",
+            "below_threshold": sorted(
+                (
+                    {
+                        "category": r["category"],
+                        "distinct_authors": r["distinct_authors"],
+                    }
+                    for r in ranked
+                    if r["category"] != "uncategorised" and r["distinct_authors"] < 3
+                ),
+                key=lambda d: d["category"],
+            ),
+        },
+        "uses_ranked_combined": ranked,
     }
 
 
@@ -2680,6 +2707,54 @@ def selftest() -> int:
         and all("no first-pass artifact" in p["note"] for p in empty_rc["passes"])
         and empty_rc["uses_ranked_combined"] == [],
         str(empty_rc["passes"]),
+    )
+
+    # 10f — the residual is first-class: counts, tiers, and the command that
+    #       reproduces it. A thin category the rule would refuse still renders,
+    #       but health names it instead of silently carrying it.
+    def _u(
+        i: str,
+        author: str,
+        cats: list[str],
+        tier: str = "deployed",
+        relay: bool = False,
+    ) -> dict[str, Any]:
+        return {
+            "id": i,
+            "author": author,
+            "relay": relay,
+            "tier": tier,
+            "solicited": False,
+            "categories": cats,
+        }
+
+    thin_rc = reclassify(
+        {
+            "artifact": "first.json",
+            "readable": True,
+            "posts": 3,
+            "uses": [
+                _u("u1", "a1", []),
+                _u("u2", "a2", []),
+                _u("u3", "a3", ["two-cat"], tier="intended"),
+            ],
+        },
+        {"artifact": "sweep.json", "readable": True, "posts": 0, "uses": []},
+    )
+    check(
+        "reclassify-residual-carries-counts-tiers-reproduce",
+        thin_rc["residual"] is not None
+        and thin_rc["residual"]["posts"] == 2
+        and thin_rc["residual"]["distinct_authors"] == 2
+        and thin_rc["residual"]["tiers"] == {"deployed": 2}
+        and thin_rc["residual"]["reproduce"] == "python3 bin/gb x --json reclassify",
+        str(thin_rc["residual"]),
+    )
+    check(
+        "taxonomy-health-flags-two-author-category",
+        thin_rc["taxonomy_health"]["below_threshold"]
+        == [{"category": "two-cat", "distinct_authors": 1}],
+        str(thin_rc["taxonomy_health"]),
     )
 
     # 11 — the per-query yield verdict is ARITHMETIC, not taste. Both directions are asserted,

@@ -101,11 +101,13 @@ from __future__ import annotations
 import ast
 import dataclasses
 import datetime as dt
+import hashlib
 import json
 import pathlib
 import re
 import sys
 import tempfile
+import time
 from typing import Any, Dict, FrozenSet, List, Optional, Sequence, Set, Tuple
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -181,6 +183,48 @@ SIGNAL_WEIGHT: Dict[str, int] = {
     "tick": 8,
     "public": 6,
 }
+
+# Pinned severity order. Each pair is (must-outrank, must-trail, incident) with
+# signals zeroed, so only the KIND ladder is supervised — demand can still float
+# a hot unreachable gap above a cold truncated one, and that is intended.
+# A new category ships only with 3+ distinct authors AND a pair pinning it here;
+# a weight permutation that breaks any pair fails the oracle (selftest) and the
+# tampered-score fixture fails g30. Numeric DISTANCES are unsupervised: points.
+ORDER_ORACLE: Tuple[Tuple[str, str, str], ...] = (
+    ("absent", "broken", "2026-09-12 seven shipped verbs: missing beats crashing"),
+    (
+        "broken",
+        "unshipped",
+        "a traceback exists; a clone-only verb has no local evidence",
+    ),
+    ("unshipped", "truncated", "raw can't-open-file outranks argparse invalid-choice"),
+    ("truncated", "unreachable", "a refused action names more than silence"),
+    ("unreachable", "tick-only", "an unnamed capability outranks a scheduled-only one"),
+    ("tick-only", "internal-only", "scheduled work outranks side-effect-only tooling"),
+)
+
+
+def check_order(
+    kind_weight: Dict[str, int], pairs: Tuple[Tuple[str, str, str], ...] = ORDER_ORACLE
+) -> List[str]:
+    """Pinned pairs the weight table must respect. Empty means the ladder holds."""
+    return [
+        f"{a} ({kind_weight.get(a)}) must outrank {b} ({kind_weight.get(b)}): {why}"
+        for a, b, why in pairs
+        if kind_weight.get(a, 0) <= kind_weight.get(b, 0)
+    ]
+
+
+def scoring() -> Dict[str, Any]:
+    """What the points are: hand-selected ordinal weights, fully disclosed."""
+    return {
+        "unit": "ordinal-points",
+        "calibrated": False,
+        "kind_weights": dict(KIND_WEIGHT),
+        "signal_weights": dict(SIGNAL_WEIGHT),
+        "provenance": "hand-selected 2026-09-11/12; order supervised by ORDER_ORACLE, distances unsupervised",
+        "oracle_pairs": len(ORDER_ORACLE),
+    }
 
 
 # ---------------------------------------------------------------------------------------------
@@ -264,6 +308,8 @@ class Gap:
 
     @property
     def score(self) -> int:
+        """Ordinal points, not a calibrated magnitude. Distances mean nothing;
+        only the order is supervised (see ORDER_ORACLE)."""
         return KIND_WEIGHT.get(self.kind, 0) + self.signals.score()
 
     def as_json(self) -> Dict[str, Any]:
@@ -273,6 +319,7 @@ class Gap:
             "target": self.target,
             "detail": self.detail,
             "score": self.score,
+            "score_kind": "ordinal-points",
             "signals": self.signals.as_json(),
             "evidence": list(self.evidence),
         }
@@ -316,6 +363,7 @@ class Report:
             "dispatch_unresolved": list(self.unresolved),
             "shipping_checked": not self.shipping,
             "shipping_note": self.shipping,
+            "scoring": scoring(),
         }
 
 
@@ -997,9 +1045,16 @@ def load_baseline(path: pathlib.Path) -> Optional[Dict[str, Any]]:
 
 
 def baseline_payload(
-    report: Report, *, accepted_by: str, why: str, previous: Optional[Dict[str, Any]]
+    report: Report,
+    *,
+    accepted_by: str,
+    why: str,
+    previous: Optional[Dict[str, Any]],
+    decisions: List[Dict[str, Any]] | None = None,
 ) -> Dict[str, Any]:
-    """The artifact. Acceptances ACCUMULATE: who let a gap in, and why, is never overwritten."""
+    """The artifact. Acceptances AND dispositions ACCUMULATE: who let a gap in,
+    and why, is never overwritten. Closed gaps keep their history — the decision
+    context stays queryable rather than being erased with the gap."""
     history: List[Dict[str, Any]] = []
     if previous and isinstance(previous.get("acceptances"), list):
         history = [h for h in previous["acceptances"] if isinstance(h, dict)]
@@ -1012,12 +1067,28 @@ def baseline_payload(
                 "keys": sorted(g.key for g in report.gaps),
             }
         )
+    prior_decisions: List[Dict[str, Any]] = []
+    if previous and isinstance(previous.get("decisions"), list):
+        prior_decisions = [d for d in previous["decisions"] if isinstance(d, dict)]
+    stamped = list(prior_decisions)
+    if decisions:
+        at = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        stamped.extend([{**d, "at": d.get("at") or at} for d in decisions])
     return {
-        "schema": "gb-dogfood-baseline/1",
+        "schema": BASELINE_SCHEMA,
         "recorded_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "gap_count": len(report.gaps),
-        "gaps": {g.key: {"score": g.score, "detail": g.detail} for g in report.gaps},
+        "gaps": {
+            g.key: {
+                "score": g.score,
+                "kind": g.kind,
+                "signals": g.signals.as_json(),
+                "detail": g.detail,
+            }
+            for g in report.gaps
+        },
         "acceptances": history,
+        "decisions": stamped,
     }
 
 
@@ -1026,20 +1097,27 @@ class Ratchet:
     """The verdict of comparing a report against a baseline.
 
     `new` and `accepted` are separate on purpose. A new gap is a FINDING (exit 1) only while it
-    is unaccepted; once `--accept <who> --why <reason>` has written it into the record, the same
-    gap set is the new floor and the exit code is 0. Collapsing the two would make `--accept`
-    unusable in a pre-commit hook: it would record the decision and still fail the run.
-    """
+    is unaccepted; once a structured disposition has recorded it, the same gap set is the new
+    floor and the exit code is 0. Collapsing the two would make `--dispose` unusable in a
+    pre-commit hook: it would record the decision and still fail the run.
+
+    `red` carries lifecycle-red keys (undisposed growth, open rejects, expired defers,
+    invalid dispositions). `refused` carries a usage refusal (blanket accept, bad spec)
+    that wrote nothing — the CLI maps it to exit 2, never to a finding."""
 
     new: Tuple[str, ...]
     closed: Tuple[str, ...]
     first_run: bool
     wrote: bool
     accepted: bool = False
+    red: Tuple[str, ...] = ()
+    refused: str = ""
 
     @property
     def code(self) -> int:
-        return 1 if (self.new and not self.accepted) else 0
+        return (
+            1 if (self.refused or self.red or (self.new and not self.accepted)) else 0
+        )
 
 
 def apply_ratchet(
@@ -1049,14 +1127,31 @@ def apply_ratchet(
     accepted_by: str = "",
     why: str = "",
     write: bool = True,
+    evidence: str = "",
+    falsifier: str = "",
+    disposes: Sequence[str] = (),
+    owner: str = "",
+    rationale: str = "",
+    review_by: str = "",
+    review_predicate: str = "",
+    ne: str = "",
+    file_decisions: Sequence[Dict[str, Any]] = (),
 ) -> Ratchet:
     """Compare, then write ONLY when the baseline may legally change.
 
-    Shrinking is automatic: closing a gap must not require a ceremony. Growing is refused unless
-    `--accept` names a person and `--why` gives a reason, both recorded in the artifact.
-    """
+    Shrinking is automatic: closing a gap must not require a ceremony. Growth
+    needs exactly one structured disposition per new gap (`--dispose KEY=disp`
+    with owner/rationale, plus evidence+falsifier for adopt, review_by+predicate
+    for defer). A blanket `--accept` over several new gaps is refused, as is a
+    spec for an unknown key or two specs for one gap: both write nothing.
+    Single-gap `--accept` is one structured adopt (evidence+falsifier required).
+    A recorded reject stays RED until its gap closes; an expired defer is RED."""
     previous = load_baseline(baseline_path)
     current = {g.key for g in report.gaps}
+    today = dt.datetime.now(dt.timezone.utc).date()
+    prior_decisions: List[Dict[str, Any]] = []
+    if previous and isinstance(previous.get("decisions"), list):
+        prior_decisions = [d for d in previous["decisions"] if isinstance(d, dict)]
     if previous is None:
         wrote = False
         if write:
@@ -1073,19 +1168,261 @@ def apply_ratchet(
     new = tuple(sorted(current - recorded))
     closed = tuple(sorted(recorded - current))
 
-    if new and not accepted_by:
-        return Ratchet(new, closed, False, False)
-
+    # --- this batch's dispositions -------------------------------------------------
+    specs: List[Disposition] = []
+    for entry in file_decisions:
+        if not isinstance(entry, dict) or not entry.get("gap"):
+            return Ratchet(
+                new,
+                closed,
+                False,
+                False,
+                refused="a --decisions entry is not a {gap, ...} object",
+            )
+        specs.append(_disposition_from(entry))
+    try:
+        for spec in disposes:
+            gap, disp = parse_dispose(spec)
+            specs.append(
+                Disposition(
+                    gap=gap,
+                    disposition=disp,
+                    owner=owner or accepted_by,
+                    rationale=rationale or why,
+                    evidence=evidence,
+                    falsifier=falsifier,
+                    review_by=review_by,
+                    review_predicate=review_predicate,
+                    ne=ne,
+                )
+            )
+    except ValueError as exc:
+        return Ratchet(new, closed, False, False, refused=str(exc))
+    if accepted_by:
+        if len(new) != 1:
+            return Ratchet(
+                new,
+                closed,
+                False,
+                False,
+                refused=(
+                    f"--accept covers {len(new)} new gap(s); dispose each gap "
+                    "with --dispose KEY=adopt|reject|defer (blanket acceptance "
+                    "is refused)"
+                ),
+            )
+        specs.append(
+            Disposition(
+                gap=new[0],
+                disposition="adopt",
+                owner=accepted_by,
+                rationale=why,
+                evidence=evidence,
+                falsifier=falsifier,
+                ne=ne,
+            )
+        )
+    seen: Set[str] = set()
+    for spec in specs:
+        if spec.gap in seen:
+            return Ratchet(
+                new,
+                closed,
+                False,
+                False,
+                refused=f"two dispositions for {spec.gap!r} in one batch",
+            )
+        seen.add(spec.gap)
+        if spec.gap not in current:
+            return Ratchet(
+                new,
+                closed,
+                False,
+                False,
+                refused=f"{spec.gap!r} is not a current gap — dispositions target live gaps",
+            )
+        errs = spec.errors()
+        if errs:
+            return Ratchet(
+                new,
+                closed,
+                False,
+                False,
+                refused=f"{spec.gap!r}: " + "; ".join(errs),
+            )
+    batch = [s.as_json() for s in specs]
+    life = evaluate_dispositions(
+        prior_decisions + batch, sorted(current), today, scope=list(new)
+    )
+    missing = [g for g in new if g not in seen]
+    if missing:
+        return Ratchet(
+            new,
+            closed,
+            False,
+            False,
+            refused=(
+                f"undisposed new gap(s): {', '.join(missing)} — every new gap "
+                "needs exactly one --dispose"
+            ),
+        )
+    red = tuple(
+        life["undisposed"] + life["rejected_open"] + life["expired"] + life["invalid"]
+    )
     wrote = False
-    if write and (new or closed):
+    if new and not batch:
+        # Undisposed growth: the floor must not move on silence. Refused the
+        # write (pre-existing behavior); the lifecycle red list says why.
+        return Ratchet(new, closed, False, False, red=red)
+    if write and (new or closed or batch):
         gbtypes.atomic_write_json(
             baseline_path,
             baseline_payload(
-                report, accepted_by=accepted_by, why=why, previous=previous
+                report,
+                accepted_by=accepted_by,
+                why=why,
+                previous=previous,
+                decisions=batch,
             ),
         )
         wrote = True
-    return Ratchet(new, closed, False, wrote, accepted=bool(accepted_by))
+    return Ratchet(new, closed, False, wrote, accepted=bool(batch), red=red)
+
+
+DISPOSITIONS = ("adopt", "reject", "defer")
+BASELINE_SCHEMA = "gb-dogfood-baseline/2"
+
+
+@dataclasses.dataclass(frozen=True)
+class Disposition:
+    """One gap's scientific disposition. Exactly one per gap per batch.
+
+    adopt  the gap is intentional floor: needs owner, rationale, evidence and a
+           falsifier (what future measurement would reopen it).
+    reject the gap is a defect: stays RED until the gap closes. Needs owner +
+           rationale (the fix direction); evidence names the failing proof.
+    defer  the gap waits: needs owner, rationale, a review date AND a review
+           predicate. Past review_by it is RED again — a defer is a loan, not
+           forgiveness."""
+
+    gap: str
+    disposition: str
+    owner: str
+    rationale: str
+    evidence: str = ""
+    falsifier: str = ""
+    review_by: str = ""
+    review_predicate: str = ""
+    ne: str = ""
+    at: str = ""
+
+    def errors(self) -> List[str]:
+        """Required-field rules. Empty means recordable."""
+        errs = []
+        if self.disposition not in DISPOSITIONS:
+            errs.append(
+                f"unknown disposition {self.disposition!r} (want adopt|reject|defer)"
+            )
+        if not self.owner:
+            errs.append("owner is required")
+        if not self.rationale:
+            errs.append("rationale is required")
+        if self.disposition == "adopt" and not self.evidence:
+            errs.append("adopt needs evidence (what proves this floor is intentional)")
+        if self.disposition == "adopt" and not self.falsifier:
+            errs.append("adopt needs a falsifier (what reopens it)")
+        if self.disposition == "defer" and not self.review_by:
+            errs.append("defer needs review_by YYYY-MM-DD")
+        if self.disposition == "defer" and not self.review_predicate:
+            errs.append("defer needs a review predicate")
+        if self.review_by:
+            try:
+                dt.datetime.strptime(self.review_by, "%Y-%m-%d")
+            except ValueError:
+                errs.append(f"review_by {self.review_by!r} is not YYYY-MM-DD")
+        return errs
+
+    def as_json(self) -> Dict[str, Any]:
+        return dataclasses.asdict(self)
+
+
+def parse_dispose(spec: str) -> Tuple[str, str]:
+    """`KEY=disposition` from a repeatable --dispose flag."""
+    if "=" not in spec:
+        raise ValueError(f"--dispose wants KEY=adopt|reject|defer, got {spec!r}")
+    gap, disp = spec.split("=", 1)
+    return gap.strip(), disp.strip()
+
+
+def evaluate_dispositions(
+    decisions: List[Dict[str, Any]],
+    current_gaps: List[str],
+    now: dt.date,
+    *,
+    scope: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Pure lifecycle judge. Shared by the CLI ratchet and gate g29 — one rule,
+    two readers, so the gate can never disagree with the writer about a defer.
+
+    Latest decision per gap wins; history is retained by the caller, never here.
+    `scope=None` judges every current gap (the gate on the stored floor);
+    `scope=<new keys>` judges only growth (the ratchet at write time). A gap in
+    scope that nobody decided is undisposed (RED): silence is not a disposition."""
+    latest: Dict[str, Dict[str, Any]] = {}
+    for d in decisions:
+        if isinstance(d, dict) and d.get("gap"):
+            latest[str(d["gap"])] = d
+    current = set(current_gaps)
+    invalid = sorted(
+        str(d.get("gap"))
+        for d in latest.values()
+        if str(d.get("gap")) in current and _disposition_from(d).errors()
+    )
+    in_scope = set(scope) if scope is not None else current
+    undisposed = sorted(g for g in in_scope if g not in latest)
+    rejected_open = sorted(
+        g
+        for g, d in latest.items()
+        if d.get("disposition") == "reject" and g in current
+    )
+    expired = sorted(
+        g
+        for g, d in latest.items()
+        if d.get("disposition") == "defer"
+        and g in current
+        and _past(str(d.get("review_by") or ""), now)
+    )
+    red = sorted(set(undisposed) | set(rejected_open) | set(expired) | set(invalid))
+    return {
+        "verdict": "RED" if red else "GREEN",
+        "undisposed": undisposed,
+        "rejected_open": rejected_open,
+        "expired": expired,
+        "invalid": invalid,
+        "decided": sorted(latest),
+    }
+
+
+def _disposition_from(d: Dict[str, Any]) -> Disposition:
+    return Disposition(
+        gap=str(d.get("gap") or ""),
+        disposition=str(d.get("disposition") or ""),
+        owner=str(d.get("owner") or ""),
+        rationale=str(d.get("rationale") or ""),
+        evidence=str(d.get("evidence") or ""),
+        falsifier=str(d.get("falsifier") or ""),
+        review_by=str(d.get("review_by") or ""),
+        review_predicate=str(d.get("review_predicate") or ""),
+        ne=str(d.get("ne") or ""),
+        at=str(d.get("at") or ""),
+    )
+
+
+def _past(review_by: str, now: dt.date) -> bool:
+    try:
+        return dt.datetime.strptime(review_by, "%Y-%m-%d").date() < now
+    except ValueError:
+        return True
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1117,7 +1454,8 @@ def render(report: Report, ratchet: Ratchet, baseline_path: pathlib.Path) -> Non
         print("  no gaps: every producer capability is reachable by name through gb")
     else:
         print()
-        print(f"  {'SCORE':>5}  {'KIND':<14}{'TARGET':<28}{'DEMAND':<34}WHY")
+        print(f"  {'PTS':>5}  {'KIND':<14}{'TARGET':<28}{'DEMAND':<34}WHY")
+        print("  (ordinal points: order is supervised, distances mean nothing)")
         for g in report.gaps:
             print(
                 f"  {g.score:>5}  {g.kind:<14}{g.target[:27]:<28}"
@@ -1457,6 +1795,32 @@ def selftest() -> int:
         "a dynamic importer does not outweigh a subprocess caller",
     )
 
+    # --- the ordering oracle: pinned pairs hold, permutations fail -------------------------
+    check(
+        check_order(KIND_WEIGHT) == [],
+        f"pinned kind ladder broken: {check_order(KIND_WEIGHT)}",
+    )
+    check(
+        len(ORDER_ORACLE) == len(KIND_WEIGHT) - 1,
+        "every ladder rung needs its pin: pairs must chain all kinds",
+    )
+    swapped = dict(KIND_WEIGHT)
+    swapped["truncated"], swapped["unreachable"] = (
+        swapped["unreachable"],
+        swapped["truncated"],
+    )
+    broken = check_order(swapped)
+    check(
+        len(broken) == 1 and "truncated" in broken[0] and "unreachable" in broken[0],
+        f"a weight permutation did not fail exactly its pair: {broken}",
+    )
+    check(
+        scoring()["calibrated"] is False
+        and scoring()["unit"] == "ordinal-points"
+        and scoring()["kind_weights"] == KIND_WEIGHT,
+        "capabilities do not disclose ordinal-only scoring",
+    )
+
     # --- end-to-end, against a real miniature repo with real processes
     with tempfile.TemporaryDirectory(prefix="gb-dogfood-selftest.") as tmp:
         root = pathlib.Path(tmp)
@@ -1531,6 +1895,8 @@ def selftest() -> int:
             base,
             accepted_by="selftest",
             why="proving the gate",
+            evidence="selftest run shows the gap and only this gap",
+            falsifier="a verb naming gb-delta.py reopens this as reject",
         )
         check(
             accepted.code == 0 and accepted.wrote, "--accept did not record the growth"
@@ -1544,7 +1910,18 @@ def selftest() -> int:
             (recorded.get("acceptances") or [{}])[-1].get("by") == "selftest",
             "--accept did not record WHO accepted it",
         )
-
+        check(
+            [
+                d
+                for d in (recorded.get("decisions") or [])
+                if d.get("gap") == "unreachable:gb-delta.py"
+                and d.get("disposition") == "adopt"
+                and d.get("evidence")
+                and d.get("falsifier")
+            ]
+            != [],
+            "single --accept did not record one structured adopt",
+        )
         # ratchet down: delete the producers, baseline must shrink without any ceremony
         (root / "bin" / "gb-delta.py").unlink()
         (root / "bin" / "gb-beta.py").unlink()
@@ -1554,10 +1931,252 @@ def selftest() -> int:
             set(shrank.closed) == {"unreachable:gb-delta.py", "unreachable:gb-beta.py"},
             f"closed gaps not detected: {shrank.closed}",
         )
+        shrunk = load_baseline(base) or {}
         check(
-            "unreachable:gb-beta.py"
-            not in ((load_baseline(base) or {}).get("gaps") or {}),
-            "the baseline did not shrink after a gap was closed",
+            "unreachable:gb-beta.py" not in (shrunk.get("gaps") or {}),
+            "a closed gap was not removed from the baseline",
+        )
+        check(
+            any(
+                d.get("gap") == "unreachable:gb-delta.py"
+                for d in (shrunk.get("decisions") or [])
+            ),
+            "closing a gap erased its decision history",
+        )
+
+        # --- dispositions: per-gap science, no blanket floor ----------------------------------
+        D = dt.date(2026, 9, 13)
+        life = evaluate_dispositions([], ["k:a", "k:b"], D)
+        check(
+            life["verdict"] == "RED" and life["undisposed"] == ["k:a", "k:b"],
+            f"silence did not render as undisposed: {life}",
+        )
+        good_adopt = {
+            "gap": "k:a",
+            "disposition": "adopt",
+            "owner": "t",
+            "rationale": "intentional",
+            "evidence": "proof",
+            "falsifier": "re-measure",
+        }
+        life = evaluate_dispositions([good_adopt], ["k:a", "k:b"], D)
+        check(
+            life["verdict"] == "RED"
+            and life["undisposed"] == ["k:b"]
+            and life["decided"] == ["k:a"],
+            f"one adopt did not narrow the undisposed set: {life}",
+        )
+        bad_adopt = dict(good_adopt, falsifier="")
+        life = evaluate_dispositions([bad_adopt], ["k:a"], D)
+        check(
+            life["verdict"] == "RED" and life["invalid"] == ["k:a"],
+            f"adopt without falsifier passed: {life}",
+        )
+        life = evaluate_dispositions(
+            [
+                dict(
+                    good_adopt,
+                    gap="k:a",
+                    disposition="reject",
+                    evidence="",
+                    falsifier="",
+                    rationale="fix it",
+                )
+            ],
+            ["k:a"],
+            D,
+        )
+        check(
+            life["verdict"] == "RED" and life["rejected_open"] == ["k:a"],
+            f"open reject did not stay RED: {life}",
+        )
+        life = evaluate_dispositions(
+            [
+                dict(
+                    good_adopt,
+                    gap="k:a",
+                    disposition="reject",
+                    evidence="",
+                    falsifier="",
+                    rationale="fixed",
+                )
+            ],
+            [],
+            D,
+        )
+        check(
+            life["verdict"] == "GREEN",
+            f"closed reject did not clear: {life}",
+        )
+        soon = dict(
+            good_adopt,
+            gap="k:b",
+            disposition="defer",
+            evidence="",
+            falsifier="",
+            review_by="2026-09-20",
+            review_predicate="tick re-reads",
+        )
+        life = evaluate_dispositions([good_adopt, soon], ["k:a", "k:b"], D)
+        check(life["verdict"] == "GREEN", f"live defer did not hold GREEN: {life}")
+        life = evaluate_dispositions(
+            [good_adopt, dict(soon, review_by="2026-09-01")], ["k:a", "k:b"], D
+        )
+        check(
+            life["verdict"] == "RED" and life["expired"] == ["k:b"],
+            f"expired defer did not go RED: {life}",
+        )
+        try:
+            parse_dispose("k:a")
+            check(False, "KEY without = parsed as a disposition")
+        except ValueError:
+            check(True, "")
+        errs = Disposition(
+            gap="k:a", disposition="maybe", owner="", rationale=""
+        ).errors()
+        check(len(errs) == 3, f"validation under-counted: {errs}")
+
+        # --- ratchet refusals: blanket, duplicate, unknown -------------------------------------
+        rep2 = Report(
+            root=str(root),
+            producers=1,
+            libraries=0,
+            verbs=1,
+            gaps=(
+                Gap("n", "g1", "d1", (), Signals()),
+                Gap("n", "g2", "d2", (), Signals()),
+            ),
+        )
+        base2 = root / "dogfood-2.json"
+        first2 = apply_ratchet(rep2, base2)
+        check(first2.first_run and first2.code == 0, "second fixture genesis failed")
+        (root / "bin").mkdir(exist_ok=True)
+        (root / "bin" / "gb-n1.py").touch()
+        (root / "bin" / "gb-n2.py").touch()
+        rep3 = Report(
+            root=str(root),
+            producers=3,
+            libraries=0,
+            verbs=1,
+            gaps=(
+                Gap("n", "g1", "d1", (), Signals()),
+                Gap("n", "g2", "d2", (), Signals()),
+                Gap("unreachable", "gb-n1.py", "d", (), Signals()),
+                Gap("unreachable", "gb-n2.py", "d", (), Signals()),
+            ),
+        )
+        blanket = apply_ratchet(rep3, base2, accepted_by="t", why="trust me")
+        dup = apply_ratchet(
+            rep3,
+            base2,
+            owner="t",
+            rationale="r",
+            evidence="e",
+            falsifier="f",
+            disposes=("unreachable:gb-n1.py=adopt", "unreachable:gb-n1.py=reject"),
+        )
+        check("two dispositions" in dup.refused, f"duplicate spec not refused: {dup}")
+        ghost = apply_ratchet(
+            rep3,
+            base2,
+            owner="t",
+            rationale="r",
+            disposes=("unreachable:gb-ghost.py=adopt",),
+        )
+        check("not a current gap" in ghost.refused, f"unknown key not refused: {ghost}")
+        partial = apply_ratchet(
+            rep3,
+            base2,
+            owner="t",
+            rationale="r",
+            evidence="e",
+            falsifier="f",
+            disposes=("unreachable:gb-n1.py=adopt",),
+        )
+        check(
+            "undisposed new gap" in partial.refused,
+            f"partial batch not refused: {partial}",
+        )
+
+        filed = apply_ratchet(
+            rep3,
+            base2,
+            owner="t",
+            rationale="r",
+            file_decisions=[
+                {
+                    "gap": "unreachable:gb-n1.py",
+                    "disposition": "defer",
+                    "owner": "t",
+                    "rationale": "r",
+                    "review_by": "2026-09-20",
+                    "review_predicate": "tick",
+                },
+                {
+                    "gap": "unreachable:gb-n2.py",
+                    "disposition": "reject",
+                    "owner": "t",
+                    "rationale": "real defect",
+                },
+            ],
+        )
+        check(
+            filed.code == 1 and filed.wrote and filed.red == ("unreachable:gb-n2.py",),
+            f"file batch did not record defer+reject with reject RED: {filed}",
+        )
+        check(
+            len((load_baseline(base2) or {}).get("decisions", [])) == 2,
+            "file decisions were not persisted",
+        )
+        t0 = time.monotonic()
+        logged = load_baseline(base2) or {}
+        current3 = {g.key for g in rep3.gaps}
+        life3 = evaluate_dispositions(logged.get("decisions", []), sorted(current3), D)
+        log = [
+            {
+                "gap": d.get("gap"),
+                "prior_state": "recorded" if d.get("gap") in current3 else "closed",
+                "current_state": "open" if d.get("gap") in current3 else "closed",
+                "disposition": d.get("disposition"),
+                "evidence_digest": hashlib.sha256(
+                    str(d.get("evidence") or "").encode()
+                ).hexdigest()[:12],
+                "owner": d.get("owner"),
+                "expiry": d.get("review_by") or "",
+                "review_predicate": d.get("review_predicate") or "",
+                "falsifier": d.get("falsifier") or "",
+                "ne": d.get("ne") or "",
+                "verdict": life3["verdict"],
+                "exit": filed.code,
+                "elapsed_ms": round(1000 * (time.monotonic() - t0), 1),
+            }
+            for d in logged.get("decisions", [])
+        ]
+        print("  decision-log " + json.dumps(log))
+        check(
+            len(log) == 2
+            and all(
+                set(r)
+                == {
+                    "gap",
+                    "prior_state",
+                    "current_state",
+                    "disposition",
+                    "evidence_digest",
+                    "owner",
+                    "expiry",
+                    "review_predicate",
+                    "falsifier",
+                    "ne",
+                    "verdict",
+                    "exit",
+                    "elapsed_ms",
+                }
+                for r in log
+            )
+            and log[1]["verdict"] == "RED"
+            and log[1]["exit"] == 1,
+            "decision log is missing fields or the reject row verdict",
         )
 
     # --- the REVERSE direction, end to end, in its own repo. Every leg here is paired: the
@@ -1664,10 +2283,31 @@ class DogfoodArgs:
         default=None, help="repo root (default: this checkout)"
     )
     accept: Optional[str] = gbargs.arg(
-        default=None, help="record a NEW gap as accepted; names who accepted it"
+        default=None,
+        help="single new gap: record as adopt (needs --evidence --falsifier)",
     )
     why: Optional[str] = gbargs.arg(
-        default=None, help="required with --accept: the reason"
+        default=None, help="required with --accept/--dispose: the rationale"
+    )
+    dispose: Tuple[str, ...] = gbargs.arg(
+        default=None, help="repeatable KEY=adopt|reject|defer: one disposition per gap"
+    )
+    owner: Optional[str] = gbargs.arg(default=None, help="--dispose: who decides")
+    evidence: Optional[str] = gbargs.arg(
+        default=None, help="adopt: what proves this floor is intentional"
+    )
+    falsifier: Optional[str] = gbargs.arg(
+        default=None, help="adopt: what future measurement reopens it"
+    )
+    expires: Optional[str] = gbargs.arg(
+        default=None, help="defer: review date YYYY-MM-DD"
+    )
+    review: Optional[str] = gbargs.arg(
+        default=None, help="defer: the predicate that triggers review"
+    )
+    ne: Optional[str] = gbargs.arg(default=None, help="optional negative-evidence link")
+    decisions: Optional[str] = gbargs.arg(
+        default=None, help="JSON file: heterogeneous disposition list for big batches"
     )
     no_probe: bool = gbargs.arg(
         default=False,
@@ -1709,15 +2349,30 @@ def body() -> int:
 
     accept = str(ns.accept) if ns.accept else ""
     why = str(ns.why) if ns.why else ""
+    disposes = tuple(ns.dispose) if ns.dispose else ()
     if accept and not why:
         print(
             "gb-dogfood: --accept requires --why (a reason is part of the record)",
             file=sys.stderr,
         )
         return 2
-    if why and not accept:
-        print("gb-dogfood: --why without --accept records nothing", file=sys.stderr)
+    if why and not accept and not disposes and not ns.decisions:
+        print(
+            "gb-dogfood: --why without --accept/--dispose/--decisions records nothing",
+            file=sys.stderr,
+        )
         return 2
+    file_decisions: List[Dict[str, Any]] = []
+    if ns.decisions:
+        try:
+            raw = json.loads(pathlib.Path(str(ns.decisions)).read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"gb-dogfood: --decisions unreadable: {exc}", file=sys.stderr)
+            return 2
+        if not isinstance(raw, list):
+            print("gb-dogfood: --decisions file must hold a JSON list", file=sys.stderr)
+            return 2
+        file_decisions = raw
 
     report = audit(root, probe=not ns.no_probe)
     ratchet = apply_ratchet(
@@ -1726,7 +2381,33 @@ def body() -> int:
         accepted_by=accept,
         why=why,
         write=not ns.dry_run,
+        evidence=str(ns.evidence) if ns.evidence else "",
+        falsifier=str(ns.falsifier) if ns.falsifier else "",
+        disposes=disposes,
+        owner=str(ns.owner) if ns.owner else "",
+        rationale=why,
+        review_by=str(ns.expires) if ns.expires else "",
+        review_predicate=str(ns.review) if ns.review else "",
+        ne=str(ns.ne) if ns.ne else "",
+        file_decisions=file_decisions,
     )
+    if ratchet.refused:
+        if as_json:
+            payload = report.as_json()
+            payload["ratchet"] = {
+                "new": list(ratchet.new),
+                "closed": list(ratchet.closed),
+                "first_run": ratchet.first_run,
+                "baseline_written": False,
+                "baseline": str(baseline_path),
+                "red": list(ratchet.red),
+                "refused": ratchet.refused,
+            }
+            payload["verdict"] = "REFUSED"
+            print(json.dumps(payload, indent=1))
+        else:
+            print(f"gb-dogfood: refused: {ratchet.refused}", file=sys.stderr)
+        return 2
 
     if as_json:
         payload = report.as_json()
@@ -1736,8 +2417,11 @@ def body() -> int:
             "first_run": ratchet.first_run,
             "baseline_written": ratchet.wrote,
             "baseline": str(baseline_path),
+            "red": list(ratchet.red),
+            "refused": ratchet.refused,
         }
-        payload["verdict"] = "FINDINGS" if ratchet.new else "OK"
+        payload["verdict"] = "GREEN" if ratchet.code == 0 else "RED"
+        payload["exit"] = ratchet.code
         print(json.dumps(payload, indent=1))
     else:
         render(report, ratchet, baseline_path)

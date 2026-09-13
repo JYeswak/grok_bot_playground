@@ -8,8 +8,10 @@ See [`AGENTS.md` §ORACLE](./AGENTS.md#oracle) — xAI's shipped Grok Bot surfac
 ## Runner
 
 `bin/gb-surface-gate.py` — pure python3 stdlib, no network, judges artifacts already on disk.
-Version `1.9.0`, **28 checks**, **59 fixtures**. Every count in this document is mechanically
-enforced against the producer by `bin/gb-gatesdoc.py`; it exits 1 on any drift.
+Version `1.11.0`. Every normative count in this document is mechanically enforced against the
+producer by `bin/gb-gatesdoc.py`; it exits 1 on any drift.
+
+Gate count tuple (producer: `bin/gb-surface-gate.py --counts`): `checks=30 fixtures=66 GREEN=5 RED=47 ERROR=14 mutation-covered=30`.
 
 ```bash
 bin/gb-weekly.sh                                  # snapshot → audit → gate (the tick)
@@ -17,8 +19,9 @@ bin/gb-audit-remote.sh brain                      # audit a registered desktop o
 bin/gb-record-inventory.py --device brain --template   # record what the audit cannot see
 bin/gb-surface-gate.py                            # judge what is on disk
 bin/gb-surface-gate.py --json                     # same, machine-readable
-bin/gb-surface-gate.py --selftest                 # 59 fixtures, must be 59/59
+bin/gb-surface-gate.py --selftest                 # every fixture must match its expected verdict
 bin/gb-surface-gate.py --selftest --disable g4-client-update-applied   # mutation: must FAIL
+bin/gb-surface-gate.py --counts                   # one producer-owned count tuple
 bin/gb-surface-gate.py --capabilities             # self-description, thresholds, inputs
 bin/gb-gatesdoc.py                                # this document vs the producer; 1 on drift
 ```
@@ -28,7 +31,8 @@ bin/gb-gatesdoc.py                                # this document vs the produce
 `EXIT = {GREEN: 0, RED: 1, ERROR: 2}`, and the verdict text always agrees with the code. A
 normal run exits the worst verdict any enabled check returned. `--selftest` exits `0` when every
 fixture matched, `1` when any fixture missed, and `2` when `fixtures/` is absent or empty — a
-gate with no known-bad is not a gate. `--capabilities` and `--help` exit `0`.
+gate with no known-bad is not a gate. `--counts` exits `0` with the tuple or `2` when its baseline
+selftest is not green; `--capabilities` and `--help` exit `0`.
 
 | Check | RED means | ERROR means |
 |---|---|---|
@@ -60,6 +64,8 @@ gate with no known-bad is not a gate. `--capabilities` and `--help` exit `0`.
 | `g26-jobs-proof-calls` | a `jobs/walks.jsonl` `done` receipt has no `proof_ok` — name-match / paste-only claimed done without `gb bot ask --expect` | `jobs/walks.jsonl` absent or empty — done-claims are UNMEASURED |
 | `g27-surface-drift` | the newest mined bundle under `schema/<ver>/` is unreviewed AND a method was added, removed, or changed (same name, different input/output/kind/requiredness) since the reviewed bundle | `schema/registry.json` or `schema/reviewed.json` missing/unparseable, or a named bundle unreadable — drift is UNMEASURED |
 | `g28-grokbotdev-fresh` | newest `grokbotdev/<stamp>.json` is >8d old, or `mcp.used` is true (NE-25 forbids mcp.grokbot.dev) | no grokbotdev artifact, wrong schema, or `rows` missing — unmeasured community feed is not a quiet week |
+| `g29-dogfood-dispositions` | a recorded dogfood gap has no valid per-gap disposition (undisposed, blanket free-form acceptance), a recorded reject is still open, or a defer is past `review_by` | no `dogfood-baseline.json`, unknown schema, or the disposition judge cannot load — an unjudged floor is not a clean floor |
+| `g30-score-ordering` | a recorded dogfood score does not recompute from the disclosed KIND/SIGNAL weights, or the recorded rank inverts the recomputed rank — points are ordinal, tampering is not measurement | no baseline, or no recorded gap carries kind+signals (pre-breakdown rows) — ordering is UNMEASURED until re-recorded |
 
 Advisory rows (never gating, always printed): idle Bots >21d, unread backlog, undecoded enabled
 capabilities. A fourth advisory — notifications-off count — was REMOVED 2026-09-11 (NE-6): the
@@ -86,27 +92,31 @@ at all, so there is no trustworthy source and the honest move is to say nothing.
 - Every check disabled = ERROR, never GREEN.
 - Exit code always agrees with the verdict text (0/1/2); the selftest asserts it per fixture.
 - Partial never rounds up: one RED check makes the tick RED; one ERROR makes it ERROR.
-- Every check ships a known-bad fixture proven to make it RED/ERROR. 57 fixtures: 5 known-good
-  (a clean week; a reviewed capability delta; an acknowledged pause; a reviewed self-made routine;
-  a new Bot inside the fleet grace window) keep the suite from drifting over-strict, 40 known-bad
-  RED and 12 known-bad ERROR keep it honest.
-- Mutation-verified 27 of 27. `--selftest --disable <check>` must FAIL for
-  every check. `g25-routine-liveness` was the last exception: it appeared only inside
+- Every check ships a known-bad fixture proven to make it RED/ERROR. The exact fixture total and
+  GREEN/RED/ERROR split live only in the producer-backed tuple above.
+- Mutation coverage is measured by `--counts`. `--selftest --disable <check>` must FAIL for
+  every enabled check. `g25-routine-liveness` was the last exception: it appeared only inside
   `bad-no-inventory`, co-signed there by g8/g9/g12/g14, so disabling it still passed and NOTHING
   proved it. `bad-routine-never-fired` closes that gap — an enabled routine, past its own
   `next_run_at_ms` (a fixed 2026-09-10T00:00:00Z, so it cannot drift GREEN), with zero runs ever
   and an otherwise-clean root. Note what makes it distinct from `g9-routine-health`: nothing has
   FAILED there. The run list is empty, not failing — the case g9 branches past, since it tests
   "runs is None" and "every run failed" and an empty list is neither.
-- `bad-surface-phantom` is `g27-surface-drift`'s exclusive proof: a GOOD root in every
-  old sense (GREEN on all other 26 checks) carrying a reviewed `schema/0.47.0` and an
-  unreviewed `schema/0.48.0` whose method delta is one of each kind — `+CreateBot`
+- `bad-surface-phantom` is `g27-surface-drift`'s exclusive proof: a GOOD root on every other
+  enabled check carrying a reviewed `schema/0.47.0` and an unreviewed `schema/0.48.0` whose
+  method delta is one of each kind — `+CreateBot`
   added, `-ListBots` removed, `~GetBot` changed by requiredness alone (field `verbose`
   optional -> required, same input/output/kind). CHANGED counts input, output, kind,
   and requiredness: a requiredness flip is a breaking change and gets its own RED line.
-- This document is itself gated. `bin/gb-gatesdoc.py` fails when it and the producer disagree on
-  any check id or on the fixture count, so the normative doc cannot drift ahead of or behind the
-  code again (it did: it claimed 44 fixtures and 18 checks against a real 54 and 25).
+- `bad-dogfood-*` are `g29-dogfood-dispositions`'s five exclusive proofs, one per RED arm:
+  blanket free-form acceptance, expired defer, open reject, invalid disposition, undisposed
+  gap. Guard-removal proof: with the lifecycle judge neutered, the reject specimen reads
+  GREEN (bad); the blanket arm is gate-side and independent — killing the judge leaves the
+  blanket specimen RED. Each specimen is otherwise clean: with `g29` disabled the only
+  non-green left is the ambient tree state, never another gate.
+- These normative documents are themselves gated. `bin/gb-gatesdoc.py` fails when AGENTS.md,
+  GATES.md, or SCRIPTS.md lacks the exact producer tuple, repeats it, malforms it, violates its
+  arithmetic invariants, or disagrees with any producer field.
 - Determinism: fixtures must be wall-clock independent. Every maker time window is a fixed date;
   every verdict-affecting age reads the `--now` date (`FIXTURE_NOW` under `--selftest`), never the
   wall clock — regenerating fixtures on another day must diff empty.

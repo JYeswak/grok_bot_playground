@@ -3,15 +3,16 @@
 This is the human index for `personas/` and `templates/`.
 It does not invent Bots. Every id below is a file that already ships.
 
-How to use a row:
+Choose from the bounded catalog, then ask for its canonical no-write plan:
 
 ```sh
-gb walk bots --paste <template-id> | pbcopy   # macOS; Linux: xclip -sel c
-gb setup --persona <persona-id>               # dry-run unless --apply
+gb role --list
+gb role "<role phrase>"
 ```
 
-The paste path never needs a token. The persona path is optional and still
-refuses to guess: `gb setup` prints the plan; `--apply` is the only write.
+The catalog preserves all 14 pack ids. `first-hour` and `founder-operator`
+are active version-one personas; the other 12 remain visible as
+`legacy-unavailable` and cannot produce apply argv until migrated.
 
 ## Livestream seats (Sept 15–17)
 
@@ -33,9 +34,8 @@ Companion write-up with session times: [GALAXY.md](../GALAXY.md).
 
 ## Every persona pack
 
-`gb setup --persona <id>` installs the pack named here. The first paste is the
-Bot to run *before* the pack, so a new account has one receipt before it has
-a desk.
+`gb role --list` is the authority for whether a pack is runnable. The table
+below remains the complete template mapping; a row is not an install claim.
 
 | Persona | Who it is for | First paste | Then these Bots |
 |---|---|---|---|

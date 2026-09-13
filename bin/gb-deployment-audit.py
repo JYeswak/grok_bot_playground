@@ -318,7 +318,7 @@ def _pull_module():
 
 
 def live_census(support: pathlib.Path, plat) -> dict:
-    """Authenticated read-only census: routines, skills, plugins, MCP config, usage.
+    """Authenticated read-only census: routines, skills, plugins, MCP config, usage, memory.
 
     Every method called starts with List/Get (the reader refuses anything else). Auth is the
     desktop client's own bearer token decrypted in memory, or runtime-supplied GB_TOKEN. The
@@ -341,6 +341,7 @@ def live_census(support: pathlib.Path, plat) -> dict:
         "plugins": None,
         "mcp": None,
         "usage": None,
+        "memory": None,
     }
     cap = unavailable(plat, "credential_read")
     if cap is not None or support is None:
@@ -564,12 +565,48 @@ def live_census(support: pathlib.Path, plat) -> dict:
         else None
     )
 
+    # --- per-Bot memory shards: one shard per Bot; empty folder = nothing durable yet --------
+    st_m, mem = call("ListGrokBotMemoryShards", {})
+    raw_shards = (
+        (mem or {}).get("shards") if st_m == 200 and isinstance(mem, dict) else None
+    )
+    shard_rows = (
+        [
+            {
+                "agent_id": x.get("agentId"),
+                "name": durable.get(str(x.get("agentId")), {}).get("name"),
+                "harness": x.get("harness"),
+                "has_content": bool(x.get("folder")),
+            }
+            for x in (raw_shards or [])
+        ]
+        if raw_shards is not None
+        else None
+    )
+    memory = (
+        {
+            "source": "GrokBotService/ListGrokBotMemoryShards (account-wide, one "
+            "shard per Bot; folder empty = nothing durable yet)",
+            "shards": shard_rows,
+            "summary": {
+                "bots_with_shards": len(shard_rows or []),
+                "with_content": sum(1 for s in (shard_rows or []) if s["has_content"]),
+                "orphaned": sorted(
+                    str(s["agent_id"]) for s in (shard_rows or []) if s["name"] is None
+                ),
+            },
+        }
+        if raw_shards is not None
+        else None
+    )
+
     return {
         "routines": routines,
         "skills": skills,
         "plugins": plugins,
         "mcp": mcp,
         "usage": usage,
+        "memory": memory,
         "live": {
             "attempted": True,
             "auth": auth,
@@ -658,6 +695,7 @@ def main() -> int:
         "plugins": None,
         "mcp": None,
         "usage": None,
+        "memory": None,
         "live": {"attempted": False, "reason": "offline by default; pass --live"},
     }
 

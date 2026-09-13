@@ -18,6 +18,7 @@ Usage:
   gb-surface-gate.py [--root DIR] [--now YYYY-MM-DD] [--json] [--disable CHECK]
   gb-surface-gate.py --selftest [--json]
   gb-surface-gate.py --capabilities
+  gb-surface-gate.py --counts [--json]
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from gblib import dated_children, load  # noqa: E402
 
-VERSION = "1.9.0"
+VERSION = "1.11.0"
 MAX_SNAPSHOT_AGE_DAYS = 8
 MIN_PAGE_BYTES = 500
 MIN_LLMS_TOTAL_PAGES = 100
@@ -84,6 +85,8 @@ CHECKS = [
     "g26-jobs-proof-calls",
     "g27-surface-drift",
     "g28-grokbotdev-fresh",
+    "g29-dogfood-dispositions",
+    "g30-score-ordering",
 ]
 
 MAX_RUN_GAP_DAYS = 9  # one day of slack past g3's 8-day snapshot ceiling
@@ -2072,9 +2075,7 @@ def g28_grokbotdev_fresh(root: pathlib.Path, now: dt.date) -> dict:
     try:
         age = (now - dt.date.fromisoformat(rows[-1].name[:10])).days
     except ValueError:
-        return result(
-            c, ERROR, f"{rows[-1].name} has no readable date"
-        )
+        return result(c, ERROR, f"{rows[-1].name} has no readable date")
     if age > MAX_GROKBOTDEV_AGE_DAYS:
         return result(
             c,
@@ -2088,7 +2089,6 @@ def g28_grokbotdev_fresh(root: pathlib.Path, now: dt.date) -> dict:
         f"{len(items)} grokbot.dev rows captured {age}d ago "
         f"(mcp_used=false, epistemic={doc.get('epistemic', '?')})",
     )
-
 
 
 def g9_routine_health(root: pathlib.Path, now: dt.date) -> dict:
@@ -2291,6 +2291,173 @@ def g10_loop_scheduled(root: pathlib.Path, now: dt.date) -> dict:
     )
 
 
+def g29_dogfood_dispositions(root: pathlib.Path, now: dt.date) -> dict:
+    """Every recorded dogfood gap carries exactly one structured disposition.
+
+    A blanket `--accept` over gaps nobody disposed per gap is refused; a recorded
+    reject stays RED until its gap closes; a defer past review_by is RED again.
+    Reads the baseline artifact only — the CLI ratchet enforces the same rule at
+    write time through the shared judge in `bin/gb-dogfood.py`, so the two can
+    never disagree about a defer. Fixture-clocked: expiry reads the gate `--now`
+    date, never the wall clock."""
+    c = "g29-dogfood-dispositions"
+    import importlib.util
+
+    doc = load(root / "dogfood-baseline.json")
+    if not doc:
+        return result(
+            c, ERROR, "no dogfood-baseline.json — run bin/gb-dogfood.py audit"
+        )
+    if doc.get("schema") not in ("gb-dogfood-baseline/1", "gb-dogfood-baseline/2"):
+        return result(
+            c, ERROR, f"dogfood-baseline schema {doc.get('schema')!r} unreadable"
+        )
+    gaps = sorted((doc.get("gaps") or {}).keys())
+    decisions = [d for d in (doc.get("decisions") or []) if isinstance(d, dict)]
+    decided = {str(d.get("gap")) for d in decisions if d.get("gap")}
+    blanket = sorted(
+        {
+            str(k)
+            for a in (doc.get("acceptances") or [])
+            if isinstance(a, dict)
+            for k in (a.get("keys") or [])
+            if str(k) not in decided
+        }
+    )
+    spec = importlib.util.spec_from_file_location(
+        "gbdogfood", pathlib.Path(__file__).resolve().parent / "gb-dogfood.py"
+    )
+    if spec is None or spec.loader is None:
+        return result(
+            c, ERROR, "bin/gb-dogfood.py is missing — cannot judge dispositions"
+        )
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        # dataclass string annotations resolve through sys.modules at class
+        # creation: without this registration the exec dies with
+        # AttributeError: 'NoneType' object has no attribute '__dict__'.
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+    except Exception as e:
+        return result(c, ERROR, f"bin/gb-dogfood.py failed to load ({e})")
+    life = mod.evaluate_dispositions(decisions, gaps, now)
+    problems = []
+    if blanket:
+        problems.append(
+            f"{len(blanket)} gap(s) under blanket free-form acceptance: "
+            + ", ".join(blanket[:6])
+            + (" ..." if len(blanket) > 6 else "")
+        )
+    for key in ("undisposed", "rejected_open", "expired", "invalid"):
+        rows = life.get(key) or []
+        if rows:
+            problems.append(f"{key} {len(rows)}: " + ", ".join(rows[:6]))
+    if problems:
+        return result(
+            c,
+            RED,
+            "; ".join(problems)
+            + " — dispose each gap: --dispose KEY=adopt|reject|defer",
+            undisposed=life.get("undisposed"),
+            rejected_open=life.get("rejected_open"),
+            expired=life.get("expired"),
+            invalid=life.get("invalid"),
+            blanket=blanket,
+        )
+    return result(
+        c,
+        GREEN,
+        f"{len(gaps)} recorded gap(s), each with one valid disposition "
+        f"({len([d for d in decisions if d.get('disposition') == 'adopt'])} adopt, "
+        f"{len([d for d in decisions if d.get('disposition') == 'reject'])} reject, "
+        f"{len([d for d in decisions if d.get('disposition') == 'defer'])} defer)",
+    )
+
+
+def g30_score_ordering(root: pathlib.Path, now: dt.date) -> dict:
+    """Recorded dogfood points recompute from the disclosed weights, in order.
+
+    Points are ordinal (bead .7): the table supervises ORDER, never distances.
+    This check re-derives every verifiable recorded score from the current
+    KIND/SIGNAL weights and requires the recorded rank to agree with the
+    deterministic re-rank. A swapped or hand-edited score breaks pairs and goes
+    RED; rows predating the kind+signals breakdown are unverifiable (ERROR when
+    nothing is verifiable — re-record the baseline). Shares the dogfood loader
+    with g29. `now` is accepted for check-signature uniformity and unused: the
+    ladder has no clock in it."""
+    c = "g30-score-ordering"
+    import importlib.util
+
+    _ = now
+    doc = load(root / "dogfood-baseline.json")
+    if not doc:
+        return result(
+            c, ERROR, "no dogfood-baseline.json — run bin/gb-dogfood.py audit"
+        )
+    rows = doc.get("gaps") or {}
+    verifiable = {
+        k: v
+        for k, v in rows.items()
+        if isinstance(v, dict) and "kind" in v and "signals" in v
+    }
+    if not verifiable:
+        return result(
+            c,
+            ERROR,
+            "no recorded gap carries kind+signals — re-record the baseline; "
+            "ordering is UNMEASURED on pre-breakdown rows",
+        )
+    spec = importlib.util.spec_from_file_location(
+        "gbdogfood", pathlib.Path(__file__).resolve().parent / "gb-dogfood.py"
+    )
+    if spec is None or spec.loader is None:
+        return result(c, ERROR, "bin/gb-dogfood.py is missing — cannot recompute")
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+    except Exception as e:
+        return result(c, ERROR, f"bin/gb-dogfood.py failed to load ({e})")
+
+    def recompute(v: dict) -> int:
+        sig = v.get("signals") or {}
+        return int(mod.KIND_WEIGHT.get(v.get("kind"), 0)) + sum(
+            int(mod.SIGNAL_WEIGHT.get(k, 0)) * int(sig.get(k) or 0)
+            for k in ("importers", "callers", "docs", "tick", "public")
+        )
+
+    mist = sorted(k for k, v in verifiable.items() if recompute(v) != v.get("score"))
+    keys = sorted(verifiable)
+    inversions = sorted(
+        f"{a}>{b}"
+        for i, a in enumerate(keys)
+        for b in keys[i + 1 :]
+        if ((verifiable[a].get("score") or 0) > (verifiable[b].get("score") or 0))
+        != (recompute(verifiable[a]) > recompute(verifiable[b]))
+    )
+    problems = []
+    if mist:
+        problems.append(f"scores do not recompute: {', '.join(mist[:6])}")
+    if inversions:
+        problems.append(
+            f"recorded rank inverts recomputation: {', '.join(inversions[:6])}"
+        )
+    if problems:
+        return result(
+            c,
+            RED,
+            "; ".join(problems) + " — points are ordinal; tampering is not measurement",
+            mist=mist,
+            inversions=inversions,
+        )
+    return result(
+        c,
+        GREEN,
+        f"{len(verifiable)} recorded score(s) recompute and rank clean "
+        f"({len(rows) - len(verifiable)} pre-breakdown rows skipped)",
+    )
+
+
 def advisories(audit: dict | None) -> list[str]:
     """Non-gating rows. Real work, but not grounds to block a tick."""
     if not audit:
@@ -2361,6 +2528,8 @@ def run(root: pathlib.Path, now: dt.date, disabled: set[str]) -> dict:
         g26_jobs_proof_calls(root),
         g27_surface_drift(root),
         g28_grokbotdev_fresh(root, now),
+        g29_dogfood_dispositions(root, now),
+        g30_score_ordering(root, now),
     ]
     results = [r for r in results if r["check"] not in disabled]
     verdict = GREEN
@@ -2374,16 +2543,26 @@ def run(root: pathlib.Path, now: dt.date, disabled: set[str]) -> dict:
         "gate": "gb-surface-gate",
         "version": VERSION,
         "root": str(root),
-        "now": now.isoformat(),
-        "snapshot": snap.name if snap else None,
-        "deployment": audit_path.name if audit_path else None,
         "reviewed_baseline": baseline.name if baseline else None,
         "disabled": sorted(disabled),
+        "snapshot": snap.name if snap else None,
+        "deployment": audit_path.name if audit_path else None,
         "verdict": verdict,
         "exit_code": EXIT[verdict],
         "checks": results,
         "advisories": advisories(audit),
     }
+
+
+def verdict_line(out: dict) -> str:
+    """Render normal and early-ERROR envelopes without assuming artifact ids."""
+    context = []
+    if out.get("snapshot") is not None:
+        context.append("snapshot %s" % out["snapshot"])
+    if out.get("deployment") is not None:
+        context.append("deployment %s" % out["deployment"])
+    suffix = " (%s)" % ", ".join(context) if context else ""
+    return "VERDICT %s%s" % (out.get("verdict", ERROR), suffix)
 
 
 # --------------------------------------------------------------------------- selftest
@@ -2445,11 +2624,18 @@ FIXTURE_EXPECT = {
     "known-good-new-bot-in-grace": GREEN,
     "bad-archive-stale": RED,
     "bad-archive-stale-at-cap": RED,
+    "bad-dogfood-blanket-accept": RED,
+    "bad-dogfood-defer-expired": RED,
+    "bad-cli-contract-unwired": RED,
     "bad-usecases-unreviewed": RED,
     "bad-durable-io-raw-write": RED,
-    "bad-cli-contract-unwired": RED,
+    "bad-dogfood-undisposed": RED,
+    "bad-dogfood-score-tampered": RED,
+    "bad-dogfood-reject-open": RED,
+    "bad-dogfood-invalid-disposition": RED,
     "bad-types-regressed": RED,
     "bad-types-unmeasured": ERROR,
+    "bad-gate-error-envelope": ERROR,
     "bad-usecases-empty": ERROR,
     "bad-surface-phantom": RED,
     "bad-grokbotdev-missing": ERROR,
@@ -2458,16 +2644,12 @@ FIXTURE_EXPECT = {
 FIXTURE_NOW = dt.date(2026, 9, 11)
 
 
-def selftest(root: pathlib.Path, disabled: set[str], as_json: bool) -> int:
+def _selftest_result(root: pathlib.Path, disabled: set[str]) -> tuple[list[dict], bool]:
     fx = root / "fixtures"
     rows: list = []
     ok = True
     if not fx.is_dir() or not any(fx.iterdir()):
-        print(
-            "SELFTEST ERROR: fixtures/ absent — a gate with no known-bad is not a gate",
-            file=sys.stderr,
-        )
-        return 2
+        return rows, False
     for name, expected in FIXTURE_EXPECT.items():
         d = fx / name
         if not d.is_dir():
@@ -2476,10 +2658,19 @@ def selftest(root: pathlib.Path, disabled: set[str], as_json: bool) -> int:
             )
             ok = False
             continue
-        got = run(d, FIXTURE_NOW, disabled)
+        marker = load(d / "gate-error-envelope.json")
+        renderer_ok = True
+        if isinstance(marker, dict):
+            got = marker
+            try:
+                renderer_ok = verdict_line(got) == "VERDICT ERROR"
+            except (KeyError, TypeError, ValueError):
+                renderer_ok = False
+        else:
+            got = run(d, FIXTURE_NOW, disabled)
         # exit code must agree with the verdict text, always
         agree = got["exit_code"] == EXIT[got["verdict"]]
-        passed = got["verdict"] == expected and agree
+        passed = got["verdict"] == expected and agree and renderer_ok
         rows.append(
             {
                 "fixture": name,
@@ -2489,13 +2680,63 @@ def selftest(root: pathlib.Path, disabled: set[str], as_json: bool) -> int:
                 "exit_agrees": agree,
                 "pass": passed,
                 "reasons": [
-                    f"{r['check']}={r['verdict']}"
-                    for r in got["checks"]
-                    if r["verdict"] != GREEN
-                ],
+                    f"{row['check']}={row['verdict']}"
+                    for row in got["checks"]
+                    if row["verdict"] != GREEN
+                ]
+                + (["renderer=ERROR"] if not renderer_ok else []),
             }
         )
         ok &= passed
+    return rows, ok
+
+
+def count_contract(root: pathlib.Path) -> dict:
+    """Return the producer-backed tuple used by every normative gate-count claim.
+
+    Mutation coverage is measured, not inferred from the number of registered checks: a
+    check is covered only when disabling it makes the otherwise-green selftest fail.
+    """
+    _rows, baseline_ok = _selftest_result(root, set())
+    if not baseline_ok:
+        raise RuntimeError(
+            "baseline selftest is not green; mutation coverage is unmeasurable"
+        )
+    split = {verdict: 0 for verdict in (GREEN, RED, ERROR)}
+    for verdict in FIXTURE_EXPECT.values():
+        split[verdict] += 1
+    total = len(FIXTURE_EXPECT)
+    if sum(split.values()) != total:
+        raise RuntimeError("fixture verdict split does not equal fixture total")
+    covered = sum(not _selftest_result(root, {check})[1] for check in CHECKS)
+    if covered > len(CHECKS):
+        raise RuntimeError("mutation-covered count exceeds enabled checks")
+    return {
+        "checks": len(CHECKS),
+        "fixtures": total,
+        "verdict_split": split,
+        "mutation_covered": covered,
+    }
+
+
+def count_contract_text(counts: dict) -> str:
+    split = counts["verdict_split"]
+    return (
+        f"checks={counts['checks']} fixtures={counts['fixtures']} "
+        f"GREEN={split[GREEN]} RED={split[RED]} ERROR={split[ERROR]} "
+        f"mutation-covered={counts['mutation_covered']}"
+    )
+
+
+def selftest(root: pathlib.Path, disabled: set[str], as_json: bool) -> int:
+    fx = root / "fixtures"
+    if not fx.is_dir() or not any(fx.iterdir()):
+        print(
+            "SELFTEST ERROR: fixtures/ absent — a gate with no known-bad is not a gate",
+            file=sys.stderr,
+        )
+        return 2
+    rows, ok = _selftest_result(root, disabled)
     payload = {
         "selftest": "gb-surface-gate",
         "version": VERSION,
@@ -2552,7 +2793,11 @@ def capabilities() -> dict:
             "stale_bot_days": STALE_BOT_DAYS,
             "max_grokbotdev_age_days": MAX_GROKBOTDEV_AGE_DAYS,
         },
-        "selftest": "gb-surface-gate.py --selftest  (59 fixtures; mutation: --selftest --disable <check> must FAIL)",
+        "selftest": (
+            f"gb-surface-gate.py --selftest  ({len(FIXTURE_EXPECT)} fixtures; "
+            "mutation: --selftest --disable <check> must FAIL)"
+        ),
+        "counts": "gb-surface-gate.py --counts  (one normative count tuple)",
     }
 
 
@@ -2564,6 +2809,7 @@ def main() -> int:
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--capabilities", action="store_true")
+    ap.add_argument("--counts", action="store_true")
     ap.add_argument(
         "--disable",
         action="append",
@@ -2575,6 +2821,16 @@ def main() -> int:
 
     if args.capabilities:
         print(json.dumps(capabilities(), indent=1))
+        return 0
+    if args.counts:
+        try:
+            counts = count_contract(root_default)
+        except RuntimeError as exc:
+            print(f"COUNT CONTRACT ERROR: {exc}", file=sys.stderr)
+            return 2
+        print(
+            json.dumps(counts, indent=1) if args.json else count_contract_text(counts)
+        )
         return 0
     disabled = set(args.disable)
     root = pathlib.Path(args.root).resolve()
@@ -2597,9 +2853,7 @@ def main() -> int:
             print(f"  {r['verdict']:<5} {r['check']:<30} {r['detail']}")
         for a in out["advisories"]:
             print(f"  NOTE  {a}")
-        print(
-            f"VERDICT {out['verdict']} (snapshot {out['snapshot']}, deployment {out['deployment']})"
-        )
+        print(verdict_line(out))
     return out["exit_code"]
 
 

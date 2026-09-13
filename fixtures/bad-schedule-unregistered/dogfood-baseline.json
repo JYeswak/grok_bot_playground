@@ -1,0 +1,178 @@
+{
+ "schema": "gb-dogfood-baseline/2",
+ "recorded_at": "2026-09-11T00:00:00+00:00",
+ "gap_count": 7,
+ "gaps": {
+  "absent:gb-fixture-absent.py": {
+   "score": 120,
+   "kind": "absent",
+   "signals": {
+    "importers": 0,
+    "callers": 0,
+    "docs": 0,
+    "tick": 0,
+    "public": 0
+   },
+   "detail": "fixture: pinned absent exemplar"
+  },
+  "broken:gb-fixture-broken.py": {
+   "score": 100,
+   "kind": "broken",
+   "signals": {
+    "importers": 0,
+    "callers": 0,
+    "docs": 0,
+    "tick": 0,
+    "public": 0
+   },
+   "detail": "fixture: pinned broken exemplar"
+  },
+  "unshipped:gb-fixture-unshipped.py": {
+   "score": 80,
+   "kind": "unshipped",
+   "signals": {
+    "importers": 0,
+    "callers": 0,
+    "docs": 0,
+    "tick": 0,
+    "public": 0
+   },
+   "detail": "fixture: pinned unshipped exemplar"
+  },
+  "truncated:gb-fixture-truncated.py": {
+   "score": 60,
+   "kind": "truncated",
+   "signals": {
+    "importers": 0,
+    "callers": 0,
+    "docs": 0,
+    "tick": 0,
+    "public": 0
+   },
+   "detail": "fixture: pinned truncated exemplar"
+  },
+  "unreachable:gb-fixture-unreachable.py": {
+   "score": 40,
+   "kind": "unreachable",
+   "signals": {
+    "importers": 0,
+    "callers": 0,
+    "docs": 0,
+    "tick": 0,
+    "public": 0
+   },
+   "detail": "fixture: pinned unreachable exemplar"
+  },
+  "tick-only:gb-fixture-tick-only.py": {
+   "score": 20,
+   "kind": "tick-only",
+   "signals": {
+    "importers": 0,
+    "callers": 0,
+    "docs": 0,
+    "tick": 0,
+    "public": 0
+   },
+   "detail": "fixture: pinned tick-only exemplar"
+  },
+  "internal-only:gb-fixture-internal-only.py": {
+   "score": 10,
+   "kind": "internal-only",
+   "signals": {
+    "importers": 0,
+    "callers": 0,
+    "docs": 0,
+    "tick": 0,
+    "public": 0
+   },
+   "detail": "fixture: pinned internal-only exemplar"
+  }
+ },
+ "acceptances": [],
+ "decisions": [
+  {
+   "gap": "absent:gb-fixture-absent.py",
+   "disposition": "adopt",
+   "owner": "fixture",
+   "rationale": "fixture: pinned exemplar floor",
+   "evidence": "fixture: ordered by ORDER_ORACLE",
+   "falsifier": "fixture: would reopen on ladder change",
+   "review_by": "",
+   "review_predicate": "",
+   "ne": "",
+   "at": "2026-09-11T00:00:00+00:00"
+  },
+  {
+   "gap": "broken:gb-fixture-broken.py",
+   "disposition": "adopt",
+   "owner": "fixture",
+   "rationale": "fixture: pinned exemplar floor",
+   "evidence": "fixture: ordered by ORDER_ORACLE",
+   "falsifier": "fixture: would reopen on ladder change",
+   "review_by": "",
+   "review_predicate": "",
+   "ne": "",
+   "at": "2026-09-11T00:00:00+00:00"
+  },
+  {
+   "gap": "unshipped:gb-fixture-unshipped.py",
+   "disposition": "adopt",
+   "owner": "fixture",
+   "rationale": "fixture: pinned exemplar floor",
+   "evidence": "fixture: ordered by ORDER_ORACLE",
+   "falsifier": "fixture: would reopen on ladder change",
+   "review_by": "",
+   "review_predicate": "",
+   "ne": "",
+   "at": "2026-09-11T00:00:00+00:00"
+  },
+  {
+   "gap": "truncated:gb-fixture-truncated.py",
+   "disposition": "adopt",
+   "owner": "fixture",
+   "rationale": "fixture: pinned exemplar floor",
+   "evidence": "fixture: ordered by ORDER_ORACLE",
+   "falsifier": "fixture: would reopen on ladder change",
+   "review_by": "",
+   "review_predicate": "",
+   "ne": "",
+   "at": "2026-09-11T00:00:00+00:00"
+  },
+  {
+   "gap": "unreachable:gb-fixture-unreachable.py",
+   "disposition": "adopt",
+   "owner": "fixture",
+   "rationale": "fixture: pinned exemplar floor",
+   "evidence": "fixture: ordered by ORDER_ORACLE",
+   "falsifier": "fixture: would reopen on ladder change",
+   "review_by": "",
+   "review_predicate": "",
+   "ne": "",
+   "at": "2026-09-11T00:00:00+00:00"
+  },
+  {
+   "gap": "tick-only:gb-fixture-tick-only.py",
+   "disposition": "adopt",
+   "owner": "fixture",
+   "rationale": "fixture: pinned exemplar floor",
+   "evidence": "fixture: ordered by ORDER_ORACLE",
+   "falsifier": "fixture: would reopen on ladder change",
+   "review_by": "",
+   "review_predicate": "",
+   "ne": "",
+   "at": "2026-09-11T00:00:00+00:00"
+  },
+  {
+   "gap": "internal-only:gb-fixture-internal-only.py",
+   "disposition": "adopt",
+   "owner": "fixture",
+   "rationale": "fixture: pinned exemplar floor",
+   "evidence": "fixture: ordered by ORDER_ORACLE",
+   "falsifier": "fixture: would reopen on ladder change",
+   "review_by": "",
+   "review_predicate": "",
+   "ne": "",
+   "at": "2026-09-11T00:00:00+00:00"
+  }
+ ]
+}

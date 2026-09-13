@@ -225,7 +225,6 @@ def grokbotdev_doc(n: int = 1, used_mcp: bool = False) -> dict:
 GROKBOTDEV_OK = grokbotdev_doc()
 
 
-
 def usecases_doc(bots: int = 2, integrations=(("Gmail", 2), ("Slack", 1))) -> dict:
     """A population corpus. Zero Bots is a FAILED FETCH, never a quiet ecosystem — g21 must
     refuse it rather than report calm."""
@@ -811,6 +810,61 @@ def _write_sidecars(root: pathlib.Path, snap_date: str, o: dict) -> None:
             "usecases_reviewed",
             {"snapshot": "2026-09-11T0600.json", "reviewed_at": "2026-09-11"},
         ),
+        "dogfood-baseline.json": (
+            "dogfood_baseline",
+            {
+                "schema": "gb-dogfood-baseline/2",
+                "recorded_at": "2026-09-11T00:00:00+00:00",
+                "gap_count": 7,
+                "gaps": {
+                    f"{kind}:gb-fixture-{kind}.py": {
+                        "score": score,
+                        "kind": kind,
+                        "signals": {
+                            "importers": 0,
+                            "callers": 0,
+                            "docs": 0,
+                            "tick": 0,
+                            "public": 0,
+                        },
+                        "detail": f"fixture: pinned {kind} exemplar",
+                    }
+                    for kind, score in (
+                        ("absent", 120),
+                        ("broken", 100),
+                        ("unshipped", 80),
+                        ("truncated", 60),
+                        ("unreachable", 40),
+                        ("tick-only", 20),
+                        ("internal-only", 10),
+                    )
+                },
+                "acceptances": [],
+                "decisions": [
+                    {
+                        "gap": f"{kind}:gb-fixture-{kind}.py",
+                        "disposition": "adopt",
+                        "owner": "fixture",
+                        "rationale": "fixture: pinned exemplar floor",
+                        "evidence": "fixture: ordered by ORDER_ORACLE",
+                        "falsifier": "fixture: would reopen on ladder change",
+                        "review_by": "",
+                        "review_predicate": "",
+                        "ne": "",
+                        "at": "2026-09-11T00:00:00+00:00",
+                    }
+                    for kind in (
+                        "absent",
+                        "broken",
+                        "unshipped",
+                        "truncated",
+                        "unreachable",
+                        "tick-only",
+                        "internal-only",
+                    )
+                ],
+            },
+        ),
     }
     for fname, (key, default) in defaults.items():
         val = o.get(key)
@@ -911,6 +965,208 @@ def _cli_contract_fixtures(
     )
 
 
+_KIND_SCORES = {
+    "absent": 120,
+    "broken": 100,
+    "unshipped": 80,
+    "truncated": 60,
+    "unreachable": 40,
+    "tick-only": 20,
+    "internal-only": 10,
+}
+
+
+def _dogfood_gap(key: str, score: int = 40) -> dict:
+    kind = key.split(":")[0] if ":" in key else "unreachable"
+    return {
+        key: {
+            "score": score,
+            "kind": kind,
+            "signals": {
+                "importers": 0,
+                "callers": 0,
+                "docs": 0,
+                "tick": 0,
+                "public": 0,
+            },
+            "detail": f"fixture: {key}",
+        }
+    }
+
+
+def _dogfood_decision(gap: str, disposition: str, **over: object) -> dict:
+    base: dict = {
+        "gap": gap,
+        "disposition": disposition,
+        "owner": "fixture",
+        "rationale": f"fixture: {disposition} {gap}",
+        "evidence": "",
+        "falsifier": "",
+        "review_by": "",
+        "review_predicate": "",
+        "ne": "",
+        "at": "2026-09-11T00:00:00+00:00",
+    }
+    base.update(over)
+    return base
+
+
+def _dogfood_baseline(
+    gaps: dict, decisions: list, acceptances: list | None = None
+) -> dict:
+    return {
+        "schema": "gb-dogfood-baseline/2",
+        "recorded_at": "2026-09-11T00:00:00+00:00",
+        "gap_count": len(gaps),
+        "gaps": gaps,
+        "acceptances": acceptances if acceptances is not None else [],
+        "decisions": decisions,
+    }
+
+
+def _dogfood_fixtures(out: pathlib.Path, man: dict, files: dict, prev: dict) -> None:
+    """The known-bad roots for g29: one per RED arm, each failing nothing else."""
+    gaps = _dogfood_gap("unreachable:gb-fixture.py")
+    # A legacy blanket acceptance over gaps nobody disposed per gap.
+    write_root(
+        out,
+        "bad-dogfood-blanket-accept",
+        "2026-09-11",
+        man,
+        files,
+        GOOD_AUDIT,
+        prev,
+        dogfood_baseline=_dogfood_baseline(
+            {**gaps, **_dogfood_gap("unreachable:gb-second.py")},
+            [],
+            acceptances=[
+                {
+                    "at": "2026-09-11T00:00:00+00:00",
+                    "by": "fixture",
+                    "why": "fixture: free-form blanket",
+                    "keys": ["unreachable:gb-fixture.py", "unreachable:gb-second.py"],
+                }
+            ],
+        ),
+    )
+    # A defer past its review date (FIXTURE_NOW is 2026-09-11).
+    write_root(
+        out,
+        "bad-dogfood-defer-expired",
+        "2026-09-11",
+        man,
+        files,
+        GOOD_AUDIT,
+        prev,
+        dogfood_baseline=_dogfood_baseline(
+            gaps,
+            [
+                _dogfood_decision(
+                    "unreachable:gb-fixture.py",
+                    "defer",
+                    review_by="2026-09-01",
+                    review_predicate="fixture: tick re-reads",
+                )
+            ],
+        ),
+    )
+    # A recorded reject whose gap is still open.
+    write_root(
+        out,
+        "bad-dogfood-reject-open",
+        "2026-09-11",
+        man,
+        files,
+        GOOD_AUDIT,
+        prev,
+        dogfood_baseline=_dogfood_baseline(
+            gaps,
+            [_dogfood_decision("unreachable:gb-fixture.py", "reject")],
+        ),
+    )
+    # An adopt missing its falsifier.
+    write_root(
+        out,
+        "bad-dogfood-invalid-disposition",
+        "2026-09-11",
+        man,
+        files,
+        GOOD_AUDIT,
+        prev,
+        dogfood_baseline=_dogfood_baseline(
+            gaps,
+            [
+                _dogfood_decision(
+                    "unreachable:gb-fixture.py",
+                    "adopt",
+                    evidence="fixture: proof",
+                )
+            ],
+        ),
+    )
+    # A recorded gap nobody decided at all.
+    write_root(
+        out,
+        "bad-dogfood-undisposed",
+        "2026-09-11",
+        man,
+        files,
+        GOOD_AUDIT,
+        prev,
+        dogfood_baseline=_dogfood_baseline(gaps, []),
+    )
+
+    # g30 — two pinned exemplar scores swapped. Recomputation disagrees and the
+    # recorded rank inverts the ladder: tampering with points cannot pass as
+    # measurement. Dispositions stay valid so NOTHING else fires.
+    tampered = {
+        f"{kind}:gb-fixture-{kind}.py": {
+            "score": {"truncated": 40, "unreachable": 60}.get(kind, _KIND_SCORES[kind]),
+            "kind": kind,
+            "signals": {
+                "importers": 0,
+                "callers": 0,
+                "docs": 0,
+                "tick": 0,
+                "public": 0,
+            },
+            "detail": f"fixture: pinned {kind} exemplar",
+        }
+        for kind in _KIND_SCORES
+    }
+    write_root(
+        out,
+        "bad-dogfood-score-tampered",
+        "2026-09-11",
+        man,
+        files,
+        GOOD_AUDIT,
+        prev,
+        dogfood_baseline={
+            "schema": "gb-dogfood-baseline/2",
+            "recorded_at": "2026-09-11T00:00:00+00:00",
+            "gap_count": 7,
+            "gaps": tampered,
+            "acceptances": [],
+            "decisions": [
+                {
+                    "gap": f"{kind}:gb-fixture-{kind}.py",
+                    "disposition": "adopt",
+                    "owner": "fixture",
+                    "rationale": "fixture: pinned exemplar floor",
+                    "evidence": "fixture: ordered by ORDER_ORACLE",
+                    "falsifier": "fixture: would reopen on ladder change",
+                    "review_by": "",
+                    "review_predicate": "",
+                    "ne": "",
+                    "at": "2026-09-11T00:00:00+00:00",
+                }
+                for kind in _KIND_SCORES
+            ],
+        },
+    )
+
+
 def _typed_spine_fixtures(
     out: pathlib.Path, man: dict, files: dict, prev: dict
 ) -> None:
@@ -940,6 +1196,29 @@ def _typed_spine_fixtures(
         GOOD_AUDIT,
         prev,
         typecheck=typecheck_doc(ran=False),
+    )
+    render_root = out / "bad-gate-error-envelope"
+    write_root(
+        render_root.parent,
+        render_root.name,
+        "2026-09-11",
+        man,
+        files,
+        GOOD_AUDIT,
+        prev,
+    )
+    atomic_write_text(
+        render_root / "gate-error-envelope.json",
+        json.dumps(
+            {
+                "verdict": "ERROR",
+                "exit_code": 2,
+                "checks": [],
+                "advisories": [],
+            },
+            sort_keys=True,
+        )
+        + "\n",
     )
 
     # g22 — a planted producer that writes non-atomically and waits on a child with no deadline.
@@ -2236,8 +2515,8 @@ def main() -> int:
         grokbotdev=("2026-08-01T0600", GROKBOTDEV_OK),
     )
 
-
     _cli_contract_fixtures(out, man, files, prev)
+    _dogfood_fixtures(out, man, files, prev)
     _typed_spine_fixtures(out, man, files, prev)
     planted = _platform_fixtures(out)
 

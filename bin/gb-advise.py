@@ -1440,7 +1440,10 @@ class AdviseArgs:
         + ", ".join(SOURCE_NAMES),
     )
     dry_run: bool = arg(help="rank and report, but write no artifact")
-    json: bool = arg(help="machine-readable envelope on stdout")
+    json: bool = arg(
+        help="machine-readable envelope on stdout (top---limit actions unless --full)"
+    )
+    full: bool = arg(help="include every ranked action; counts always full")
     selftest: bool = arg(
         help="run the inline-fixture selftest (plus the GATES.md evidence-coverage leg) and exit"
     )
@@ -2111,7 +2114,16 @@ def body() -> int:
         atomic_write_json(artifact, payload)
 
     if args.json:
-        print(json.dumps(payload, indent=1))
+        out = (
+            dict(payload)
+            if args.full
+            else {
+                **payload,
+                "actions": [a.to_json() for a in shown],
+                "rows_truncated": len(ranked) - len(shown),
+            }
+        )
+        print(json.dumps(out, indent=1))
     else:
         render(payload, shown, sources)
 

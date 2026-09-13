@@ -65,6 +65,7 @@ CHECK_ORDER: Tuple[str, ...] = (
     "g25-routine-liveness",
     "g26-jobs-proof-calls",
     "g27-surface-drift",
+    "g28-grokbotdev-fresh",
 )
 
 PULL = "python3 bin/gb-pull-inventory.py --device <label>"
@@ -218,6 +219,11 @@ CHECKS: Dict[str, Dict[str, Any]] = {
         "error_fix": "python3 bin/gb-schema.py",
         "red_fix": "HUMAN: the vendor moved the RPC surface — record the review in findings/ with the added/removed/changed lines, then update schema/reviewed.json to the reviewed version",
     },
+    "g28-grokbotdev-fresh": {
+        "reads": ["grokbotdev/*.json"],
+        "error_fix": "bin/gb-grokbotdev.py",
+        "red_fix": "HUMAN: grokbotdev snapshot stale — re-run the producer; if mcp.used, NE-25 forbids the MCP host, fix the producer to JSON/RSS only",
+    },
 }
 
 EXIT_OK = 0
@@ -364,7 +370,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 
 def selftest(root: pathlib.Path) -> int:
-    """Prove the table: 27 ids, parity with the gate's CHECKS, fixes present, usage path."""
+    """Prove the table: 28 ids, parity with the gate's CHECKS, fixes present, usage path."""
     rows: List[Tuple[str, bool]] = []
     gate_path = root / "bin" / "gb-surface-gate.py"
     try:
@@ -377,7 +383,7 @@ def selftest(root: pathlib.Path) -> int:
     except Exception as exc:
         print(f"SELFTEST FAIL — cannot read gate CHECKS: {exc}", file=sys.stderr)
         return 1
-    rows.append(("27 ids in CHECK_ORDER", len(CHECK_ORDER) == 27))
+    rows.append(("28 ids in CHECK_ORDER", len(CHECK_ORDER) == 28))
     rows.append(("table keys match CHECK_ORDER", set(CHECKS) == set(CHECK_ORDER)))
     rows.append(("table matches gate CHECKS", set(CHECKS) == set(gate_checks)))
     rows.append(

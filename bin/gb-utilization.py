@@ -119,6 +119,19 @@ def main() -> int:
     orphaned = {k: v for k, v in reps.items() if k not in live_ids}
 
     usage = inv.get("usage") or {}
+    # Memory producer ladder: the live audit census first (ListGrokBotMemoryShards),
+    # the hand record only when no live audit exists, null when neither measured.
+    # A null hand record must never render as a clean zero (bead .54).
+    mem_live = ((audit or {}).get("memory") or {}).get("summary") or {}
+    mem_hand = (inv.get("account_surface") or {}).get("memory_shards")
+    if isinstance(mem_live.get("with_content"), int):
+        mem_n = mem_live["with_content"]
+        mem_src = "audit ListGrokBotMemoryShards"
+    elif isinstance(mem_hand, list):
+        mem_n = sum(1 for m in mem_hand if (m or {}).get("has_content"))
+        mem_src = "inventory hand record"
+    else:
+        mem_n, mem_src = None, "unmeasured"
     doc = {
         "schema": "gb-utilization/1",
         "captured_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
@@ -129,11 +142,8 @@ def main() -> int:
         "idle_credentialed": [b["name"] for b in bots if b["idle_credentialed"]],
         "routines_total": sum(b["routines"] for b in bots),
         "usage_percent": usage.get("usage_percent"),
-        "memory_shards_with_content": sum(
-            1
-            for m in ((inv.get("account_surface") or {}).get("memory_shards") or [])
-            if m.get("has_content")
-        ),
+        "memory_shards_with_content": mem_n,
+        "memory_shards_source": mem_src,
         "bot_count": len(bots) or len(audit.get("bots") or []),
     }
     out = (
@@ -163,7 +173,8 @@ def main() -> int:
     )
     print(
         f"weekly allowance used: {doc['usage_percent']}% · memory shards with content: "
-        f"{doc['memory_shards_with_content']}"
+        f"{doc['memory_shards_with_content'] if doc['memory_shards_with_content'] is not None else 'unmeasured'}"
+        f" ({doc['memory_shards_source']})"
     )
     return 0
 

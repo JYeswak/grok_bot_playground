@@ -1,74 +1,415 @@
 {
- "audience": "First-run users who need one finished loop before any desk: computer alive, one file read, one plugin proved",
- "bots": [
-  {
-   "template": "hello-computer",
-   "why": "Proves the cloud computer is alive with one command and its raw output, before any plugin is connected."
+  "schema": "gb-persona/1",
+  "version": 1,
+  "status": "active",
+  "audience": "First-run users who need one finished loop before any desk: computer alive, one file read, one connector proved",
+  "bots": [
+    {
+      "template": "hello-computer",
+      "why": "Proves the cloud computer is alive with one command and its raw output, before any connector is connected."
+    },
+    {
+      "template": "first-file-desk",
+      "why": "Official first task: one attached file becomes five quoted bullets, every date, and the open questions. Zero integrations."
+    },
+    {
+      "template": "plugin-proof",
+      "why": "Installed is not enabled and enabled is not working. One read-only call and a dated line with a real returned value."
+    }
+  ],
+  "rooms": [
+    {
+      "logical_id": "first-hour-room",
+      "name": "First Hour",
+      "description": "The three first-hour desks in one room: computer alive, first file read, plugin proved. Assembled by gb-room-topology; members resolve through the identity map only.",
+      "member_ids": ["first-file-desk", "hello-computer", "plugin-proof"]
+    }
+  ],
+  "capability_manifest": {
+    "schema": "gb-persona-capabilities/1",
+    "mcp_set": {
+      "state": "explicit",
+      "expected_count": 0
+    },
+    "capabilities": [
+      {
+        "id": "connector.first-hour-read-only-choice",
+        "kind": "first_party_oauth_connector",
+        "targets": [
+          "plugin-proof"
+        ],
+        "source": {
+          "authority": "grok-bot-first-party-catalog",
+          "locator": "account/plugins/first-party",
+          "resolution": {
+            "mode": "human_catalog_selection",
+            "receipt": "first-hour-connector-selection-v1"
+          }
+        },
+        "selection": {
+          "mode": "runtime",
+          "state": "WAITING_HUMAN",
+          "eligible": [
+            "gmail",
+            "calendar",
+            "drive",
+            "github",
+            "x",
+            "notion"
+          ],
+          "receipt": "first-hour-connector-selection-v1"
+        },
+        "surface": {
+          "type": "grok_bot_settings_oauth",
+          "action": "human_select_oauth_and_bind_to_plugin-proof",
+          "plan_argv": []
+        },
+        "boundary": {
+          "actor": "human",
+          "action": "Select exactly one eligible identity, record the selection, complete OAuth, and bind it to plugin-proof.",
+          "state": "WAITING_HUMAN"
+        },
+        "least_privilege": {
+          "mode": "read_only",
+          "scopes": [
+            "one selected account",
+            "one declared read operation"
+          ]
+        },
+        "proof": {
+          "oracle": "authoritative_account_binding_plus_read_only_call",
+          "semantic_expectation": "The selected identity is bound to plugin-proof and one declared read returns a real account value in the same conversation."
+        },
+        "approval": {
+          "required": true,
+          "boundary": "before OAuth consent"
+        },
+        "recovery": {
+          "argv": [],
+          "residue": "Disable the selected connector and revoke its OAuth grant; retain the selection receipt and failed proof."
+        },
+        "resume": {
+          "key": "first-hour-connector-selection-v1",
+          "requires": [
+            "durable selected identity receipt",
+            "authoritative account binding",
+            "declared read-only proof result"
+          ]
+        },
+        "depends_on": [
+          "repo-skill.plugin-enable-verify"
+        ]
+      },
+      {
+        "id": "repo-skill.plugin-enable-verify",
+        "kind": "repo_plugin_skill",
+        "targets": [
+          "plugin-proof"
+        ],
+        "source": {
+          "authority": "repository",
+          "locator": "plugin/skills/plugin-enable-verify/SKILL.md",
+          "resolution": {
+            "mode": "repository_sha256_at_plan",
+            "receipt": "capability source_digest"
+          }
+        },
+        "surface": {
+          "type": "repo_plugin_artifact",
+          "action": "enable_exact_repo_skill_on_plugin-proof",
+          "plan_argv": []
+        },
+        "boundary": {
+          "actor": "human",
+          "action": "Enable the exact repository skill on plugin-proof; do not copy or reinterpret its body.",
+          "state": "READY"
+        },
+        "least_privilege": {
+          "mode": "read_only",
+          "scopes": [
+            "connector status",
+            "one semantic read"
+          ]
+        },
+        "proof": {
+          "oracle": "skill_rule_then_semantic_connector_read",
+          "semantic_expectation": "plugin-proof states the installed-is-not-working rule and reports the actual value from the declared read."
+        },
+        "approval": {
+          "required": true,
+          "boundary": "before enabling the skill on plugin-proof"
+        },
+        "recovery": {
+          "argv": [],
+          "residue": "Disable the skill on plugin-proof; preserve its source digest and last proof result."
+        },
+        "resume": {
+          "key": "repo-skill.plugin-enable-verify@plugin-proof",
+          "requires": [
+            "matching source digest",
+            "logical target plugin-proof"
+          ]
+        },
+        "depends_on": []
+      },
+      {
+        "id": "repo-skill.routine-first-run",
+        "kind": "repo_plugin_skill",
+        "targets": [
+          "hello-computer",
+          "first-file-desk",
+          "plugin-proof"
+        ],
+        "source": {
+          "authority": "repository",
+          "locator": "plugin/skills/routine-first-run/SKILL.md",
+          "resolution": {
+            "mode": "repository_sha256_at_plan",
+            "receipt": "capability source_digest"
+          }
+        },
+        "surface": {
+          "type": "repo_plugin_artifact",
+          "action": "enable_exact_repo_skill_on_routine_owners",
+          "plan_argv": []
+        },
+        "boundary": {
+          "actor": "human",
+          "action": "Enable the exact skill only on the three declared routine owners.",
+          "state": "READY"
+        },
+        "least_privilege": {
+          "mode": "routine_observation",
+          "scopes": [
+            "declared routine",
+            "first run receipt"
+          ]
+        },
+        "proof": {
+          "oracle": "authoritative_routine_run_count",
+          "semantic_expectation": "Each declared routine has a dated first run, or its exact failure is recorded."
+        },
+        "approval": {
+          "required": true,
+          "boundary": "before enabling the skill on routine owners"
+        },
+        "recovery": {
+          "argv": [],
+          "residue": "Disable the skill; retain routine ids and first-run receipts."
+        },
+        "resume": {
+          "key": "repo-skill.routine-first-run@first-hour",
+          "requires": [
+            "matching source digest",
+            "all three logical targets"
+          ]
+        },
+        "depends_on": []
+      },
+      {
+        "id": "repo-skill.secret-card-setup",
+        "kind": "repo_plugin_skill",
+        "targets": [
+          "plugin-proof"
+        ],
+        "source": {
+          "authority": "repository",
+          "locator": "plugin/skills/secret-card-setup/SKILL.md",
+          "resolution": {
+            "mode": "repository_sha256_at_plan",
+            "receipt": "capability source_digest"
+          }
+        },
+        "surface": {
+          "type": "repo_plugin_artifact",
+          "action": "enable_exact_repo_skill_on_plugin-proof",
+          "plan_argv": []
+        },
+        "boundary": {
+          "actor": "human",
+          "action": "Enable the skill and enter credentials only through the variable card.",
+          "state": "READY"
+        },
+        "least_privilege": {
+          "mode": "names_only",
+          "scopes": [
+            "variable names",
+            "secret card state"
+          ]
+        },
+        "proof": {
+          "oracle": "secret_card_names_only_readback",
+          "semantic_expectation": "Required variable names are present while no credential value appears in plan, chat, or receipt."
+        },
+        "approval": {
+          "required": true,
+          "boundary": "before entering any credential"
+        },
+        "recovery": {
+          "argv": [],
+          "residue": "Remove the variable card binding; retain names-only evidence."
+        },
+        "resume": {
+          "key": "repo-skill.secret-card-setup@plugin-proof",
+          "requires": [
+            "matching source digest",
+            "names-only variable receipt"
+          ]
+        },
+        "depends_on": []
+      },
+      {
+        "id": "repo-skill.plan-eligibility",
+        "kind": "repo_plugin_skill",
+        "targets": [
+          "plugin-proof"
+        ],
+        "source": {
+          "authority": "repository",
+          "locator": "plugin/skills/plan-eligibility/SKILL.md",
+          "resolution": {
+            "mode": "repository_sha256_at_plan",
+            "receipt": "capability source_digest"
+          }
+        },
+        "surface": {
+          "type": "repo_plugin_artifact",
+          "action": "enable_exact_repo_skill_on_plugin-proof",
+          "plan_argv": []
+        },
+        "boundary": {
+          "actor": "human",
+          "action": "Enable the exact plan-eligibility rule on plugin-proof.",
+          "state": "READY"
+        },
+        "least_privilege": {
+          "mode": "account_metadata_read",
+          "scopes": [
+            "plan tier",
+            "feature eligibility"
+          ]
+        },
+        "proof": {
+          "oracle": "authoritative_account_entitlement_read",
+          "semantic_expectation": "plugin-proof separates available account features from ineligible ones without attempting an ineligible action."
+        },
+        "approval": {
+          "required": true,
+          "boundary": "before enabling the skill on plugin-proof"
+        },
+        "recovery": {
+          "argv": [],
+          "residue": "Disable the skill; preserve the entitlement readback used by the plan."
+        },
+        "resume": {
+          "key": "repo-skill.plan-eligibility@plugin-proof",
+          "requires": [
+            "matching source digest",
+            "authoritative entitlement readback"
+          ]
+        },
+        "depends_on": []
+      },
+      {
+        "id": "repo-skill.takeover-2fa",
+        "kind": "repo_plugin_skill",
+        "targets": [
+          "plugin-proof"
+        ],
+        "source": {
+          "authority": "repository",
+          "locator": "plugin/skills/takeover-2fa/SKILL.md",
+          "resolution": {
+            "mode": "repository_sha256_at_plan",
+            "receipt": "capability source_digest"
+          }
+        },
+        "surface": {
+          "type": "repo_plugin_artifact",
+          "action": "enable_exact_repo_skill_on_plugin-proof",
+          "plan_argv": []
+        },
+        "boundary": {
+          "actor": "human",
+          "action": "Enable the exact takeover boundary on plugin-proof; the Bot must pause at login and 2FA.",
+          "state": "READY"
+        },
+        "least_privilege": {
+          "mode": "human_takeover",
+          "scopes": [
+            "login prompt detection",
+            "2FA prompt detection"
+          ]
+        },
+        "proof": {
+          "oracle": "declared_takeover_boundary",
+          "semantic_expectation": "A login or 2FA prompt produces WAITING_HUMAN without exposing or inventing a credential."
+        },
+        "approval": {
+          "required": true,
+          "boundary": "at every login or 2FA prompt"
+        },
+        "recovery": {
+          "argv": [],
+          "residue": "Leave the task paused and retain the last non-secret screen state."
+        },
+        "resume": {
+          "key": "repo-skill.takeover-2fa@plugin-proof",
+          "requires": [
+            "human completion receipt",
+            "same logical target and task"
+          ]
+        },
+        "depends_on": []
+      }
+    ]
   },
-  {
-   "template": "first-file-desk",
-   "why": "Official first task: one attached file becomes five quoted bullets, every date, and the open questions. Zero integrations."
+  "human_steps": [
+    "Create the hello-computer Bot and run its command once; the pasted kernel string is the receipt that the VM answers.",
+    "Attach one real file to first-file-desk; do not skip this for a description of a file.",
+    "Never paste a secret into chat; enter credentials only through the variable card named by the plan.",
+    "Ask each Bot in chat to create its declared routine, then confirm routines_with_runs moves from zero to one."
+  ],
+  "id": "first-hour",
+  "name": "First Hour",
+  "policies": [
+    "READ-ONLY: this pack inspects and reports. It never sends, posts, installs, or writes outside the thread and /tmp.",
+    "ONE-COMPUTER: the cloud computer is shared by every Bot on the account. A write here is a write in every other Bot's workspace.",
+    "NO-SECRETS-IN-CHAT: credentials are variable names on the variable card, never pasted.",
+    "INSTALLED-IS-NOT-WORKING: a connector counts only after one read-only call returned data in this conversation."
+  ],
+  "routines": [
+    {
+      "name": "hello-computer",
+      "owner_bot": "hello-computer",
+      "prompt_hint": "Run `uname -a && date -u && pwd` and paste the raw output in a code block, then name the command. Failure is the answer.",
+      "schedule": "weekdays 07:00 local"
+    },
+    {
+      "name": "first-file-desk",
+      "owner_bot": "first-file-desk",
+      "prompt_hint": "If a file was attached since last run, post five quoted bullets, every date, and the open questions. Else one line: no file.",
+      "schedule": "weekdays 09:00 local"
+    },
+    {
+      "name": "plugin-proof",
+      "owner_bot": "plugin-proof",
+      "prompt_hint": "Make one read-only call through the selected connector and post a dated line with the real value it returned, or the error verbatim.",
+      "schedule": "Mon 08:00 local"
+    }
+  ],
+  "first_job": {
+    "target": "first-file-desk",
+    "room": "First Hour",
+    "prerequisites": {"capability_receipts": ["repo-skill.routine-first-run:first-file-desk"]},
+    "input": {"kind": "human-attachment", "freshness": "attached-this-attempt", "digest": null},
+    "action_digest": "519a440f976f",
+    "side_effect_class": "read-only",
+    "approval": {"human": true, "scope": "attach the file in chat; nothing is read without it"},
+    "oracle": {"type": "three-block-shape", "version": "o1", "expected": "exactly three blocks: five bullets each with a verbatim quote, every date and deadline or 'no dates', the open questions; nothing else"},
+    "rubric": {"dims": ["quotes_verbatim", "dates_complete", "questions_listed", "no_fabrication", "format_exact"], "floor": 750},
+    "repeat": {"policy": "deterministic-repeat"},
+    "resume": {"argv": ["bin/gb-first-job.py", "--persona", "first-hour"]}
   },
-  {
-   "template": "plugin-proof",
-   "why": "Installed is not enabled and enabled is not working. One read-only call and a dated line with a real returned value."
-  }
- ],
- "human_steps": [
-  "Create the hello-computer Bot and run its command once; the pasted kernel string is the receipt that the VM answers.",
-  "Attach one real file to first-file-desk; do not skip this for a description of a file.",
-  "In Settings → Plugins, click one connector on, complete the browser auth, and attach it to plugin-proof. There is no connector-install API.",
-  "Never paste a secret into chat. Keys go on the variable card (secret-card-setup).",
-  "Ask the Bot in chat to create its routine, then confirm routines_with_runs moves 0 → 1. There is no routine-create RPC."
- ],
- "id": "first-hour",
- "mcps": [],
- "name": "First Hour",
- "policies": [
-  "READ-ONLY: this pack inspects and reports. It never sends, posts, installs, or writes outside the thread and /tmp.",
-  "ONE-COMPUTER: the cloud computer is shared by every Bot on the account. A write here is a write in every other Bot's workspace.",
-  "NO-SECRETS-IN-CHAT: credentials are ${VAR} names on the variable card, never pasted.",
-  "INSTALLED-IS-NOT-WORKING: a plugin counts only after one read-only call returned data in this conversation."
- ],
- "routines": [
-  {
-   "name": "hello-computer",
-   "owner_bot": "hello-computer",
-   "prompt_hint": "Run `uname -a && date -u && pwd` and paste the raw output in a code block, then name the command. Failure is the answer.",
-   "schedule": "weekdays 07:00 local"
-  },
-  {
-   "name": "first-file-desk",
-   "owner_bot": "first-file-desk",
-   "prompt_hint": "If a file was attached since last run, post five quoted bullets, every date, and the open questions. Else one line: no file.",
-   "schedule": "weekdays 09:00 local"
-  },
-  {
-   "name": "plugin-proof",
-   "owner_bot": "plugin-proof",
-   "prompt_hint": "Make one read-only call through the newest unproven plugin and post a dated line with the real value it returned, or the error verbatim.",
-   "schedule": "Mon 08:00 local"
-  }
- ],
- "setup_order": [
-  "deploy-hello-computer",
-  "run-one-command-paste-output",
-  "deploy-first-file-desk",
-  "attach-one-file",
-  "human-click-one-plugin-in-settings",
-  "deploy-plugin-proof",
-  "install-skills-plugin-enable-verify-routine-first-run-secret-card-setup-plan-eligibility-takeover-2fa",
-  "create-routine-hello-computer",
-  "create-routine-first-file-desk",
-  "create-routine-plugin-proof",
-  "confirm-routines-with-runs-0-to-1"
- ],
- "skills": [
-  "plugin-enable-verify",
-  "routine-first-run",
-  "secret-card-setup",
-  "plan-eligibility",
-  "takeover-2fa"
- ],
- "tagline": "One hour, three receipts: the computer answers, a file is read, a plugin returns data."
+  "tagline": "One hour, three receipts: the computer answers, a file is read, a connector returns data."
 }

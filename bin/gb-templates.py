@@ -1344,7 +1344,7 @@ def selftest() -> int:
             and "the Bot EXISTS" in body
             and "NOT rolled back" in body
             and "gb fleet send" in body
-            and "--rollback /tmp/rebuild/x.json" in body,
+            and "--rollback /tmp/rebuild/x.json --apply --yes" in body,
             f"the partial report did not hand over both options: {body!r}",
         )
         # A run that created NOTHING must not offer a rollback: the manifest it would name
@@ -1851,7 +1851,7 @@ def render_routine(step: Dict[str, Any], tpl: Dict[str, Any]) -> List[str]:
     out.append(f"  then confirm it took: gb fleet routines --bot {name!r}")
     if created_here and step.get("manifest"):
         out.append(
-            f"  or undo the Bot entirely: bin/gb-rebuild-fleet.py --rollback {step['manifest']}"
+            f"  or undo the Bot entirely: bin/gb-rebuild-fleet.py --rollback {step['manifest']} --apply --yes"
         )
     return out
 

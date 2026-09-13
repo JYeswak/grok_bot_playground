@@ -75,13 +75,66 @@ never folded silently into "the plan all along".
 - Two-document writes keep chains separate: no hypothesis from study A filed
   under study B, no shared stop rule without a copy in each document.
 
+## Machine contract (v92v.3.1) — the locked fields
+
+Every locked plan carries EXACTLY these machine fields. Prose may explain them;
+only the fields lock. The fail-closed validator (v92v.3.2) enforces this table —
+this skill names each field and its handoff, and claims no enforcement itself.
+
+| field | meaning | enforcement handoff |
+|---|---|---|
+| `null_hypothesis`, `alternative_hypothesis` | the two competing claims, both stated | both present, non-empty, distinct |
+| `experimental_unit` | the single randomized/assigned entity | present; one unit only |
+| `target_population`, `target_account`, `target_version` | who/what/version the claim covers | all present; version pinned, never "latest" |
+| `estimand`, `direction` | what is estimated and which way matters | present; direction one of increase/decrease/difference |
+| `baseline_source`, `baseline_window`, `baseline_freshness` | authoritative baseline: where, which window, how fresh at lock | source named, window closed before lock, freshness dated |
+| `control` OR `no_control_justification` | the control design, or why no control is honest | exactly one of the two present |
+| `assignment`, `order` | randomization/assignment method and run order | present; "haphazard" fails |
+| `inclusions`, `exclusions` | who/what gets in and what is cut, decided now | both present (may be explicit empty with reason) |
+| `independence_unit` | what counts as one independent observation | present; retries/duplicates of one unit never count twice |
+| `carryover`, `washout` | cross-condition contamination and how it clears | present; "none" needs a reason, not silence |
+| `confounders` | known confounders and how each is handled | list present (may be empty with reason) |
+| `observation_channel` | the exact read path for outcomes | present; must name the artifact/command, never "the dashboard" |
+| `decision_mode` | `deterministic` or `statistical` | one of the two; statistical needs the analysis below |
+| `primary_score`, `primary_analysis` | the one score and the exact analysis that reads it | both present; exactly one primary |
+| `falsifier` | the observation that kills the claim | present and concrete |
+| `repeat_plan` | repeats/replication before adoption | present; count, spacing, and what varies |
+| `adopt_rule`, `reject_rule`, `inconclusive_rule` | mutually exclusive terminal rules | all three present; every outcome lands in exactly one |
+| `lever`, `lever_target` | EXACTLY ONE mutable intervention and its singular target | one lever, one target; zero/two levers fail; bundled targets fail |
+| `candidate_id`, `qualification_receipt_id`, `source_receipt_digests` | lineage: canonical candidate, its qualification receipt, every source digest | all present; digests verifiable at readback |
+| `non_lever_reads`, `guardrails`, `rollback_plan` | reads that change nothing, tripwires, and how to undo | present; reads never mutate, guardrails name thresholds, rollback names argv |
+| `locked_at`, `data_unseen_statement` | lock timestamp and the no-data-seen attestation | present; lock precedes all outcome access |
+| `plan_id`, `plan_hash` | identity: hash over the canonical lock fields | `plan_hash` = sha256 of the canonical field set; ANY changed lock field creates a new id/hash (frankensim campaign-identity doctrine, fh STALE 125.1h) |
+
+## Worked shapes (valid vs refused)
+
+- **Complete (locks):** one lever (`subject` line of one draft), one target (one
+  named Bot), control (draft held back on alternate days), falsifier (open rate
+  down ≥2pts over 200 sends), all digests verifiable.
+- **Zero-lever (refused):** an observation plan with no intervention names no
+  `lever` — that is a measurement, not an experiment; file it as one.
+- **Two-lever (refused):** subject line AND send time change together — effects
+  cannot be attributed; split into two plans.
+- **Bundled-target (refused):** "all CFS Bots" as one target — units must be
+  individually addressable; one plan per Bot or a named sampling rule in
+  `assignment` with the unit still singular.
+- **Changed-after-lock (new id):** the window moves after lock — the old
+  `plan_id` is dead; re-lock under a new id/hash, never edit in place.
+- **Digest-mismatch (refused):** a `source_receipt_digest` that does not verify
+  at readback — the lineage is broken; re-establish provenance, never proceed.
+
 ## Output
 
-Per study: a locked block (question, hypothesis with effect size, method with
-sizing arithmetic, assumptions, stop rules, lock date, data-unseen statement).
-With two studies, deliver two blocks plus a short note on where the designs
-differ and why. End with the single measurement that would change the planned
-verdict — not a wall of caveats.
+Per study: a locked block carrying the full machine-contract field set above
+(question, hypotheses, unit/population/version, estimand, baseline, control,
+assignment, inclusions/exclusions, independence, carryover/washout, confounders,
+channel, decision mode, primary score/analysis, falsifier, repeat plan,
+three-way rules, the one lever and target, lineage digests, reads/guardrails/
+rollback, lock attestation, plan id/hash). With two studies, deliver two blocks
+plus a short note on where the designs differ and why. End with the single
+measurement that would change the planned verdict — not a wall of caveats.
+Field enforcement belongs to the v92v.3.2 validator; this skill writes plans
+the validator can lock, and never claims a plan is locked.
 
 ## Boundaries
 

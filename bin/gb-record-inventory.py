@@ -26,6 +26,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from gbtypes import atomic_write_text  # noqa: E402
 
+MAX_AGE_DAYS = 30
 LOCAL_EXEC_VALUES = ["ask-every-time", "always-allow", "never"]
 
 
@@ -94,44 +95,196 @@ def template(device: str, bots: list[str] | None = None) -> dict:
     }
 
 
-def validate(doc: dict) -> list[str]:
-    errs = []
+def recapture_argv(device: str) -> list[str]:
+    return ["bin/gb", "inventory", "pull", "--device", device, "--apply", "--json"]
+
+
+def _timestamp(value: object) -> dt.datetime | None:
+    try:
+        parsed = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc)
+
+
+def validate(doc: dict, *, now: dt.datetime | None = None) -> list[str]:
+    errs: list[str] = []
     if doc.get("schema") != "gb-inventory/1":
-        errs.append("schema must be 'gb-inventory/1'")
-    for field in ("device", "hostname", "app_version"):
+        errs.append("schema: must be 'gb-inventory/1'")
+    for field in (
+        "device",
+        "hostname",
+        "app_version",
+        "source",
+        "read_route",
+        "account_fingerprint",
+    ):
         if not doc.get(field):
-            errs.append(f"{field} is required")
+            errs.append(f"{field}: required")
+    recorded = _timestamp(doc.get("recorded_at"))
+    if recorded is None:
+        errs.append("recorded_at: required RFC3339 timestamp")
+    elif now is not None:
+        age = now.astimezone(dt.timezone.utc) - recorded
+        if age > dt.timedelta(days=MAX_AGE_DAYS) or age < dt.timedelta(0):
+            errs.append(f"recorded_at: stale or future ({age.days}d); recapture required")
     pol = doc.get("local_exec_policy")
     if pol not in LOCAL_EXEC_VALUES:
-        errs.append(
-            f"local_exec_policy must be one of {LOCAL_EXEC_VALUES}, got {pol!r}"
-        )
+        errs.append(f"local_exec_policy: must be one of {LOCAL_EXEC_VALUES}, got {pol!r}")
+    if not doc.get("local_exec_reason"):
+        errs.append("local_exec_reason: required policy source")
+    if _timestamp(doc.get("policy_recorded_at")) is None:
+        errs.append("policy_recorded_at: required policy source date")
     for field in ("auto_review_rules", "plugins", "mcp_servers", "bots"):
         if doc.get(field) is None:
-            errs.append(
-                f"{field} is null — that means 'not checked'. Use [] if you checked and found none."
-            )
+            errs.append(f"{field}: null means not checked; use [] for checked-none")
         elif not isinstance(doc[field], list):
-            errs.append(f"{field} must be a list")
-    for b in doc.get("bots") or []:
-        if not b.get("name"):
-            errs.append("a bot entry has no name")
-        if b.get("routines") is None:
-            errs.append(
-                f"{b.get('name')}: routines is null — open Routines for this Bot. [] if it has none."
-            )
-        if b.get("skills") is None:
-            errs.append(
-                f"{b.get('name')}: skills is null — type / in its composer. [] if it has none."
-            )
-        for r in b.get("routines") or []:
-            if not r.get("name"):
-                errs.append(f"{b.get('name')}: a routine has no name")
-            if r.get("recent_runs") is None:
-                errs.append(
-                    f"{b.get('name')}/{r.get('name')}: recent_runs is null — open the routine's run history"
-                )
+            errs.append(f"{field}: must be a list")
+    for index, plugin in enumerate(doc.get("plugins") or []):
+        if not isinstance(plugin, dict):
+            errs.append(f"plugins[{index}]: must be an object")
+            continue
+        if not plugin.get("name"):
+            errs.append(f"plugins[{index}].name: required")
+        if not isinstance(plugin.get("enabled"), bool):
+            errs.append(f"plugins[{index}].enabled: required binding state")
+        if not plugin.get("status"):
+            errs.append(f"plugins[{index}].status: required binding state")
+    for bot_index, bot in enumerate(doc.get("bots") or []):
+        if not isinstance(bot, dict):
+            errs.append(f"bots[{bot_index}]: must be an object")
+            continue
+        name = bot.get("name") or f"bots[{bot_index}]"
+        if not bot.get("name"):
+            errs.append(f"bots[{bot_index}].name: required")
+        for field in ("routines", "skills"):
+            if bot.get(field) is None:
+                errs.append(f"bots[{bot_index}].{field}: null means not checked for {name}")
+            elif not isinstance(bot[field], list):
+                errs.append(f"bots[{bot_index}].{field}: must be a list")
+        for routine_index, routine in enumerate(bot.get("routines") or []):
+            path = f"bots[{bot_index}].routines[{routine_index}]"
+            if not isinstance(routine, dict):
+                errs.append(f"{path}: must be an object")
+                continue
+            if not routine.get("name"):
+                errs.append(f"{path}.name: required")
+            if routine.get("recent_runs") is None:
+                errs.append(f"{path}.recent_runs: null means run history was not opened")
     return errs
+
+
+def validate_set(
+    documents: list[dict],
+    expected: dict[str, str],
+    *,
+    now: dt.datetime,
+) -> list[str]:
+    errs: list[str] = []
+    seen: set[str] = set()
+    for index, doc in enumerate(documents):
+        device = str(doc.get("device") or "")
+        prefix = f"documents[{index}]"
+        if device not in expected:
+            errs.append(f"{prefix}.device: unknown device {device!r}")
+        elif doc.get("hostname") != expected[device]:
+            errs.append(
+                f"{prefix}.hostname: {doc.get('hostname')!r} != registry {expected[device]!r}"
+            )
+        if device in seen:
+            errs.append(f"{prefix}.device: duplicate device {device!r}")
+        seen.add(device)
+        errs.extend(f"{prefix}.{error}" for error in validate(doc, now=now))
+    missing = [device for device in expected if device not in seen]
+    errs.extend(f"documents: missing required device {device!r}" for device in missing)
+    app_versions = {doc.get("app_version") for doc in documents if doc.get("app_version")}
+    if len(app_versions) > 1:
+        errs.append("documents.app_version: client mismatch across desktops")
+    account_ids = {
+        doc.get("account_fingerprint")
+        for doc in documents
+        if doc.get("account_fingerprint")
+    }
+    if len(account_ids) > 1:
+        errs.append("documents.account_fingerprint: account mismatch across desktops")
+    return errs
+
+def _fixture_document(device: str, hostname: str) -> dict:
+    return {
+        "schema": "gb-inventory/1",
+        "device": device,
+        "hostname": hostname,
+        "recorded_at": "2026-09-13T12:00:00+00:00",
+        "app_version": "0.47.0",
+        "source": "fixture authenticated read",
+        "read_route": "fixture account RPC + policy",
+        "account_fingerprint": "a" * 64,
+        "local_exec_policy": "ask-every-time",
+        "local_exec_reason": "fixture policy source",
+        "policy_recorded_at": "2026-09-13",
+        "auto_review_rules": [],
+        "plugins": [{"name": "fixture", "enabled": True, "status": "APPROVED"}],
+        "mcp_servers": [],
+        "bots": [
+            {
+                "name": "Fixture",
+                "skills": [],
+                "routines": [{"name": "Check", "recent_runs": []}],
+            }
+        ],
+    }
+
+
+def selftest() -> int:
+    now = dt.datetime(2026, 9, 13, 14, tzinfo=dt.timezone.utc)
+    expected = {"studio": "Studio.local", "brain": "Brain.local"}
+    good = [_fixture_document(device, host) for device, host in expected.items()]
+    legs: list[tuple[str, bool]] = []
+
+    def leg(name: str, passed: bool) -> None:
+        legs.append((name, passed))
+
+    def changed(index: int, path: str, value: object) -> list[dict]:
+        documents = json.loads(json.dumps(good))
+        target = documents[index]
+        parts = path.split(".")
+        for part in parts[:-1]:
+            target = target[int(part)] if isinstance(target, list) else target[part]
+        if isinstance(target, list):
+            target[int(parts[-1])] = value
+        else:
+            target[parts[-1]] = value
+        return documents
+
+    leg("good-two-device-set", validate_set(good, expected, now=now) == [])
+    wrong = changed(0, "device", "other")
+    wrong_errors = validate_set(wrong, expected, now=now)
+    leg("wrong-device-path", any("documents[0].device: unknown" in e for e in wrong_errors))
+    duplicate = changed(1, "device", "studio")
+    duplicate_errors = validate_set(duplicate, expected, now=now)
+    leg("duplicate-device-path", any("documents[1].device: duplicate" in e for e in duplicate_errors))
+    stale = changed(0, "recorded_at", "2026-07-01T00:00:00+00:00")
+    leg("stale-record-path", any("documents[0].recorded_at: stale" in e for e in validate_set(stale, expected, now=now)))
+    client = changed(1, "app_version", "0.46.0")
+    leg("client-mismatch-path", "documents.app_version: client mismatch across desktops" in validate_set(client, expected, now=now))
+    account = changed(1, "account_fingerprint", "b" * 64)
+    leg("account-mismatch-path", "documents.account_fingerprint: account mismatch across desktops" in validate_set(account, expected, now=now))
+    null_facet = changed(0, "mcp_servers", None)
+    leg("null-facet-path", any("documents[0].mcp_servers: null" in e for e in validate_set(null_facet, expected, now=now)))
+    routine = changed(0, "bots.0.routines.0.recent_runs", None)
+    leg("routine-history-path", any("documents[0].bots[0].routines[0].recent_runs" in e for e in validate_set(routine, expected, now=now)))
+    plugin = changed(0, "plugins.0.enabled", None)
+    leg("plugin-binding-path", any("documents[0].plugins[0].enabled" in e for e in validate_set(plugin, expected, now=now)))
+    policy = changed(0, "local_exec_reason", None)
+    leg("policy-source-path", any("documents[0].local_exec_reason" in e for e in validate_set(policy, expected, now=now)))
+    leg("recapture-argv-exact", recapture_argv("brain") == ["bin/gb", "inventory", "pull", "--device", "brain", "--apply", "--json"])
+    for name, passed in legs:
+        print(f"  {'ok  ' if passed else 'FAIL'} {name}")
+    passed = sum(ok for _, ok in legs)
+    print(f"SELFTEST {'PASS' if passed == len(legs) else 'FAIL'} - {passed}/{len(legs)}")
+    return 0 if passed == len(legs) else 1
 
 
 def main() -> int:
@@ -146,10 +299,15 @@ def main() -> int:
         help="do not pre-name Bots from the newest audit",
     )
     ap.add_argument("--validate", default=None, metavar="FILE")
+    ap.add_argument("--validate-set", nargs="+", default=None, metavar="FILE")
+    ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--list", action="store_true")
     args = ap.parse_args()
     root = pathlib.Path(args.root)
     inv = root / "inventory"
+
+    if args.selftest:
+        return selftest()
 
     if args.list:
         if not inv.is_dir() or not any(inv.glob("*.json")):
@@ -166,22 +324,37 @@ def main() -> int:
             )
         return 0
 
-    if args.validate:
-        f = pathlib.Path(args.validate)
-        try:
-            doc = json.loads(f.read_text())
-        except Exception as e:
-            print(f"INVALID {f}: unreadable ({e})", file=sys.stderr)
-            return 2
-        errs = validate(doc)
+    if args.validate or args.validate_set:
+        files = [pathlib.Path(args.validate)] if args.validate else [pathlib.Path(p) for p in args.validate_set]
+        documents: list[dict] = []
+        for file in files:
+            try:
+                documents.append(json.loads(file.read_text()))
+            except Exception as exc:
+                print(f"INVALID {file}: unreadable ({exc})", file=sys.stderr)
+                return 2
+        now = dt.datetime.now(dt.timezone.utc)
+        if args.validate_set:
+            registry = json.loads((root / "desktops.json").read_text())
+            expected = {
+                item["label"]: item["hostname"] for item in registry.get("desktops") or []
+            }
+            errs = validate_set(documents, expected, now=now)
+        else:
+            errs = validate(documents[0], now=now)
         if errs:
-            print(f"INVALID {f}:", file=sys.stderr)
-            for e in errs:
-                print(f"  - {e}", file=sys.stderr)
+            print("INVALID inventory:", file=sys.stderr)
+            for error in errs:
+                print(f"  - {error}", file=sys.stderr)
+            for document in documents:
+                if document.get("device"):
+                    print(
+                        "  recapture: " + json.dumps(recapture_argv(document["device"])),
+                        file=sys.stderr,
+                    )
             return 1
-        print(f"VALID {f}")
+        print("VALID " + " ".join(str(file) for file in files))
         return 0
-
     if args.template:
         if not args.device:
             print(

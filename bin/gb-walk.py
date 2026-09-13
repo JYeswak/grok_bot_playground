@@ -62,9 +62,12 @@ from gbtypes import (  # noqa: E402
     read_json_capped,
     run,
 )
+from gblib import dated_children, load, newest_audit  # noqa: E402
 
 SCHEMA = "gb-walk/1"
 TEMPLATE_SCHEMA = "gb-template/1"
+CHARTER_CAP = 900
+ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 def walk_envelope(track: str, **fields: Any) -> Dict[str, Any]:
@@ -898,9 +901,71 @@ def render_bot(doc: Dict[str, Any], ink: Ink, *, n: int, total: int) -> None:
     emit()
 
 
+def fleet_gates(root: pathlib.Path) -> Dict[str, Any]:
+    """Grok-only / uncaptured / over-cap, measured from artifacts on disk.
+
+    Corpus numbers reproduce `gb corpus` and `templates stats` exactly (195/645
+    grok-only, 158/645 uncaptured on 2026-09-12T0343): grok-only means the row's
+    only integration is Grok, uncaptured means prompt_chars == 0. Over-cap names
+    the deployed fleet Bots whose description exceeds CHARTER_CAP, by id — the
+    walk warns instead of letting a 900+ charter deploy silently. A missing
+    artifact is None (unmeasured), never zero."""
+    gates: Dict[str, Any] = {"grok_only": None, "uncaptured": None, "over_cap": None}
+    snaps = dated_children(root / "usecases", ".json")
+    if snaps:
+        doc = load(snaps[-1])
+        rows = (
+            [r for r in (doc.get("rows") or []) if isinstance(r, dict)]
+            if isinstance(doc, dict)
+            else []
+        )
+        if rows:
+            go = len(
+                [
+                    r
+                    for r in rows
+                    if (r.get("integrations") or [])
+                    and all(i == "Grok" for i in (r.get("integrations") or []))
+                ]
+            )
+            unc = len([r for r in rows if r.get("prompt_chars") == 0])
+            gates["grok_only"] = {
+                "value": go,
+                "n": len(rows),
+                "basis": "rows whose only integration is Grok",
+                "source": snaps[-1].name,
+            }
+            gates["uncaptured"] = {
+                "value": unc,
+                "n": len(rows),
+                "basis": "prompt_chars == 0",
+                "source": snaps[-1].name,
+            }
+    _, audit = newest_audit(root)
+    if isinstance(audit, dict):
+        bots = [b for b in (audit.get("bots") or []) if isinstance(b, dict)]
+        over = [
+            {
+                "id": b.get("id"),
+                "name": b.get("name"),
+                "description_chars": b.get("description_chars"),
+            }
+            for b in bots
+            if (b.get("description_chars") or 0) > CHARTER_CAP
+        ]
+        gates["over_cap"] = {
+            "cap": CHARTER_CAP,
+            "count": len(over),
+            "n": len(bots),
+            "bots": over,
+        }
+    return gates
+
+
 def walk_bots(
     *, directory: Optional[pathlib.Path], looked: Sequence[str]
 ) -> Dict[str, Any]:
+    gates = fleet_gates(ROOT)
     if directory is None:
         return walk_envelope(
             "bots",
@@ -910,6 +975,7 @@ def walk_bots(
             skipped=[],
             warnings=[],
             templates=[],
+            gates=gates,
         )
     good, skipped, warnings = load_templates(directory)
     return walk_envelope(
@@ -920,6 +986,7 @@ def walk_bots(
         skipped=skipped,
         warnings=warnings,
         templates=good,
+        gates=gates,
     )
 
 
@@ -965,6 +1032,31 @@ def render_bots(doc: Dict[str, Any], ink: Ink, *, step: bool, interactive: bool)
         "  in a charter you can paste, by hand, into the Bot's description field — and a `verify`\n"
         "  line naming the number that should change afterwards."
     )
+    g = doc.get("gates") or {}
+    go, unc, oc = (
+        g.get("grok_only") or {},
+        g.get("uncaptured") or {},
+        g.get("over_cap") or {},
+    )
+    if go or unc or oc:
+        emit(
+            "  gates  grok-only {go}/{gn} · uncaptured {uo}/{un} · "
+            "over-cap {oc} (ids in --json)".format(
+                go=go.get("value", "?"),
+                gn=go.get("n", "?"),
+                uo=unc.get("value", "?"),
+                un=unc.get("n", "?"),
+                oc=oc.get("count", "?"),
+            )
+        )
+        if oc.get("bots") or []:
+            warn(
+                "WARN {c} deployed Bot(s) over the {cap}-char cap: {ids}".format(
+                    c=oc.get("count"),
+                    cap=oc.get("cap"),
+                    ids=", ".join(str(b.get("id")) for b in oc["bots"]),
+                )
+            )
     emit()
     emit(f"  templates  {doc['templates_dir']}")
     emit(f"  proposed   {doc['count']} Bot(s), walked in tier order")
@@ -1141,13 +1233,62 @@ def check_seat_row(
     return ""
 
 
+def seat_templates(
+    template_docs: Sequence[Dict[str, Any]], seat_row: Optional[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """A seat walks its first paste ONLY, never the pack desk.
+
+    Measured 2026-09-13 (bead .56): the founder pack holds 13 templates, so
+    walking the desk tours a 13-template dump for a session with one shippable
+    first paste. Sessions with no shippable first paste refuse via
+    check_seat_row before this runs — absence renders as refuse, never as a
+    desk-wide tour."""
+    fp = str((seat_row or {}).get("first_paste") or "")
+    return [t for t in (template_docs or []) if str(t.get("id")) == fp]
+
+
+def galaxy_tour(
+    seats_file: pathlib.Path, template_docs: Sequence[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Bare --galaxy: every seat in file order, ok or refuse, never a dump.
+
+    A stale seat (first paste no longer in templates/) is listed as refuse with
+    its reason; the tour walks the walkable first pastes in seat order."""
+    raw = read_json_capped(seats_file)
+    rows = raw.get("seats") if isinstance(raw, dict) else None
+    ids = {str(t.get("id")) for t in (template_docs or [])}
+    seats: List[Dict[str, Any]] = []
+    walk_ids: List[str] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        fp = str(row.get("first_paste") or "")
+        base = {
+            "seat": row.get("seat"),
+            "session": row.get("session"),
+            "first_paste": fp,
+        }
+        if fp and fp in ids:
+            seats.append({**base, "status": "ok"})
+            walk_ids.append(fp)
+        else:
+            seats.append(
+                {
+                    **base,
+                    "status": "refuse",
+                    "reason": f"first paste {fp!r} not in templates/ — stale seat map",
+                }
+            )
+    return {"seats": seats, "first_paste_ids": walk_ids}
+
+
 def render_seat(
     row: Dict[str, Any],
     desk: List[Dict[str, Any]],
     first: Dict[str, Any],
     ink: Ink,
 ) -> None:
-    """The seat view: session header, first-paste charter, then the pack desk compactly."""
+    """The seat view: session header plus its one first-paste charter."""
     emit(
         ink.bold(
             f"Seat: {row.get('session')}  (day {row.get('day')}, {row.get('mdt')} MDT)"
@@ -1161,7 +1302,7 @@ def render_seat(
     for ln in _indent(str(first.get("charter") or "")):
         emit(ln)
     emit()
-    if row.get("pack") is not None:
+    if row.get("pack") is not None and len(desk) > 1:
         emit(
             f"  the whole desk ({row.get('pack')}, {len(desk)} Bot(s)) — one line each:"
         )
@@ -1173,6 +1314,24 @@ def render_seat(
     emit(
         "  gb triage                                  then measure what the new Bot changed"
     )
+
+
+def render_galaxy(doc: Dict[str, Any], ink: Ink) -> int:
+    """Bare --galaxy: 11 seats in file order, ok or refuse, never a dump."""
+    emit(ink.bold("Galaxy livestream — one first paste per seat"))
+    emit()
+    for s in doc.get("seats") or []:
+        mark = "ok" if s.get("status") == "ok" else "REFUSE"
+        emit(f"  [{mark}] {s.get('seat')} — {s.get('session')}")
+        emit(f"    first paste  {s.get('first_paste')}")
+        if s.get("status") != "ok":
+            emit(f"    reason       {s.get('reason')}")
+    emit()
+    emit(f"  walkable  {doc.get('count')} first paste(s) in seat order")
+    emit("  clipboard:  gb-walk.py bots --paste <id> | pbcopy")
+    emit(ink.bold("next"))
+    emit("  gb walk bots --galaxy <seat>          walk one seat's first paste")
+    return 0
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1652,12 +1811,103 @@ def selftest() -> int:
             and json_doc["track"] == "bots",
             f"got {sorted(json_doc)}",
         )
+
+        # --- galaxy seats walk first paste only --------------------------------------------------
+        seat_docs = [{"id": "alpha-job"}, {"id": "beta-job"}, {"id": "chat-only"}]
+        one = seat_templates(seat_docs, {"seat": "founder", "first_paste": "beta-job"})
+        check(
+            "galaxy-seat-walks-first-paste-not-pack-desk",
+            [t["id"] for t in one] == ["beta-job"],
+            f"got {[t.get('id') for t in one]}",
+        )
+        seats_file = root / "galaxy-seats.json"
+        atomic_write_json(
+            seats_file,
+            {
+                "seats": [
+                    {"seat": "s1", "session": "One", "first_paste": "alpha-job"},
+                    {"seat": "s2", "session": "Two", "first_paste": "gone-bot"},
+                    {"seat": "s3", "session": "Three", "first_paste": "chat-only"},
+                ]
+            },
+        )
+        tour = galaxy_tour(seats_file, seat_docs)
+        check(
+            "galaxy-bare-tours-first-pastes-in-seat-order",
+            tour["first_paste_ids"] == ["alpha-job", "chat-only"]
+            and [s["seat"] for s in tour["seats"]] == ["s1", "s2", "s3"],
+            str(tour["first_paste_ids"]),
+        )
+        check(
+            "galaxy-stale-seat-lists-refuse-not-dump",
+            [s for s in tour["seats"] if s["status"] != "ok"]
+            == [
+                {
+                    "seat": "s2",
+                    "session": "Two",
+                    "first_paste": "gone-bot",
+                    "status": "refuse",
+                    "reason": "first paste 'gone-bot' not in templates/ — stale seat map",
+                }
+            ],
+            str(tour["seats"]),
+        )
         check(
             "cli-json-envelope-declares-what-it-could-not-measure",
             cli_doc["gb"] is None
             and cli_doc["verbs_live"] is None
             and cli_doc["verbs_annotated"] == len(verbs),
             f"null is the honest answer for an unmeasured field; got {cli_doc['verbs_live']!r}",
+        )
+
+        # --- fleet gates are measured, not quoted ------------------------------------------------
+        (root / "usecases").mkdir()
+        atomic_write_json(
+            root / "usecases" / "2026-09-13T0000.json",
+            {
+                "rows": [
+                    {"name": "t", "integrations": ["Grok"], "prompt_chars": 100},
+                    {"name": "w", "integrations": ["Grok", "Gmail"], "prompt_chars": 0},
+                    {"name": "x", "integrations": [], "prompt_chars": 50},
+                    {"name": "y", "integrations": ["Grok"], "prompt_chars": 0},
+                ]
+            },
+        )
+        (root / "deployment").mkdir()
+        atomic_write_json(
+            root / "deployment" / "2026-09-13T0000.json",
+            {
+                "live": {"attempted": True},
+                "bots": [
+                    {"id": "b1", "name": "One", "description_chars": 901},
+                    {"id": "b2", "name": "Two", "description_chars": 100},
+                ],
+            },
+        )
+        fg = fleet_gates(root)
+        check(
+            "gates-grok-only-counts-grok-alone",
+            (fg["grok_only"] or {}).get("value") == 2
+            and (fg["grok_only"] or {}).get("n") == 4,
+            f"got {fg['grok_only']}",
+        )
+        check(
+            "gates-uncaptured-counts-zero-charter",
+            (fg["uncaptured"] or {}).get("value") == 2,
+            f"got {fg['uncaptured']}",
+        )
+        check(
+            "gates-over-cap-names-ids",
+            (fg["over_cap"] or {}).get("count") == 1
+            and (fg["over_cap"] or {}).get("bots")
+            == [{"id": "b1", "name": "One", "description_chars": 901}],
+            f"got {fg['over_cap']}",
+        )
+        check(
+            "gates-missing-artifacts-are-null-not-zero",
+            fleet_gates(root / "good")["grok_only"] is None
+            and fleet_gates(root / "good")["over_cap"] is None,
+            "absence must not render as a clean zero",
         )
 
     passed = sum(1 for _, ok, _ in legs if ok)
@@ -1735,7 +1985,10 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--galaxy",
         metavar="SEAT",
-        help="bots track: walk one livestream seat (see galaxy-seats.json), first paste + desk",
+        nargs="?",
+        const="ALL",
+        help="bots track: walk one livestream seat's first paste only "
+        "(bare --galaxy tours all 11 seats in file order)",
     )
     ap.add_argument(
         "--personas", metavar="DIR", help="where the persona pack files live"
@@ -1799,6 +2052,32 @@ def body(argv: Optional[Sequence[str]] = None) -> int:
         # clipboard-clean and every screen below inherits the same desk.
         seat_row = None
         if args.role or args.galaxy:
+            if args.galaxy == "ALL":
+                if args.paste:
+                    warn("--paste needs one template id; bare --galaxy tours 11 seats")
+                    return 2
+                sfile, slooked = resolve_seats()
+                if sfile is None:
+                    warn("no galaxy-seats.json found. Looked in:")
+                    for p in slooked:
+                        warn(f"  {p}")
+                    return 3
+                tour = galaxy_tour(sfile, doc["templates"])
+                by_id = {str(t.get("id")): t for t in doc["templates"]}
+                doc["templates"] = [
+                    by_id[i] for i in tour["first_paste_ids"] if i in by_id
+                ]
+                doc["count"] = len(doc["templates"])
+                doc["filter"] = (
+                    "galaxy livestream: all seats in file order (first paste only)"
+                )
+                doc["seats"] = tour["seats"]
+                doc["first_paste_ids"] = tour["first_paste_ids"]
+                doc["seat"] = None
+                if args.json:
+                    print(json.dumps(doc, indent=1, default=str))
+                    return 0 if doc["count"] else 3
+                return render_galaxy(doc, ink)
             pdir, plooked = resolve_personas(args.personas)
             if pdir is None:
                 warn("no personas/ directory found. Looked in:")
@@ -1824,17 +2103,21 @@ def body(argv: Optional[Sequence[str]] = None) -> int:
                 if stale:
                     warn(stale)
                     return 2
-            pack = args.role or (seat_row.get("pack") if seat_row else None)
-            if pack is None:
-                ids = [
-                    str(t.get("id"))
-                    for t in doc["templates"]
-                    if str(t.get("id")) == seat_row.get("first_paste")
-                ]
+            if seat_row is not None:
+                # A seat walks its first paste ONLY (bead .56): the pack desk is
+                # a 13-template dump for a session with one shippable paste.
+                # check_seat_row above already refused a stale first paste.
+                doc["templates"] = seat_templates(doc["templates"], seat_row)
+                doc["count"] = len(doc["templates"])
                 doc["filter"] = (
-                    f"livestream seat {seat_row.get('seat')!r} (no pack — first paste only)"
+                    f"livestream seat {seat_row.get('seat')!r} "
+                    f"({seat_row.get('session')}) — first paste only"
                 )
+                doc["first"] = doc["templates"][0] if doc["templates"] else None
+                doc["seat"] = seat_row
+                doc["pack"] = seat_row.get("pack")
             else:
+                pack = args.role
                 ids, err = load_persona_ids(pdir, pack)
                 if ids is None:
                     warn(err)
@@ -1870,22 +2153,12 @@ def body(argv: Optional[Sequence[str]] = None) -> int:
                         f"{', '.join(missing)} — refusing rather than touring a stale desk"
                     )
                     return 2
-                doc["filter"] = (
-                    f"livestream seat {seat_row.get('seat')!r} ({seat_row.get('session')})"
-                    if seat_row is not None
-                    else f"persona pack {pack!r}"
-                )
-            if seat_row is not None:
-                # The seat's first paste need not sit in the pack desk (eng-lead's desk
-                # has no galaxy-engineering) — capture it from the full shelf first.
-                doc["first"] = next(
-                    t
-                    for t in doc["templates"]
-                    if str(t.get("id")) == seat_row.get("first_paste")
-                )
-            doc["templates"] = [t for t in doc["templates"] if str(t.get("id")) in ids]
-            doc["count"] = len(doc["templates"])
-            doc["seat"] = seat_row
+                doc["filter"] = f"persona pack {pack!r}"
+                doc["templates"] = [
+                    t for t in doc["templates"] if str(t.get("id")) in ids
+                ]
+                doc["count"] = len(doc["templates"])
+                doc["seat"] = None
         if args.paste:
             return paste(doc, args.paste, as_json=args.json)
         if args.json:

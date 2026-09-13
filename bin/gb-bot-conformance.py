@@ -104,9 +104,9 @@ TRANSITIONS = (
     (
         "L-match",
         "MUST",
-        "cmd_ask:283-290",
-        "--expect regex (re.S) over the fresh blob; matched wins, else last_fresh",
-        [r"re\.search\(expect, blob, re\.S\)", r"matched or last_fresh"],
+        "cmd_ask expect-match",
+        "--expect regex (re.S) over the fresh content; matched wins, else last_fresh",
+        [r"re\.search\(expect, content, re\.S\)", r"matched or last_fresh"],
     ),
     (
         "L-no-reply",

@@ -303,8 +303,14 @@ class DiffResult:
         if self.detail:
             out["detail"] = self.detail
         if self.left is not None and self.right is not None:
-            out["from"] = {"captured_at": self.left.captured_at, "source": self.left.source}
-            out["to"] = {"captured_at": self.right.captured_at, "source": self.right.source}
+            out["from"] = {
+                "captured_at": self.left.captured_at,
+                "source": self.left.source,
+            }
+            out["to"] = {
+                "captured_at": self.right.captured_at,
+                "source": self.right.source,
+            }
             out["graded_by_identity"] = self.graded
             out["added"] = self.added
             out["removed"] = self.removed
@@ -987,15 +993,35 @@ def selftest() -> int:
                 # reported ~250 added and ~250 removed for repos that only got a commit.
                 (tmp / "github").mkdir(exist_ok=True)
                 day1: List[JsonObj] = [
-                    {"id": "aaa", "title": "repo A", "signals": {"pushed_at": "2026-09-10"}},
-                    {"id": "bbb", "title": "repo B", "signals": {"pushed_at": "2026-09-10"}},
+                    {
+                        "id": "aaa",
+                        "title": "repo A",
+                        "signals": {"pushed_at": "2026-09-10"},
+                    },
+                    {
+                        "id": "bbb",
+                        "title": "repo B",
+                        "signals": {"pushed_at": "2026-09-10"},
+                    },
                 ]
                 day2: List[JsonObj] = [
                     # aaa got a push: same identity, different body -> CHANGED
-                    {"id": "aaa", "title": "repo A", "signals": {"pushed_at": "2026-09-11"}},
-                    {"id": "bbb", "title": "repo B", "signals": {"pushed_at": "2026-09-10"}},
+                    {
+                        "id": "aaa",
+                        "title": "repo A",
+                        "signals": {"pushed_at": "2026-09-11"},
+                    },
+                    {
+                        "id": "bbb",
+                        "title": "repo B",
+                        "signals": {"pushed_at": "2026-09-10"},
+                    },
                     # ccc is genuinely new -> ADDED
-                    {"id": "ccc", "title": "repo C", "signals": {"pushed_at": "2026-09-11"}},
+                    {
+                        "id": "ccc",
+                        "title": "repo C",
+                        "signals": {"pushed_at": "2026-09-11"},
+                    },
                 ]
                 gbtypes.atomic_write_text(
                     tmp / "github" / "2026-09-10T0000.json", json.dumps({"rows": day1})
@@ -1006,12 +1032,22 @@ def selftest() -> int:
                 cmd_ingest(engine, tmp, ("github",))
                 gd = cmd_diff(engine, "github", None, None)
                 check(gd.graded, f"{tag} github diff was not graded by identity")
-                check(gd.added == 1, f"{tag} graded added={gd.added} want 1 (only ccc is new)")
-                check(gd.changed == 1, f"{tag} graded changed={gd.changed} want 1 (aaa moved)")
+                check(
+                    gd.added == 1,
+                    f"{tag} graded added={gd.added} want 1 (only ccc is new)",
+                )
+                check(
+                    gd.changed == 1,
+                    f"{tag} graded changed={gd.changed} want 1 (aaa moved)",
+                )
                 check(gd.removed == 0, f"{tag} graded removed={gd.removed} want 0")
                 # fires-on-known-bad: ungraded, the SAME data reads as 2 added + 1 removed.
                 # If that is not true, the grading leg above is proving nothing.
-                naive_added = len(side_rows(engine, gd.right.id, gd.left.id)) if gd.right and gd.left else 0
+                naive_added = (
+                    len(side_rows(engine, gd.right.id, gd.left.id))
+                    if gd.right and gd.left
+                    else 0
+                )
                 check(
                     naive_added == 2,
                     f"{tag} known-bad: ungraded added={naive_added} want 2, so grading is vacuous",
