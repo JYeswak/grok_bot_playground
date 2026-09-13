@@ -30,10 +30,23 @@ SCHEMA = "gb-market-bots/1"
 JOBS_SCHEMA = "gb-market-jobs/4"
 VERDICT_SCHEMA = "gb-market-verdict/1"
 DEPLOY_SCHEMA = "gb-market-deploy/1"
+PACK_SCHEMA = "gb-market-pack/1"
 SHARE_HOST = "https://x.ai/bot/"
 PREVIEW_ROWS = 20
 EXIT_OK, EXIT_USAGE, EXIT_ENVIRONMENT, EXIT_REFUSED = 0, 2, 3, 5
 SOURCES = ("official", "corpus", "both")
+# Named job lists only. Not ranking keys. Not a prior. Winner pick is pick_jobs.
+PACKS = {
+    "founder": ["brief", "calendar", "spend", "sell", "operate"],
+    "engineer": ["ship", "operate", "brief", "handoff"],
+    "seller": ["sell", "market", "brief", "calendar"],
+}
+PERSONA_ALIASES = {
+    "founder": "founder",
+    "engineer": "engineer",
+    "seller": "seller",
+    "sales": "seller",
+}
 
 
 def emit(text: str) -> None:
@@ -835,6 +848,109 @@ def cmd_deploy(
     return EXIT_OK
 
 
+def normalize_pack_persona(token: Optional[str]) -> Optional[str]:
+    """Accept founder|engineer|seller, plus sales → seller. Do not guess."""
+    if token is None:
+        return None
+    key = str(token).strip().casefold()
+    if not key:
+        return None
+    return PERSONA_ALIASES.get(key)
+
+
+def print_pack_human(payload: dict) -> None:
+    emit("PERSONA %s" % (payload.get("persona") or "-"))
+    cards = list(payload.get("rows") or [])
+    if cards:
+        print_deploy_human(cards)
+    for row in payload.get("blocked") or []:
+        emit(
+            "blocked  %s  %s  %s"
+            % (row.get("job"), row.get("count"), row.get("reason") or "no share_id")
+        )
+
+
+def cmd_pack(
+    root: pathlib.Path,
+    persona_token: Optional[str],
+    as_json: bool,
+    offline: bool = False,
+    apply: bool = False,
+    rng: Any = None,
+) -> int:
+    if apply:
+        emit(
+            "gb market pack: refuse — open the SHARE_URLs "
+            "(do not call CreateGrokBot, templates, or gb swarm)"
+        )
+        return EXIT_REFUSED
+    persona = normalize_pack_persona(persona_token)
+    if persona is None or persona not in PACKS:
+        emit("gb market pack: refuse — persona is founder, engineer, or seller")
+        return EXIT_USAGE
+    pack_jobs = list(PACKS[persona])
+    if not offline:
+        cmd_refresh(True, quiet=as_json)
+    mdb = _market_db()
+    mb = _market_bandit()
+    path = root / "usecases" / mdb.DB_NAME
+    err = mdb.refuse_path(path)
+    if err:
+        emit(err.replace("gb-market-db:", "gb market pack:", 1))
+        return EXIT_ENVIRONMENT
+    store = mb.store_path(root)
+    bandit_err = mb.refuse_path(store)
+    if bandit_err:
+        emit(bandit_err.replace("gb-market-bandit:", "gb market pack:", 1))
+        return EXIT_ENVIRONMENT
+    try:
+        bots = mdb.load_bots(path)
+        picked = mb.pick_jobs(bots, store=store, rng=rng)
+        draws_by_job = {
+            str(d.get("job")): d for d in (picked.get("draws") or picked.get("winners") or [])
+        }
+        blocked_by_job = {str(b.get("job")): b for b in (picked.get("blocked") or [])}
+        rows: List[dict] = []
+        blocked: List[dict] = []
+        for job in pack_jobs:
+            drawn = draws_by_job.get(job)
+            sid = str(drawn.get("share_id") or "") if drawn else ""
+            catalog = catalog_row_for_share_id(bots, sid) if sid else None
+            if drawn is None or not sid or catalog is None:
+                blocked.append(
+                    blocked_by_job.get(job)
+                    or {"count": 0, "job": job, "reason": "no share_id"}
+                )
+                continue
+            mb.record_impression(
+                store,
+                job=str(drawn.get("job") or ""),
+                name_key=str(drawn.get("name_key") or ""),
+                share_id=sid,
+            )
+            rows.append(deploy_card(catalog))
+    except mdb.CacheRefused as e:
+        emit(str(e).replace("gb-market-db:", "gb market pack:", 1))
+        return EXIT_ENVIRONMENT
+    except mb.StoreRefused as e:
+        emit(str(e).replace("gb-market-bandit:", "gb market pack:", 1))
+        return EXIT_ENVIRONMENT
+    payload = {
+        "bandit_user_version": mb.USER_VERSION,
+        "blocked": blocked,
+        "jobs": pack_jobs,
+        "persona": persona,
+        "rows": rows,
+        "schema": PACK_SCHEMA,
+        "selector": picked.get("selector") or {},
+    }
+    if as_json:
+        emit(dumps(payload))
+        return EXIT_OK
+    print_pack_human(payload)
+    return EXIT_OK
+
+
 def cmd_new(root: pathlib.Path, as_json: bool, offline: bool = False) -> int:
     if not offline:
         cmd_refresh(True, quiet=as_json)
@@ -1432,7 +1548,7 @@ def selftest() -> int:
         check(
             "jobs-no-persona-flag",
             "--persona" not in help_txt
-            and "pack" not in help_txt
+            and "pack" in help_txt
             and "jobs" in help_txt
             and "keep" in help_txt
             and "skip" in help_txt
@@ -1764,8 +1880,209 @@ def selftest() -> int:
         )
         check(
             "deploy-help-no-persona-or-pack",
-            "--persona" not in help_txt and "pack" not in help_txt,
+            "--persona" not in help_txt and "pack" in help_txt,
             help_txt,
+        )
+
+        founder_jobs = ["brief", "calendar", "spend", "sell", "operate"]
+        pack_fn = globals().get("cmd_pack")
+        pack_cli = _capture(
+            lambda: body(["pack", "founder", "--offline", "--json", "--root", str(jobs_root)])
+        )
+        pack_payload = (
+            json.loads(pack_cli[1]) if pack_cli[1].strip().startswith("{") else {}
+        )
+        pack_rows = list(pack_payload.get("rows") or [])
+        pack_row_jobs = [r.get("job") for r in pack_rows]
+        pack_const = list(PACKS.get("founder") or []) if "PACKS" in globals() else []
+        check(
+            "pack-founder-jobs-in-order",
+            pack_cli[0] == 0
+            and pack_payload.get("jobs") == founder_jobs
+            and (not pack_const or pack_const == founder_jobs)
+            and pack_row_jobs == [j for j in founder_jobs if j in pack_row_jobs]
+            and all(r.get("share_id") for r in pack_rows),
+            str(pack_payload)[:400],
+        )
+        unknown = _capture(
+            lambda: body(["pack", "wizard", "--offline", "--root", str(jobs_root)])
+        )
+        check(
+            "pack-unknown-persona-refuses",
+            unknown[0] == EXIT_USAGE
+            and "founder" in unknown[1]
+            and "engineer" in unknown[1]
+            and "seller" in unknown[1],
+            unknown[1],
+        )
+        check(
+            "pack-uses-thompson-selector",
+            (pack_payload.get("selector") or {}).get("method") == "thompson"
+            and (pack_payload.get("selector") or {}).get("prior") == "beta(1,1)"
+            and (pack_payload.get("selector") or {}).get("candidate_cold") == mb.CANDIDATE_COLD
+            and "weights" not in (pack_payload.get("selector") or {}),
+            str(pack_payload.get("selector")),
+        )
+        blocked_jobs = [b.get("job") for b in (pack_payload.get("blocked") or [])]
+        check(
+            "pack-blocked-job-not-filled",
+            "sell" in blocked_jobs
+            and "sell" not in pack_row_jobs
+            and all(r.get("name") != "Aaa Sales Ghost" for r in pack_rows)
+            and all(r.get("share_id") for r in pack_rows),
+            str({"rows": pack_row_jobs, "blocked": blocked_jobs}),
+        )
+        pack_apply = _capture(
+            lambda: body(
+                [
+                    "pack",
+                    "founder",
+                    "--apply",
+                    "--offline",
+                    "--root",
+                    str(jobs_root),
+                ]
+            )
+        )
+        check(
+            "pack-apply-refuses",
+            pack_apply[0] == EXIT_REFUSED
+            and "SHARE_URL" in pack_apply[1]
+            and pack_apply[1].count("\n") <= 2
+            and "CreateGrokBot" in pack_apply[1],
+            pack_apply[1],
+        )
+        import inspect as _inspect_pack
+
+        pack_src = _inspect_pack.getsource(pack_fn) if callable(pack_fn) else ""
+        check(
+            "pack-does-not-call-swarm-or-templates",
+            callable(pack_fn)
+            and "gb-swarm" not in pack_src
+            and "gb-role" not in pack_src
+            and "templates deploy" not in pack_src
+            and "CreateGrokBot" not in pack_src.replace(
+                "do not call CreateGrokBot", ""
+            ),
+            pack_src[:300],
+        )
+        keep_root = root / "pack-keep-cache"
+        (keep_root / "usecases").mkdir(parents=True)
+        kept_sid = "P2qgQokuPHVJhrkmRDmLv"
+        keep_rows = [
+            mdb.canonicalize_row(
+                {
+                    "name": "Cold Spend %02d" % i,
+                    "category": "finance-ops",
+                    "share_id": "coldSpendShare%02d" % i,
+                    "from_shares": True,
+                    "origin": "shares",
+                    "charter": "cold spend %02d" % i,
+                }
+            )
+            for i in range(80)
+        ]
+        kept_row = mdb.canonicalize_row(
+            {
+                "name": "Kept Spend Desk",
+                "category": "finance-ops",
+                "share_id": kept_sid,
+                "from_shares": True,
+                "origin": "shares",
+                "charter": "kept spend charter",
+            }
+        )
+        keep_rows.append(kept_row)
+        mdb.rebuild(keep_root / "usecases" / mdb.DB_NAME, keep_rows, [])
+        keep_store = mb.store_path(keep_root)
+        mb.record_outcome(
+            keep_store,
+            job=str(kept_row.get("job") or "spend"),
+            name_key=str(kept_row.get("name_key") or "kept spend desk"),
+            share_id=kept_sid,
+            hit=True,
+            n=2,
+        )
+        posts = mb.load_posteriors(keep_store)
+        eligible = []
+        for row in keep_rows:
+            sid = mb.real_share_id(row)
+            if not sid:
+                continue
+            key = (str(row.get("job") or ""), str(row.get("name_key") or ""), sid)
+            state = posts.get(key) or {
+                "alpha": 1.0,
+                "beta": 1.0,
+                "banned": False,
+                "pulls": 0,
+            }
+            eligible.append(
+                {
+                    "banned": bool(state.get("banned")),
+                    "pulls": int(state.get("pulls") or 0),
+                    "row": row,
+                    "share_id": sid,
+                    "state": state,
+                }
+            )
+        import random as _random_pack
+
+        cand_ok = True
+        cand_lens: List[int] = []
+        for seed in range(20):
+            cset = mb.candidates_for_job(eligible, rng=_random_pack.Random(seed))
+            cand_lens.append(len(cset))
+            ids = [a.get("share_id") for a in cset]
+            if kept_sid not in ids or len(cset) != 1 + mb.CANDIDATE_COLD:
+                cand_ok = False
+                break
+        pick_wins = 0
+        for i in range(20):
+            drawn = mb.pick_jobs(
+                keep_rows,
+                store=keep_store,
+                rng=_random_pack.Random(4 + i),
+            )
+            spend = [d for d in (drawn.get("draws") or []) if d.get("job") == "spend"]
+            if spend and spend[0].get("share_id") == kept_sid:
+                pick_wins += 1
+        kept_wins = 0
+        if callable(pack_fn):
+            for i in range(20):
+                seed = 4 + i
+                _pcode, pout = _capture(
+                    lambda seed=seed: pack_fn(
+                        keep_root,
+                        "founder",
+                        True,
+                        True,
+                        False,
+                        _random_pack.Random(seed),
+                    )
+                )
+                payload = json.loads(pout) if pout.strip().startswith("{") else {}
+                sids = [r.get("share_id") for r in (payload.get("rows") or [])]
+                if kept_sid in sids:
+                    kept_wins += 1
+        check(
+            "pack-keep-can-reappear",
+            cand_ok
+            and cand_lens == [1 + mb.CANDIDATE_COLD] * 20
+            and len(eligible) > 1 + mb.CANDIDATE_COLD
+            and pick_wins >= 1
+            and callable(pack_fn)
+            and kept_wins >= 1,
+            "cand=%s lens=%s pick=%s/20 pack=%s/20"
+            % (cand_ok, cand_lens[:3], pick_wins, kept_wins),
+        )
+        sales = _capture(
+            lambda: body(["pack", "sales", "--offline", "--json", "--root", str(jobs_root)])
+        )
+        sales_payload = json.loads(sales[1]) if sales[1].strip().startswith("{") else {}
+        check(
+            "seller-alias",
+            sales[0] == 0 and sales_payload.get("persona") == "seller",
+            str(sales_payload)[:200] + sales[1][:200],
         )
 
     check("refresh-producer-exists", (BIN / "gb-market-snapshot.py").is_file(), "")
@@ -1798,15 +2115,16 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "action",
         nargs="?",
-        choices=("refresh", "bots", "new", "jobs", "keep", "skip", "ban", "deploy"),
+        choices=("refresh", "bots", "new", "jobs", "keep", "skip", "ban", "deploy", "pack"),
         default="bots",
-        help="refresh | bots | new | jobs | keep | skip | ban | deploy",
+        help="refresh | bots | new | jobs | keep | skip | ban | deploy | pack",
     )
     ap.add_argument(
         "share_ids",
         nargs="*",
         default=[],
         help=(
+            "pack: founder | engineer | seller (sales → seller). "
             "deploy: one or more catalog share_ids or unique prefixes. "
             "keep/skip/ban: one stored share_id or unique prefix"
         ),
@@ -1830,12 +2148,12 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--offline",
         action="store_true",
-        help="bots/new: stamps only; jobs/deploy: valid catalog cache only",
+        help="bots/new: stamps only; jobs/deploy/pack: valid catalog cache only",
     )
     ap.add_argument(
         "--apply",
         action="store_true",
-        help="deploy: refused — open the SHARE_URL (does not create Bots)",
+        help="deploy/pack: refused — open the SHARE_URL (does not create Bots)",
     )
     ap.add_argument("--root", default="", help="artifact root (tests)")
     ap.add_argument("--selftest", action="store_true")
@@ -1855,6 +2173,17 @@ def body(argv: Optional[Sequence[str]] = None) -> int:
     if args.action == "jobs":
         return cmd_jobs(root, bool(args.json), bool(args.offline))
     share_ids = list(getattr(args, "share_ids", None) or [])
+    if args.action == "pack":
+        if len(share_ids) > 1:
+            emit("gb market pack: refuse — persona is founder, engineer, or seller")
+            return EXIT_USAGE
+        return cmd_pack(
+            root,
+            share_ids[0] if share_ids else None,
+            bool(args.json),
+            bool(args.offline),
+            bool(getattr(args, "apply", False)),
+        )
     if args.action == "deploy":
         return cmd_deploy(
             root,

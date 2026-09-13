@@ -285,6 +285,7 @@ EXAMPLES = """\
   gb market skip <share_id>      record_outcome success=false
   gb market ban  <share_id>      mark the arm ineligible (hard filter, not a beta bump)
   gb market deploy <share_id> [...]  one-click cards: name, job, charter, https://x.ai/bot/<id>
+  gb market pack founder         persona shortlist of Thompson draws (not swarm)
   gb market refresh --corpus     official snapshot + public corpus + shares
   gb market bots                 official ∪ corpus ∪ URL finds; denominators printed
   gb templates deploy <id> --apply   create that Bot (CreateGrokBotAgentFromTemplate + Update)
@@ -635,12 +636,13 @@ class MarketArgs:
 
     action: str = arg(
         default="bots",
-        help="refresh | bots | new | jobs | keep | skip | ban | deploy",
-        choices=("refresh", "bots", "new", "jobs", "keep", "skip", "ban", "deploy"),
+        help="refresh | bots | new | jobs | keep | skip | ban | deploy | pack",
+        choices=("refresh", "bots", "new", "jobs", "keep", "skip", "ban", "deploy", "pack"),
         positional=True,
     )
     share_ids: Optional[List[str]] = arg(
         help=(
+            "pack: founder | engineer | seller (sales → seller). "
             "deploy: one or more catalog share_ids or unique prefixes. "
             "keep/skip/ban: one stored share_id or unique prefix"
         ),
@@ -650,10 +652,10 @@ class MarketArgs:
     urls: bool = arg(help="bots: dump curated URL rows (default: counts by section/host)")
     full: bool = arg(help="bots: print every row (default: first 20)")
     offline: bool = arg(
-        help="bots/new: stamps only; jobs/deploy: valid catalog cache only"
+        help="bots/new: stamps only; jobs/deploy/pack: valid catalog cache only"
     )
     apply: bool = arg(
-        help="deploy: refused — open the SHARE_URL (does not create Bots)"
+        help="deploy/pack: refused — open the SHARE_URL (does not create Bots)"
     )
     json: bool = arg(help="machine-readable envelope on stdout")
     selftest: bool = arg(help="offline stamp fixtures")

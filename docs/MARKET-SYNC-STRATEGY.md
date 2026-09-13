@@ -16,14 +16,15 @@ Engine is stock sqlite3 (Python stdlib). fsqlite is not involved.
 
 - Live: live HTTP pull, stamp write, `PRAGMA integrity_check`, `user_version`. `gb market deploy` prints one-click cards (name, job, catalog charter, official `https://x.ai/bot/<id>`). Dry-run is the whole door. Does not create Bots.
 - Dormant: official desktop snapshot on Linux (skip, exit 3, no traceback).
-- Design: persona shortlist, swarm-from-live-shares. Not this file.
+- Live: persona shortlist (`gb market pack founder|engineer|seller`). Pack job lists are explicit named constants. Winner pick is the same Thompson as `gb market jobs` — not `gb swarm`, not a hardcoded champion list.
+- Design: swarm-from-live-shares. Not this file.
 - Issue-limited: RongleCat link harvest still 0 on a clone (local index only).
 
 ## Sync Triggers
 
-- On command: `gb market bots` (default live pull), `gb market jobs` (same live pull, then one Thompson draw per job), `gb market deploy <share_id> [...]` (cards + official share URL), and `gb market refresh --corpus`. `gb market keep|skip|ban <share_id>` write the bandit store only. They do not import, deploy, or invent a share_id.
+- On command: `gb market bots` (default live pull), `gb market jobs` (same live pull, then one Thompson draw per job), `gb market pack founder|engineer|seller` (same live pull, then those draws filtered to an explicit job list), `gb market deploy <share_id> [...]` (cards + official share URL), and `gb market refresh --corpus`. `gb market keep|skip|ban <share_id>` write the bandit store only. They do not import, deploy, or invent a share_id.
 - On exit: none.
-- Timer/throttle: none required. `--offline` reads cache only. `gb market jobs --offline` and `gb market deploy --offline` refuse if the catalog `integrity_check` or `user_version` fail. A planted-bad bandit store is also refused. A missing bandit store is a cold start (explore), not a refuse.
+- Timer/throttle: none required. `--offline` reads cache only. `gb market jobs --offline`, `gb market pack --offline`, and `gb market deploy --offline` refuse if the catalog `integrity_check` or `user_version` fail. A planted-bad bandit store is also refused. A missing bandit store is a cold start (explore), not a refuse.
 - One-way: catalog → sqlite → optional JSON stamp. Never sqlite → catalog. Never JSON → sqlite unless `--offline` and sqlite missing (rebuild cache from newest stamp, then integrity_check). Never catalog rebuild → bandit store.
 
 ## Versioning
@@ -53,7 +54,7 @@ Engine is stock sqlite3 (Python stdlib). fsqlite is not involved.
 1. integrity_check on a planted malformed catalog or bandit file → refuse.
 2. Merge: directory charter wins; share_id fills in; name_key join only.
 3. Upstream `category` is preserved. `taxonomy` is an explicit alias table only: Personal=personal-admin→personal, Sales=customer-sales→sales. Unknown → unmapped. Do not guess from charter text.
-4. `gb market bots` first row is not a persona pick list. `gb market jobs` is one Thompson draw per job (`method=thompson`), honest about pulls.
+4. `gb market bots` first row is not a persona pick list. `gb market jobs` is one Thompson draw per job (`method=thompson`), honest about pulls. `gb market pack` is a persona shortlist of those draws: job lists are explicit; winner pick is the same Thompson. Not `gb swarm`. Not a hardcoded champion list.
 
 ## Fail
 
@@ -97,6 +98,22 @@ Live. Cards plus the official share URL. Not a Bot create. Not `gb templates dep
 - JSON schema `gb-market-deploy/1` with `rows[{name, job, share_id, share_url, charter, origin}]`.
 - `--offline` is the same refuse rules as jobs.
 - Dry-run is v1. `--apply` refuses with one line: open the SHARE_URL (do not call CreateGrokBot or templates).
+
+## Persona shortlist (`gb market pack`)
+
+Live. A persona-shaped filter over the same Thompson draws as `gb market jobs`, then a door-2 deploy card per drawn share_id. Not `gb swarm` (that deploys hardcoded template packs in `personas/*.json`). Not `gb market bots --persona`. Not a hardcoded champion list.
+
+- Accept `founder`, `engineer`, `seller`. Alias `sales` → `seller`. Unknown persona is usage and names those three ids. Do not guess.
+- Pack job lists are named constants. They are not ranking keys and not a prior. Job `none` is never in a pack. Do not invent decide/refuse.
+  - founder: brief, calendar, spend, sell, operate
+  - engineer: ship, operate, brief, handoff
+  - seller: sell, market, brief, calendar
+- Same live pull as jobs unless `--offline`. Load catalog + bandit with the same refuse rules.
+- Call existing `pick_jobs(...)` once. Filter the draws to the pack list, preserving pack order. Record an impression on each drawn arm. Do not invent rewards.
+- Each drawn share_id becomes a door-2 deploy card (`https://x.ai/bot/<full id>`). A pack job with no deployable arm (no share_id / all banned) is blocked — do not fill it with a no-share row or a different job.
+- Human: `PERSONA <id>`, then one deploy card per drawn job, then blocked jobs.
+- JSON schema `gb-market-pack/1`: `{schema, persona, jobs, selector, bandit_user_version, rows, blocked}`. Selector stays `method=thompson`, `prior=beta(1,1)`, `candidate_cold=8`, no weights.
+- `--apply` refuses with one line: open the SHARE_URLs (do not call CreateGrokBot, templates, or gb swarm). Exit 5.
 
 ## Bandit store (`usecases/bandit.sqlite`, user_version 2)
 
