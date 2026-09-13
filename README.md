@@ -22,21 +22,20 @@ then read the stack before you copy a weak Bot. That is the on-ramp. There
 is no staged first-hour role.
 
 ```sh
-gb market refresh --corpus
 gb market bots
 gb templates deploy <id> --apply
 gb swarm <persona>
 gb stack
 ```
 
-1. **Scan.** `gb market refresh --corpus` then `gb market bots` reprints the
-   union of official marketplace listings (`market/*.json`
-   `bot_marketplace.rows`) and the public corpus (`usecases/*.json` `rows`,
-   from elie222/botdirectory.ai + X URLs). Dedup by name. Print official /
-   corpus / overlap / union as denominators. Curated `links` are URL finds,
-   not pretend-deployable Bots (`--urls` dumps them). Not official-listings-only.
-   Not a 101. A clone refreshes the corpus; usecases/ is a public-source
-   refresh, not a secret.
+1. **Scan.** `gb market bots` live-pulls the public catalogs on the spot
+   (elie222/botdirectory.ai markdown + kydlikebtc/awesome-grokbot `catalog.json`
+   with live `x.ai/bot` ids), writes a usecases/ stamp as cache, then reprints
+   the union with official marketplace listings when a desktop stamp exists.
+   Dedup by name. Print official / corpus / overlap / union as denominators.
+   Curated `links` are URL finds, not pretend-deployable Bots (`--urls` dumps
+   them). `--offline` reads stamps only. Not official-listings-only. Not a 101.
+   A clone never needs a prior refresh; the scan is the pull.
 2. **Pick and deploy.** Name slugs. `gb templates deploy <id> --apply` creates
    each Bot via CreateGrokBotAgentFromTemplate + Update. Repeat for each slug.
    This path never redirects to `gb role "first hour"`.
@@ -70,7 +69,6 @@ curl -fsSL https://raw.githubusercontent.com/JYeswak/grok_bot_playground/main/in
 ```
 
 ```console
-$ gb market refresh --corpus
 $ gb market bots
 $ gb templates deploy <id> --apply
 $ gb swarm founder-operator
@@ -79,8 +77,9 @@ $ gb stack
 
 ### Honest limits
 
-Official marketplace rows often lack `share_id`. One-click deploy is blocked
-until the scan carries it. `gb` does not invent share ids. Plugin install is
+Official marketplace rows often lack `share_id`. Live shares from
+awesome-grokbot carry the real `x.ai/bot` id through. `gb` does not invent
+share ids. Plugin install is
 still human: Settings → Plugins. There is no install RPC. `gb x` needs a
 collected X sweep; a clone without `x/*.json` refuses and names the missing
 input. `usecases/` is not that: it is a public-source refresh a clone can run.
@@ -119,7 +118,7 @@ It does three jobs:
 schema-stamped envelope; exit codes are semantic, not cosmetic; `gb robot-docs` is a handbook
 written for a model rather than a human; and `gb capabilities --json` describes the whole
 surface so an agent can plan without reading `bin/`. Start with
-`gb market refresh --corpus` and `gb market bots` (official + corpus + URLs),
+`gb market bots` (live official ∪ corpus ∪ shares),
 then `gb templates deploy`, `gb swarm`, and `gb stack`.
 
 **It refuses rather than guesses.** An unmeasured check is an error, never a pass. A verb with
@@ -163,7 +162,6 @@ Two forms, one implementation: the console script runs the very same `bin/gb` th
 The difference is what is on disk around it. See [what it does not do](#limitations-what-this-does-not-do).
 
 ```sh
-gb market refresh --corpus
 gb market bots
 gb templates deploy <id> --apply
 gb swarm <persona>

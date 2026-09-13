@@ -91,7 +91,9 @@ def corpus_links(doc: Optional[dict]) -> List[dict]:
     return [r for r in rows if isinstance(r, dict)]
 
 
-def official_share_id(row: dict) -> Optional[str]:
+def official_share_id(row: Optional[dict]) -> Optional[str]:
+    if not row:
+        return None
     sid = row.get("share_id") or row.get("shareId")
     if sid in (None, ""):
         return None
@@ -179,11 +181,11 @@ def union_bots(official: Sequence[dict], corpus: Sequence[dict]) -> List[dict]:
                 "contributor": (c or {}).get("contributor") if c else None,
                 "creator": (o or {}).get("creator") if o else None,
                 "name": name,
-                "share_id": official_share_id(o) if o else None,
+                "share_id": official_share_id(o) or ((c or {}).get("share_id") or None),
                 "slug": (o or {}).get("slug") if o else None,
                 "source": source,
                 "updated_at_ms": (o or {}).get("updated_at_ms") if o else None,
-                "url": (c or {}).get("source") if c else None,
+                "url": ((c or {}).get("import_url") or (c or {}).get("source")) if c else None,
             }
         )
     bots.sort(key=lambda r: (name_key(r.get("name")), str(r.get("source") or "")))
@@ -289,13 +291,19 @@ def print_human(payload: dict, *, new_only: bool, full: bool = False) -> None:
     )
     official_n = payload["official"]
     share_n = payload["share_id_present"]
-    if share_n < official_n:
-        emit(
-            "  share_id  %d/%d official rows — one-click deploy blocked "
-            "until the scan carries it" % (share_n, official_n)
-        )
-    else:
-        emit("  share_id  %d/%d official rows" % (share_n, official_n))
+    deployable = sum(1 for b in payload.get("bots") or [] if b.get("share_id"))
+    emit(
+        "  share_id  %d/%d union rows have a live x.ai/bot id"
+        % (deployable, payload["union"])
+    )
+    if official_n:
+        if share_n < official_n:
+            emit(
+                "  official share_id  %d/%d — one-click deploy blocked "
+                "until the scan carries it" % (share_n, official_n)
+            )
+        else:
+            emit("  official share_id  %d/%d" % (share_n, official_n))
     emit("  plugin install  HUMAN Settings → Plugins. No install RPC.")
     emit(
         "  urls  n=%d  (URL finds, not deployable Bots; --urls dumps them)"
@@ -345,10 +353,15 @@ def print_human(payload: dict, *, new_only: bool, full: bool = False) -> None:
 def cmd_refresh(
     corpus: bool,
     runners: Optional[Dict[str, Callable[[], int]]] = None,
+    quiet: bool = False,
 ) -> int:
+    def note(text: str) -> None:
+        if not quiet:
+            emit(text)
+
     snap = BIN / "gb-market-snapshot.py"
     if not snap.is_file():
-        emit("gb market refresh: missing bin/gb-market-snapshot.py")
+        note("gb market refresh: missing bin/gb-market-snapshot.py")
         return EXIT_ENVIRONMENT
     def _snap() -> int:
         proc = subprocess.run(
@@ -359,7 +372,7 @@ def cmd_refresh(
         if proc.returncode == 0:
             line = (proc.stdout or "").strip().splitlines()
             if line:
-                emit(line[-1])
+                note(line[-1])
             return 0
         # Never relay a traceback. Last non-stack line, or a fixed sentence.
         blob = ((proc.stderr or "") + "\n" + (proc.stdout or "")).splitlines()
@@ -372,7 +385,7 @@ def cmd_refresh(
             and not ln.startswith("    ")
             and "Error:" not in ln
         ]
-        emit(
+        note(
             clean[-1]
             if clean
             else "gb market refresh: official catalog skipped — needs Grok Bot desktop login"
@@ -383,14 +396,14 @@ def cmd_refresh(
     rc = run_snap()
     snap_ok = rc == 0
     if not snap_ok:
-        emit("gb market refresh: official catalog skipped (exit %s)" % rc)
+        note("gb market refresh: official catalog skipped (exit %s)" % rc)
         if not corpus:
             return int(rc) if isinstance(rc, int) and rc != 0 else EXIT_ENVIRONMENT
     if not corpus:
         return EXIT_OK
     use = BIN / "gb-usecases.py"
     if not use.is_file():
-        emit("gb market refresh --corpus: missing bin/gb-usecases.py")
+        note("gb market refresh --corpus: missing bin/gb-usecases.py")
         return EXIT_ENVIRONMENT
 
     def _use() -> int:
@@ -402,25 +415,34 @@ def cmd_refresh(
         if proc.returncode == 0:
             line = (proc.stdout or "").strip().splitlines()
             if line:
-                emit(line[0])
+                note(line[0])
             return 0
         err = (proc.stderr or proc.stdout or "").strip().splitlines()
-        emit(err[-1] if err else "gb market refresh --corpus: usecases refresh failed")
+        note(err[-1] if err else "gb market refresh --corpus: usecases refresh failed")
         return int(proc.returncode or 1)
 
     run_use = (runners or {}).get("usecases") or _use
     rc2 = run_use()
     if rc2 != 0:
-        emit("gb market refresh --corpus: usecases refresh failed (exit %s)" % rc2)
+        note("gb market refresh --corpus: usecases refresh failed (exit %s)" % rc2)
         return int(rc2) if isinstance(rc2, int) and rc2 != 0 else EXIT_ENVIRONMENT
     if not snap_ok:
-        emit("next  gb market bots   (corpus-only; official catalog needs desktop login)")
+        note("next  gb market bots   (corpus-only; official catalog needs desktop login)")
     else:
-        emit("next  gb market bots")
+        note("next  gb market bots")
     return EXIT_OK
 
 
-def cmd_bots(root: pathlib.Path, as_json: bool, include_urls: bool, full: bool = False) -> int:
+def cmd_bots(
+    root: pathlib.Path,
+    as_json: bool,
+    include_urls: bool,
+    full: bool = False,
+    offline: bool = False,
+) -> int:
+    if not offline:
+        # Live pull is the source of truth. Stamp is a cache, not yesterday's market.
+        cmd_refresh(True, quiet=as_json)
     payload, err = build_payload(root, include_urls)
     if err or payload is None:
         emit(err or "gb market bots: missing stamps — run: gb market refresh")
@@ -432,7 +454,9 @@ def cmd_bots(root: pathlib.Path, as_json: bool, include_urls: bool, full: bool =
     return EXIT_OK
 
 
-def cmd_new(root: pathlib.Path, as_json: bool) -> int:
+def cmd_new(root: pathlib.Path, as_json: bool, offline: bool = False) -> int:
+    if not offline:
+        cmd_refresh(True, quiet=as_json)
     payload, err = build_payload(root, False)
     if err or payload is None:
         emit((err or "gb market new: missing stamps").replace("gb market bots:", "gb market new:"))
@@ -527,6 +551,8 @@ def selftest() -> int:
                 "contributor": "fin",
                 "source": "https://x.com/fin/status/2",
                 "added_at": "2026-09-10",
+                "share_id": "gammaShare",
+                "import_url": "https://x.ai/bot/gammaShare",
             },
         ],
         "links": [
@@ -564,7 +590,7 @@ def selftest() -> int:
         (usecases / "2026-09-04T0600.json").write_text(json.dumps(corpus_prev) + "\n")
         (usecases / "2026-09-11T0600.json").write_text(json.dumps(corpus_cur) + "\n")
 
-        code, out = _capture(lambda: cmd_bots(root, False, False))
+        code, out = _capture(lambda: cmd_bots(root, False, False, offline=True))
         check("bots-exit-ok", code == 0, str(code))
         check(
             "union-3-from-2-plus-2-overlap-1",
@@ -583,8 +609,8 @@ def selftest() -> int:
         check("urls-are-finds", "URL finds, not deployable" in out, out)
         check("urls-counts-without-dump", "host     x.com" in out and "Guide A" not in out, out)
 
-        j1 = _capture(lambda: cmd_bots(root, True, False))[1]
-        j2 = _capture(lambda: cmd_bots(root, True, False))[1]
+        j1 = _capture(lambda: cmd_bots(root, True, False, offline=True))[1]
+        j2 = _capture(lambda: cmd_bots(root, True, False, offline=True))[1]
         check("json-dumps-are-stable", j1 == j2 and j1.strip().startswith("{"), j1[:120])
         payload = json.loads(j1)
         check("schema", payload.get("schema") == SCHEMA, str(payload.get("schema")))
@@ -609,7 +635,7 @@ def selftest() -> int:
         shares = {b.get("name"): b.get("share_id") for b in payload.get("bots") or []}
         check(
             "passes-through-only-real-share-id",
-            shares == {"Alpha": "real-share-1", "Gamma": None, "Shared Bot": None},
+            shares == {"Alpha": "real-share-1", "Gamma": "gammaShare", "Shared Bot": None},
             str(shares),
         )
         check(
@@ -622,18 +648,18 @@ def selftest() -> int:
         check("urls-no-dump-by-default", "rows" not in (payload.get("urls") or {}), str(payload.get("urls")))
         check("stamps-present", payload.get("stamps", {}).get("market") == "2026-09-11T0600.json", str(payload.get("stamps")))
 
-        u_code, u_out = _capture(lambda: cmd_bots(root, True, True))
+        u_code, u_out = _capture(lambda: cmd_bots(root, True, True, offline=True))
         u_payload = json.loads(u_out) if u_out.strip().startswith("{") else {}
         check("urls-dump-flag", u_code == 0 and len((u_payload.get("urls") or {}).get("rows") or []) == 2, u_out[:200])
 
-        n_code, n_out = _capture(lambda: cmd_new(root, False))
+        n_code, n_out = _capture(lambda: cmd_new(root, False, offline=True))
         check("new-exit-ok", n_code == 0, str(n_code))
         check("new-lists-gamma", "Gamma" in n_out and "NEW  n=1" in n_out, n_out)
         check("new-omits-old", "Alpha" not in n_out.split("NEW", 1)[-1], n_out)
 
         empty = root / "empty"
         empty.mkdir()
-        ecode, eout = _capture(lambda: cmd_bots(empty, False, False))
+        ecode, eout = _capture(lambda: cmd_bots(empty, False, False, offline=True))
         check("missing-both-is-environment", ecode == EXIT_ENVIRONMENT, str(ecode))
         check("missing-names-refresh", "gb market refresh" in eout, eout)
         check("missing-names-corpus-refresh", "gb market refresh --corpus" in eout, eout)
@@ -641,7 +667,7 @@ def selftest() -> int:
         market_only = root / "market-only"
         (market_only / "market").mkdir(parents=True)
         (market_only / "market" / "2026-09-11T0600.json").write_text(json.dumps(official_cur) + "\n")
-        mcode, mout = _capture(lambda: cmd_bots(market_only, False, False))
+        mcode, mout = _capture(lambda: cmd_bots(market_only, False, False, offline=True))
         check("official-only-is-ok", mcode == 0 and "official=" in mout, mout)
 
         hello = root / "hello-corpus"
@@ -662,7 +688,7 @@ def selftest() -> int:
             "links": [],
         }
         (hello / "usecases" / "2026-09-11T0600.json").write_text(json.dumps(hello_corpus) + "\n")
-        hcode, hout = _capture(lambda: cmd_bots(hello, False, False))
+        hcode, hout = _capture(lambda: cmd_bots(hello, False, False, offline=True))
         check(
             "does-not-filter-corpus-hello-computer",
             hcode == 0 and "hello-computer" in hout,
@@ -674,7 +700,7 @@ def selftest() -> int:
         (one_each / "usecases").mkdir()
         (one_each / "market" / "2026-09-11T0600.json").write_text(json.dumps(official_cur) + "\n")
         (one_each / "usecases" / "2026-09-11T0600.json").write_text(json.dumps(corpus_cur) + "\n")
-        pcode, pout = _capture(lambda: cmd_new(one_each, False))
+        pcode, pout = _capture(lambda: cmd_new(one_each, False, offline=True))
         check(
             "new-without-previous-pair-is-environment",
             pcode == EXIT_ENVIRONMENT and "previous" in pout,
@@ -701,12 +727,16 @@ def selftest() -> int:
         corpus_only = root / "corpus-only"
         (corpus_only / "usecases").mkdir(parents=True)
         (corpus_only / "usecases" / "2026-09-11T0600.json").write_text(json.dumps(corpus_cur) + "\n")
-        ccode, cout = _capture(lambda: cmd_bots(corpus_only, False, False))
+        ccode, cout = _capture(lambda: cmd_bots(corpus_only, False, False, offline=True))
         check(
             "corpus-only-is-ok",
             ccode == 0 and "corpus=" in cout and "official=0" in cout,
             cout,
         )
+        rc_q, out_q = _capture(
+            lambda: cmd_refresh(True, runners={"snapshot": lambda: 0, "usecases": lambda: 0}, quiet=True)
+        )
+        check("refresh-quiet-is-silent", rc_q == 0 and out_q.strip() == "", repr(out_q))
 
     check("refresh-producer-exists", (BIN / "gb-market-snapshot.py").is_file(), "")
     check("corpus-refresh-producer-exists", (BIN / "gb-usecases.py").is_file(), "")
@@ -740,12 +770,12 @@ def body(argv: Optional[Sequence[str]] = None) -> int:
         nargs="?",
         choices=("refresh", "bots", "new"),
         default="bots",
-        help="refresh (network) | bots (offline union) | new (offline new-since)",
+        help="refresh (network) | bots (live pull, then union) | new (live, then new-since)",
     )
     ap.add_argument(
         "--corpus",
         action="store_true",
-        help="refresh: also run gb-usecases.py (public botdirectory tarball)",
+        help="refresh: also run gb-usecases.py (botdirectory ∪ live shares)",
     )
     ap.add_argument(
         "--urls",
@@ -758,6 +788,11 @@ def body(argv: Optional[Sequence[str]] = None) -> int:
         help="bots: print every row (default: first %d)" % PREVIEW_ROWS,
     )
     ap.add_argument("--json", action="store_true")
+    ap.add_argument(
+        "--offline",
+        action="store_true",
+        help="bots/new: read stamps only (no live pull)",
+    )
     ap.add_argument("--root", default="", help="artifact root (tests)")
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args(list(argv) if argv is not None else None)
@@ -767,8 +802,14 @@ def body(argv: Optional[Sequence[str]] = None) -> int:
         return cmd_refresh(bool(args.corpus))
     root = pathlib.Path(args.root) if args.root else ROOT
     if args.action == "new":
-        return cmd_new(root, bool(args.json))
-    return cmd_bots(root, bool(args.json), bool(args.urls), bool(getattr(args, 'full', False)))
+        return cmd_new(root, bool(args.json), bool(args.offline))
+    return cmd_bots(
+        root,
+        bool(args.json),
+        bool(args.urls),
+        bool(getattr(args, "full", False)),
+        bool(args.offline),
+    )
 
 
 if __name__ == "__main__":

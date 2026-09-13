@@ -13,7 +13,7 @@ Sources, each with a different shape and a different bias:
                  integration counts.
   awesome-index  `RongleCat/awesome-grok-bot` — 799 curated links with one-line descriptions.
                  Breadth: guides, field cases, failure modes.
-  shares-index   `kydlikebtc/awesome-grokbot` — 730 live `x.ai/bot` share links, status-checked.
+  shares-index   `kydlikebtc/awesome-grokbot` — live `catalog.json` (`x.ai/bot` ids, fetched on every harvest).
 
 The cross-reference is the product: the integrations the population builds around, joined
 against the connectors THIS account has installed. That answers "what is everyone doing that we
@@ -61,6 +61,8 @@ from gbtypes import main as gbmain  # noqa: E402
 
 UA = "grokbot-usecase-index/1 (+local weekly refresh)"
 CORPUS = ("elie222/botdirectory.ai", "main", "bots/")
+SHARES_URL = "https://raw.githubusercontent.com/kydlikebtc/awesome-grokbot/main/catalog.json"
+SHARES_REPO = "kydlikebtc/awesome-grokbot"
 LINK_RE = re.compile(r"^-\s*\[([^\]]+)\]\((https?://[^)]+)\)\s*-?\s*(.*)$")
 
 
@@ -380,6 +382,92 @@ def harvest_corpus() -> List[Dict[str, Any]]:
     return rows
 
 
+
+def fetch_json(url: str) -> Optional[Dict[str, Any]]:
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        with urllib.request.urlopen(req, timeout=90) as r:
+            return json.loads(r.read().decode("utf-8", "replace"))
+    except Exception as e:
+        print(
+            "shares fetch failed: {t}: {e}".format(t=type(e).__name__, e=e),
+            file=sys.stderr,
+        )
+        return None
+
+
+def row_name_key(name: Any) -> str:
+    return " ".join(str(name or "").casefold().split())
+
+
+def row_from_share(entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """One awesome-grokbot catalog row. share_id is the live x.ai/bot id, not invented."""
+    name = entry.get("name")
+    if not name:
+        return None
+    author = entry.get("author") or {}
+    contributor = author.get("name") if isinstance(author, dict) else author
+    summary = str(entry.get("summary") or entry.get("official_summary") or "")
+    charter, fired = sanitise(summary)
+    sid = entry.get("bot_id") or ""
+    if not sid:
+        imp = str(entry.get("import") or "")
+        if "/bot/" in imp:
+            sid = imp.rstrip("/").rsplit("/", 1)[-1]
+    return {
+        "name": name,
+        "category": entry.get("category") or "Uncategorised",
+        "integrations": [],
+        "contributor": contributor,
+        "source": entry.get("origin") or entry.get("import"),
+        "added_at": str(entry.get("first_seen") or entry.get("checked") or "")[:10],
+        "prompt_chars": 0,
+        "charter": charter,
+        "charter_truncated": False,
+        "charter_redactions": fired,
+        "description": charter,
+        "has_approval_language": False,
+        "share_id": sid or None,
+        "import_url": entry.get("import"),
+        "from_shares": True,
+    }
+
+
+def harvest_shares() -> List[Dict[str, Any]]:
+    doc = fetch_json(SHARES_URL)
+    if not isinstance(doc, dict):
+        return []
+    rows: List[Dict[str, Any]] = []
+    for entry in doc.get("entries") or []:
+        if isinstance(entry, dict):
+            row = row_from_share(entry)
+            if row is not None:
+                rows.append(row)
+    return rows
+
+
+def merge_corpus(
+    directory: List[Dict[str, Any]], shares: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """botdirectory charters win; live share_id/import_url fill in. Dedup by casefold name."""
+    by: Dict[str, Dict[str, Any]] = {}
+    for row in directory:
+        key = row_name_key(row.get("name"))
+        if key:
+            by[key] = dict(row)
+    for row in shares:
+        key = row_name_key(row.get("name"))
+        if not key:
+            continue
+        if key in by:
+            if not by[key].get("share_id") and row.get("share_id"):
+                by[key]["share_id"] = row["share_id"]
+            if not by[key].get("import_url") and row.get("import_url"):
+                by[key]["import_url"] = row["import_url"]
+        else:
+            by[key] = dict(row)
+    return sorted(by.values(), key=lambda b: b.get("name") or "")
+
 def harvest_links(path: pathlib.Path) -> List[Dict[str, Any]]:
     """Curated link lists already fetched into the surface snapshot — parsed, not re-fetched."""
     if not path.is_file():
@@ -659,6 +747,28 @@ def selftest() -> int:
         ),
     )
 
+    merged = merge_corpus(
+        [{"name": "Alpha Desk", "charter": "from dir", "share_id": None}],
+        [
+            {
+                "name": "alpha desk",
+                "share_id": "realShare1",
+                "import_url": "https://x.ai/bot/realShare1",
+                "charter": "from share",
+            },
+            {"name": "Gamma Desk", "share_id": "g1", "charter": "only share"},
+        ],
+    )
+    byn = {row_name_key(r["name"]): r for r in merged}
+    leg(
+        "merge-share-id-fills-directory",
+        len(merged) == 2
+        and byn["alpha desk"]["charter"] == "from dir"
+        and byn["alpha desk"]["share_id"] == "realShare1"
+        and byn["gamma desk"]["share_id"] == "g1",
+        str(merged),
+    )
+
     ok = sum(1 for _, good, _ in legs if good)
     for name, good, detail in legs:
         print(
@@ -694,7 +804,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.selftest:
         return selftest()
 
-    bots = harvest_corpus()
+    directory = harvest_corpus()
+    shares = harvest_shares()
+    bots = merge_corpus(directory, shares)
     if not bots:
         print(
             "ERROR corpus empty — a failed fetch is not an empty ecosystem",
@@ -736,6 +848,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         "schema": "gb-usecases/1",
         "captured_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
         "corpus_repo": CORPUS[0],
+        "shares_repo": SHARES_REPO,
+        "directory_bots": len(directory),
+        "share_bots": len(shares),
         "bots": len(bots),
         "curated_links": len(links),
         "categories": cats.most_common(),
@@ -780,8 +895,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
     else:
         print(
-            f"usecases {out.name}: {len(bots)} Bot definitions, {len(links)} curated links, "
-            f"{len(integ)} distinct integrations"
+            f"usecases {out.name}: {len(bots)} Bots "
+            f"(botdirectory {len(directory)} ∪ shares {len(shares)}), "
+            f"{len(links)} curated links, {len(integ)} distinct integrations"
         )
         print(f"  approval language in {doc['approval_share']:.0%} of prompts")
         ct = doc["charter_text"]

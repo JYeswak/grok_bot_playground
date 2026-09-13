@@ -129,7 +129,6 @@ strips every escape.
 Then the four-command first hour:
 
 ```sh
-gb market refresh --corpus
 gb market bots
 gb templates deploy <id> --apply
 gb swarm founder-operator
