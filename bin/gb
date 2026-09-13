@@ -633,6 +633,7 @@ class MarketArgs:
     )
     corpus: bool = arg(help="refresh: also run the public usecases/ corpus refresh")
     urls: bool = arg(help="bots: dump curated URL rows (default: counts by section/host)")
+    full: bool = arg(help="bots: print every row (default: first 20)")
     json: bool = arg(help="machine-readable envelope on stdout")
     selftest: bool = arg(help="offline stamp fixtures")
 
@@ -4471,6 +4472,8 @@ def cmd_market(a: MarketArgs) -> int:
         argv.append("--corpus")
     if a.urls:
         argv.append("--urls")
+    if a.full:
+        argv.append("--full")
     if a.json:
         argv.append("--json")
     budget = 600 if a.action == "refresh" else 30

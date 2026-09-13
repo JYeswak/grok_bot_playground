@@ -26,6 +26,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from gbtypes import atomic_write_text  # noqa: E402
+from gblib import platform_support, unavailable  # noqa: E402
 
 # TRANSPORT IS A LIBRARY (gbrpc.py) since 2026-09-12. This used to dynamically import
 # bin/gb-pull-inventory.py by path to borrow SUPPORT/access_token/rpc — a library dependency
@@ -82,7 +83,17 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
-    token = _pull.access_token(_pull.SUPPORT)
+    plat = platform_support()
+    blocked = unavailable(plat, "credential_read")
+    if blocked is not None or plat.support_dir is None:
+        print(
+            "gb-market-snapshot: official catalog needs a signed-in Grok Bot "
+            "desktop on macOS. This machine cannot read that credential. "
+            "Public corpus: gb market refresh --corpus",
+            file=sys.stderr,
+        )
+        return 3
+    token = _pull.access_token(plat.support_dir)
     st_p, plugins = _pull.rpc(token, "ListMarketplacePlugins", {}, service=DASH)
     st_m, market = _pull.rpc(token, "ListPublicGrokBotMarketplaceListings", {})
     st_t, mine = _pull.rpc(token, "ListGrokBotTemplates", {})
