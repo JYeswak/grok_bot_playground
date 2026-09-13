@@ -2,7 +2,7 @@
  "schema": "gb-command-surface/1",
  "dispatcher": {
   "path": "bin/gb",
-  "sha256": "391d3beeadfc853d93a093db6cbe31e353c713931ca944911b557c1d25ab1384"
+  "sha256": "0bb06a73fdf1c5ee5748b55be2151e355153cee0417a0b8ba06bfe7cebdfdea5"
  },
  "command_count": 70,
  "row_order": "bin/gb COMMANDS insertion order",
@@ -4800,7 +4800,7 @@
       "name": "action",
       "kind": "positional",
       "tokens": [
-       "<roster|routines|send|rebuild|rollback>"
+       "<roster|routines|send|rebuild|rollback|delete>"
       ],
       "option_strings": [],
       "type": "str",
@@ -4810,10 +4810,24 @@
        "routines",
        "send",
        "rebuild",
-       "rollback"
+       "rollback",
+       "delete"
       ],
       "repeatable": false,
       "default": "roster"
+     },
+     {
+      "name": "names",
+      "kind": "positional",
+      "tokens": [
+       "<NAMES>"
+      ],
+      "option_strings": [],
+      "type": "Tuple[str, ...]",
+      "required": false,
+      "choices": [],
+      "repeatable": true,
+      "default": null
      },
      {
       "name": "bot",
@@ -4876,7 +4890,8 @@
       "required": false,
       "choices": [],
       "repeatable": false,
-      "default": null
+      "default": null,
+      "help_src": null
      },
      {
       "name": "only",
@@ -4974,7 +4989,8 @@
    "exit_family": "gb-exit-codes/1",
    "wave_owners": [
     "W6"
-   ]
+   ],
+   "help": "Talk to the live fleet: roster and routines from the SERVER, one message, or a named delete."
   },
   {
    "command": "corpus",

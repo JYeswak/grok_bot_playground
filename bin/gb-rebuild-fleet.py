@@ -146,23 +146,28 @@ def _alias(row: Dict[str, Any], *names: str) -> Any:
 
 
 def _read_roster(
-    read_rpc: Rpc, token: str, context: str
+    read_rpc: Rpc, token: str, context: str, *, emit: bool = True
 ) -> Tuple[Optional[List[Dict[str, Any]]], str]:
     """Read and strictly classify the authoritative server roster."""
+
+    def emit_event(event: str, **fields: Any) -> None:
+        if emit:
+            _emit(event, **fields)
+
     status, response = read_rpc(token, "ListGrokBotAgents", {})
     if status != 200:
         detail = f"http-{status}"
-        _emit("roster_read", context=context, classification="UNREADABLE", http=status)
+        emit_event("roster_read", context=context, classification="UNREADABLE", http=status)
         return None, detail
     if not isinstance(response, dict) or not isinstance(response.get("agents"), list):
-        _emit("roster_read", context=context, classification="MALFORMED", http=status)
+        emit_event("roster_read", context=context, classification="MALFORMED", http=status)
         return None, "response must contain an agents list"
 
     roster: List[Dict[str, Any]] = []
     seen_names, seen_ids, seen_uuids = set(), set(), set()
     for index, raw in enumerate(response["agents"]):
         if not isinstance(raw, dict):
-            _emit("roster_read", context=context, classification="MALFORMED", row=index)
+            emit_event("roster_read", context=context, classification="MALFORMED", row=index)
             return None, f"agents[{index}] is not an object"
         name = raw.get("name")
         agent_uuid = raw.get("agentId")
@@ -178,12 +183,12 @@ def _read_roster(
             or not agent_uuid
             or numeric_id <= 0
         ):
-            _emit("roster_read", context=context, classification="MALFORMED", row=index)
+            emit_event("roster_read", context=context, classification="MALFORMED", row=index)
             return None, f"agents[{index}] lacks name, numeric id, or UUID"
         # Name collisions are real (unshaped seed clones share "Template").
         # Authoritative identity is numeric id / UUID only.
         if numeric_id in seen_ids or agent_uuid in seen_uuids:
-            _emit("roster_read", context=context, classification="MALFORMED", row=index)
+            emit_event("roster_read", context=context, classification="MALFORMED", row=index)
             return None, f"agents[{index}] duplicates an authoritative identity"
         seen_names.add(name)
         seen_ids.add(numeric_id)
@@ -199,7 +204,7 @@ def _read_roster(
                 "avatar_color": _alias(raw, "avatarColor", "avatar_color"),
             }
         )
-    _emit(
+    emit_event(
         "roster_read",
         context=context,
         classification="AUTHORITATIVE",
@@ -355,7 +360,7 @@ def _mutate(
 
 
 def _automation_inventory(
-    read_rpc: Rpc, token: str, agent_uuid: str, context: str
+    read_rpc: Rpc, token: str, agent_uuid: str, context: str, *, emit: bool = True
 ) -> Dict[str, Any]:
     status, response = read_rpc(
         token, "ListGrokBotAgentAutomations", {"agent_id": agent_uuid}
@@ -389,15 +394,87 @@ def _automation_inventory(
                 "http": status,
                 "ids": ids,
             }
-    _emit(
-        "automation_residue",
-        context=context,
-        uuid=agent_uuid,
-        classification=result["state"],
-        http=result["http"],
-        automation_ids=result["ids"],
-    )
+    if emit:
+        _emit(
+            "automation_residue",
+            context=context,
+            uuid=agent_uuid,
+            classification=result["state"],
+            http=result["http"],
+            automation_ids=result["ids"],
+        )
     return result
+
+
+def delete_and_confirm(
+    *,
+    write_rpc: Rpc,
+    read_rpc: Rpc,
+    token: str,
+    numeric_id: Any,
+    agent_uuid: str,
+    emit: bool = True,
+    context: str = "delete",
+) -> Dict[str, Any]:
+    """The one DeleteGrokBotAgent write plus absence and residue readback.
+
+    `id` is always a JSON string. Name is not passed. A 200 with the Bot still
+    on the roster is STILL_PRESENT. Absence plus leftover automations is
+    ORPHAN_AUTOMATION_RESIDUE, not CLEAN.
+    """
+    status, response = write_rpc(
+        token, "DeleteGrokBotAgent", {"id": str(numeric_id)}
+    )
+    roster, roster_error = _read_roster(
+        read_rpc, token, f"{context}.absence", emit=emit
+    )
+    want = str(numeric_id)
+    matches = (
+        []
+        if roster is None
+        else [
+            agent
+            for agent in roster
+            if str(agent["numeric_id"]) == want
+            or (agent_uuid and agent["uuid"] == agent_uuid)
+        ]
+    )
+    absence = (
+        "CONFIRMED"
+        if roster is not None and not matches
+        else ("UNKNOWN" if roster is None else "STILL_PRESENT")
+    )
+    automation = (
+        _automation_inventory(
+            read_rpc, token, agent_uuid, context, emit=emit
+        )
+        if agent_uuid
+        else {"state": "UNKNOWN", "http": 0, "ids": []}
+    )
+    if status != 200:
+        verdict = "DELETE_FAILED"
+    elif absence == "STILL_PRESENT":
+        verdict = "STILL_PRESENT"
+    elif absence != "CONFIRMED":
+        verdict = "DELETE_FAILED"
+    elif automation["state"] == "RESIDUE":
+        verdict = "ORPHAN_AUTOMATION_RESIDUE"
+    elif automation["state"] == "ABSENT":
+        verdict = "DELETED"
+    else:
+        verdict = "DELETE_FAILED"
+    return {
+        "http": status,
+        "response": response,
+        "absence": absence,
+        "roster_error": roster_error or None,
+        "present_ids": [agent["numeric_id"] for agent in matches],
+        "automation_state": automation["state"],
+        "automation_http": automation["http"],
+        "automation_ids": automation["ids"],
+        "verdict": verdict,
+        "clean": verdict == "DELETED",
+    }
 
 
 def _delete_and_check(
@@ -439,32 +516,38 @@ def _delete_and_check(
         row["state"] = "DELETE_REPLIED" if status == 200 else "DELETE_FAILED"
         return {"numeric_id": numeric_id, "uuid": agent_uuid or None}
 
-    status, _response, request_id = _mutate(
-        action=action,
-        method="DeleteGrokBotAgent",
-        body={"id": str(rpc_id)},
-        bot_name=str(row.get("name") or "?"),
-        manifest=manifest,
-        path=path,
-        clock=clock,
-        id_factory=id_factory,
-        inject=inject,
-        write_rpc=write_rpc,
+    request_id = ""
+
+    def journaled_write(
+        write_token: str, method: str, body: Dict[str, Any]
+    ) -> Tuple[int, Any]:
+        nonlocal request_id
+        status, response, request_id = _mutate(
+            action=action,
+            method=method,
+            body=body,
+            bot_name=str(row.get("name") or "?"),
+            manifest=manifest,
+            path=path,
+            clock=clock,
+            id_factory=id_factory,
+            inject=inject,
+            write_rpc=write_rpc,
+            token=write_token,
+            capture=capture,
+        )
+        return status, response
+
+    outcome = delete_and_confirm(
+        write_rpc=journaled_write,
+        read_rpc=read_rpc,
         token=token,
-        capture=capture,
+        numeric_id=rpc_id,
+        agent_uuid=agent_uuid,
+        emit=True,
+        context=action,
     )
-    roster, roster_error = _read_roster(read_rpc, token, f"{action}.absence")
-    matches = (
-        []
-        if roster is None
-        else [
-            agent
-            for agent in roster
-            if agent["numeric_id"] == numeric_id
-            or (agent_uuid and agent["uuid"] == agent_uuid)
-        ]
-    )
-    absence = roster is not None and not matches
+    status = int(outcome["http"])
     deletion = {
         "action": action,
         "name": row.get("name"),
@@ -472,35 +555,28 @@ def _delete_and_check(
         "uuid": agent_uuid or None,
         "request_id": request_id,
         "delete_http": status,
-        "absence": "CONFIRMED"
-        if absence
-        else ("UNKNOWN" if roster is None else "STILL_PRESENT"),
-        "roster_error": roster_error or None,
-        "present_ids": [agent["numeric_id"] for agent in matches],
+        "absence": outcome["absence"],
+        "roster_error": outcome["roster_error"],
+        "present_ids": outcome["present_ids"],
     }
     manifest.setdefault("deletions", []).append(deletion)
     _persist(manifest, path, clock, "delete.absence_readback", **deletion)
     _emit("delete_absence", **deletion)
 
-    automation = (
-        _automation_inventory(read_rpc, token, agent_uuid, action)
-        if agent_uuid
-        else {"state": "UNKNOWN", "http": 0, "ids": []}
-    )
     automation_receipt = {
         "action": action,
         "name": row.get("name"),
         "uuid": agent_uuid or None,
-        "classification": automation["state"],
-        "http": automation["http"],
-        "automation_ids": automation["ids"],
+        "classification": outcome["automation_state"],
+        "http": outcome["automation_http"],
+        "automation_ids": outcome["automation_ids"],
     }
     manifest.setdefault("automation_checks", []).append(automation_receipt)
     _persist(manifest, path, clock, "delete.automation_readback", **automation_receipt)
-    clean = status == 200 and absence and automation["state"] == "ABSENT"
+    clean = bool(outcome["clean"])
     if clean:
         row["state"] = "DELETED_CONFIRMED"
-    elif automation["state"] == "RESIDUE":
+    elif outcome["verdict"] == "ORPHAN_AUTOMATION_RESIDUE":
         row["state"] = "ORPHAN_AUTOMATION_RESIDUE"
     else:
         row["state"] = "DELETE_PARTIAL_UNKNOWN"
@@ -1480,6 +1556,39 @@ def selftest() -> int:
             rc != 0
             and "title" in json.loads(path.read_text())["readbacks"][-1]["mismatches"],
             "fresh-shaped-field-mismatch-fails",
+        )
+
+        # The shared delete helper must stringify id. A JSON number is a known-bad.
+        writes: List[Dict[str, Any]] = []
+
+        def spy_write(
+            _token: str, method: str, body: Dict[str, Any]
+        ) -> Tuple[int, Any]:
+            writes.append(body)
+            check(method == "DeleteGrokBotAgent", "delete-and-confirm-method")
+            return 200, {}
+
+        def spy_read(
+            _token: str, method: str, _body: Dict[str, Any]
+        ) -> Tuple[int, Any]:
+            if method == "ListGrokBotAgents":
+                return 200, {"agents": []}
+            return 200, {"automations": []}
+
+        helper = delete_and_confirm(
+            write_rpc=spy_write,
+            read_rpc=spy_read,
+            token="offline",
+            numeric_id=101,
+            agent_uuid="00000000-0000-0000-0000-000000000101",
+            emit=False,
+        )
+        check(
+            writes
+            and writes[0].get("id") == "101"
+            and isinstance(writes[0].get("id"), str)
+            and helper["verdict"] == "DELETED",
+            "delete-and-confirm-string-id",
         )
 
     for failure in failures:
