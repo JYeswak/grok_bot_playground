@@ -655,7 +655,7 @@ class MarketArgs:
         help="bots/new: stamps only; jobs/deploy/pack: valid catalog cache only"
     )
     apply: bool = arg(
-        help="deploy/pack: refused — open the SHARE_URL (does not create Bots)"
+        help="deploy/pack: print the grokbot:// install URL (does not call CreateGrokBot)"
     )
     json: bool = arg(help="machine-readable envelope on stdout")
     selftest: bool = arg(help="offline stamp fixtures")
