@@ -36,6 +36,8 @@ ON `delete` BEING A WRITE. Rollback already deletes through `DeleteGrokBotAgent`
 id and the dual `--apply --yes` gate. Hire-on-demand had no inverse. This verb is that inverse:
 named Bots only, never `--all`, never the rest of the fleet. Routines are NOT deleted by the
 RPC (measured 2026-09-12); leftover automations print ORPHAN_AUTOMATION_RESIDUE, not CLEAN.
+An unread routine list after confirmed absence prints DELETED plus `automation unread`,
+not DELETE_FAILED — the Bot left; the check did not.
 """
 
 from __future__ import annotations
@@ -354,6 +356,11 @@ def delete_bots(
         lines.append(
             f"  {verdict} {bot.name} numeric_id={bot.numeric_id} uuid={bot.uuid}"
         )
+        if (
+            verdict == "DELETED"
+            and str(outcome.get("automation_state") or "") == "UNKNOWN"
+        ):
+            lines.append("  automation unread")
         if verdict != "DELETED":
             failed = True
     return (EXIT_FINDINGS if failed else EXIT_OK), lines
@@ -460,6 +467,13 @@ def selftest() -> int:
         if method == "ListGrokBotAgents":
             return 200, {"agents": []}
         return 200, {"automations": [{"automationId": "routine-7"}]}
+
+    def _read_absent_unread(
+        _token: str, method: str, _body: Dict[str, Any]
+    ) -> Tuple[int, Any]:
+        if method == "ListGrokBotAgents":
+            return 200, {"agents": []}
+        return 404, "not found"
 
     def _confirm(
         *,
@@ -612,6 +626,31 @@ def selftest() -> int:
     check(
         not any(line.strip().startswith("DELETED") for line in out),
         "orphan residue printed DELETED (lied CLEAN)",
+    )
+
+    # 9. 200 + absent + automations UNKNOWN (non-200) = DELETED, not FAILED
+    spy = _WriteSpy()
+    rc, out = delete_bots(
+        ["Optima"],
+        twins,
+        apply=True,
+        yes=True,
+        write_rpc=spy,
+        read_rpc=_read_absent_unread,
+        delete_and_confirm=_confirm,
+    )
+    check(rc == 0, "unread automation after confirmed absence exited non-zero")
+    check(
+        any("DELETED" in line for line in out),
+        "unread automation after confirmed absence did not print DELETED",
+    )
+    check(
+        not any("DELETE_FAILED" in line for line in out),
+        "unread automation after confirmed absence printed DELETE_FAILED",
+    )
+    check(
+        any("automation unread" in line for line in out),
+        "unread automation after confirmed absence did not say unread",
     )
 
     for f in fails:

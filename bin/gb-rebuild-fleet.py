@@ -418,9 +418,14 @@ def delete_and_confirm(
 ) -> Dict[str, Any]:
     """The one DeleteGrokBotAgent write plus absence and residue readback.
 
-    `id` is always a JSON string. Name is not passed. A 200 with the Bot still
-    on the roster is STILL_PRESENT. Absence plus leftover automations is
-    ORPHAN_AUTOMATION_RESIDUE, not CLEAN.
+    `id` is always a JSON string. Name is not passed. Verdicts:
+
+    - write HTTP != 200, or absence not CONFIRMED (still on roster / roster
+      unread) → DELETE_FAILED or STILL_PRESENT
+    - CONFIRMED absence + automations ABSENT → DELETED
+    - CONFIRMED absence + automations RESIDUE → ORPHAN_AUTOMATION_RESIDUE
+    - CONFIRMED absence + automations UNKNOWN → DELETED (routine unread; not
+      a missed delete, not residue, not FAILED)
     """
     status, response = write_rpc(
         token, "DeleteGrokBotAgent", {"id": str(numeric_id)}
@@ -459,10 +464,10 @@ def delete_and_confirm(
         verdict = "DELETE_FAILED"
     elif automation["state"] == "RESIDUE":
         verdict = "ORPHAN_AUTOMATION_RESIDUE"
-    elif automation["state"] == "ABSENT":
-        verdict = "DELETED"
     else:
-        verdict = "DELETE_FAILED"
+        # ABSENT or UNKNOWN: the Bot is gone. An unread routine list is not a
+        # missed delete and is not residue.
+        verdict = "DELETED"
     return {
         "http": status,
         "response": response,
@@ -1044,16 +1049,16 @@ def rollback_fleet(
                 "automation_ids": automation["ids"],
             }
             manifest.setdefault("automation_checks", []).append(receipt)
-            row["state"] = (
-                "ALREADY_ABSENT"
-                if automation["state"] == "ABSENT"
-                else "ORPHAN_AUTOMATION_RESIDUE"
-            )
+            if automation["state"] == "RESIDUE":
+                row["state"] = "ORPHAN_AUTOMATION_RESIDUE"
+                failed = True
+            else:
+                # ABSENT or UNKNOWN: the Bot is already gone. Unread is not
+                # leftover residue.
+                row["state"] = "ALREADY_ABSENT"
             _persist(
                 manifest, manifest_path, clock, "rollback.already_absent", **receipt
             )
-            if automation["state"] != "ABSENT":
-                failed = True
             continue
 
         target = matches[0]
@@ -1589,6 +1594,95 @@ def selftest() -> int:
             and isinstance(writes[0].get("id"), str)
             and helper["verdict"] == "DELETED",
             "delete-and-confirm-string-id",
+        )
+
+        # Confirmed absence plus an unread automation list is DELETED, not FAILED.
+        def unread_write(
+            _token: str, _method: str, _body: Dict[str, Any]
+        ) -> Tuple[int, Any]:
+            return 200, {}
+
+        def unread_read(
+            _token: str, method: str, _body: Dict[str, Any]
+        ) -> Tuple[int, Any]:
+            if method == "ListGrokBotAgents":
+                return 200, {"agents": []}
+            return 404, "not found"
+
+        unread = delete_and_confirm(
+            write_rpc=unread_write,
+            read_rpc=unread_read,
+            token="offline",
+            numeric_id=101,
+            agent_uuid="00000000-0000-0000-0000-000000000101",
+            emit=False,
+        )
+        check(
+            unread["verdict"] == "DELETED"
+            and unread["absence"] == "CONFIRMED"
+            and unread["automation_state"] == "UNKNOWN"
+            and unread["clean"] is True,
+            "delete-and-confirm-unread-automation-is-deleted",
+        )
+
+        # Rollback: Bot gone, automations unread → ROLLED_BACK, not PARTIAL.
+        path = rebuild / "delete-unread-automation.json"
+        doc = manifest_doc(path, root)
+        rpc = ScriptedRpc(
+            {
+                "ListGrokBotAgents": [
+                    (200, {"agents": [live]}),
+                    (200, {"agents": []}),
+                    (200, {"agents": []}),
+                ],
+                "ListGrokBotAgentAutomations": [(404, "not found")],
+            },
+            {"DeleteGrokBotAgent": [(200, {})]},
+        )
+        rc = rollback_fleet(
+            manifest=doc,
+            manifest_path=path,
+            read_rpc=rpc.read,
+            write_rpc=rpc.write,
+            token="offline",
+            clock=clock,
+            id_factory=ids(),
+        )
+        unread_doc = json.loads(path.read_text())
+        check(
+            rc == 0
+            and unread_doc["status"] == "ROLLED_BACK"
+            and unread_doc["created"][0]["state"] == "DELETED_CONFIRMED"
+            and unread_doc["automation_checks"][-1]["classification"] == "UNKNOWN",
+            "confirmed-absence-unread-automation-is-rolled-back",
+        )
+
+        # Already absent + unread automations: Bot is gone, not orphan residue.
+        path = rebuild / "already-absent-unread.json"
+        doc = manifest_doc(path, root)
+        rpc = ScriptedRpc(
+            {
+                "ListGrokBotAgents": [(200, {"agents": []})],
+                "ListGrokBotAgentAutomations": [(503, "down")],
+            },
+            {},
+        )
+        rc = rollback_fleet(
+            manifest=doc,
+            manifest_path=path,
+            read_rpc=rpc.read,
+            write_rpc=rpc.write,
+            token="offline",
+            clock=clock,
+            id_factory=ids(),
+        )
+        already_doc = json.loads(path.read_text())
+        check(
+            rc == 0
+            and already_doc["status"] == "ROLLED_BACK"
+            and already_doc["created"][0]["state"] == "ALREADY_ABSENT"
+            and already_doc["automation_checks"][-1]["classification"] == "UNKNOWN",
+            "already-absent-unread-automation-is-not-orphan",
         )
 
     for failure in failures:
