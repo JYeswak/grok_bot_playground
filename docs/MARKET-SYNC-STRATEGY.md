@@ -22,7 +22,7 @@ Engine is stock sqlite3 (Python stdlib). fsqlite is not involved.
 
 ## Sync Triggers
 
-- On command: `gb market bots` (default live pull), `gb market jobs` (same live pull, then one Thompson draw per job), `gb market pack founder|engineer|seller` (same live pull, then those draws filtered to an explicit job list), `gb market deploy <share_id> [...]` (cards + official share URL), `gb stack founder|engineer|seller` (hire plan over that pack), and `gb market refresh --corpus`. `gb market keep|skip|ban <share_id>` write the bandit store only. They do not import, deploy, or invent a share_id. `gb stack --apply` is a hire gate, not a catalog write.
+- On command: `gb market bots` (default live pull), `gb market jobs` (same live pull, then one Thompson draw per job), `gb market pack founder|engineer|seller` (same live pull, then those draws filtered to an explicit job list), `gb market deploy <share_id> [...]` (cards + official share URL), `gb market hot [N]` (newest X harvest share-link leaderboard + catalog charter), `gb stack founder|engineer|seller` (hire plan over that pack), and `gb market refresh --corpus`. `gb market keep|skip|ban <share_id>` write the bandit store only. They do not import, deploy, or invent a share_id. `gb stack --apply` is a hire gate, not a catalog write. `gb market hot --apply` is still a plan card.
 - On exit: none.
 - Timer/throttle: none required. `--offline` reads cache only. `gb market jobs --offline`, `gb market pack --offline`, and `gb market deploy --offline` refuse if the catalog `integrity_check` or `user_version` fail. A planted-bad bandit store is also refused. A missing bandit store is a cold start (explore), not a refuse.
 - One-way: catalog → sqlite → optional JSON stamp. Never sqlite → catalog. Never JSON → sqlite unless `--offline` and sqlite missing (rebuild cache from newest stamp, then integrity_check). Never catalog rebuild → bandit store.
@@ -114,6 +114,16 @@ Live. A persona-shaped filter over the same Thompson draws as `gb market jobs`, 
 - Human: `PERSONA <id>`, then one deploy card per drawn job, then blocked jobs.
 - JSON schema `gb-market-pack/2`: `{schema, persona, jobs, selector, bandit_user_version, rows, blocked}`. Rows include `install_url` next to `share_url`. Selector stays `method=thompson`, `prior=beta(1,1)`, `candidate_cold=8`, no weights.
 - `--apply` prints the cards including INSTALL lines and exits 0. It does not create via RPC (not CreateGrokBot, not templates, not `gb swarm`). The user taps the INSTALL line.
+
+## Harvest leaderboard (`gb market hot`)
+
+Live as a plan card. Top share-linked Bots from the newest `x/<stamp>.json` harvest, joined to the catalog by `share_id` only. Not public install counts. Not a hire. Not `gb stack --apply`.
+
+- `gb market hot [N=10] [--json] [--offline]`. Missing harvest is environment (exit 3): run `gb x collect`. Do not invent ranks.
+- Score: unique authored X posts in that harvest whose text/urls contain this 21-char share link (dedupe `tweet_id`). Likes are the sum of harvest likes on those posts, labeled harvest likes, not installs. Distinct authors from those posts. One source post URL.
+- Charter: catalog charter for that `share_id` (sqlite cache, else usecases stamp). Else the builder harvest line, labeled harvest, never invented. Else UNREAD. Same name + different `share_id` is two rows (Grocery Bot collision).
+- INSTALL `grokbot://app/v1/bot-template?id=` only for a 21-char id. `--apply` is not a hire.
+- JSON schema `gb-market-hot/1`: `{schema, as_of, harvest_path, signal, unread_markets[], rows[]}`. Signal says harvest proxy, not public install counts. If America/Denver today share mentions are 0, say so — do not fake a today leaderboard.
 
 ## Team hire plan (`gb stack`)
 

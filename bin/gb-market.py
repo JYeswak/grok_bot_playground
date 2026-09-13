@@ -11,6 +11,7 @@ Does not read templates/. Does not invent share ids.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import pathlib
 import re
@@ -20,6 +21,7 @@ import tempfile
 from collections import Counter
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from gblib import dated_children  # noqa: E402
@@ -32,10 +34,17 @@ JOBS_SCHEMA = "gb-market-jobs/4"
 VERDICT_SCHEMA = "gb-market-verdict/1"
 DEPLOY_SCHEMA = "gb-market-deploy/2"
 PACK_SCHEMA = "gb-market-pack/2"
+HOT_SCHEMA = "gb-market-hot/1"
 SHARE_HOST = "https://x.ai/bot/"
 # Same family as plugin add: grokbot://app/v1/plugin/add?id=
 INSTALL_URL_PREFIX = "grokbot://app/v1/bot-template?id="
 BOT_TEMPLATE_SHARE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{21}$")
+SHARE_LINK_RE = re.compile(
+    r"(?:https?://(?:www\.)?x\.ai/bot/|grokbot://app/v1/bot-template\?id=)"
+    r"([A-Za-z0-9_-]{21})"
+)
+DEFAULT_HOT_N = 10
+DENVER = ZoneInfo("America/Denver")
 PREVIEW_ROWS = 20
 EXIT_OK, EXIT_USAGE, EXIT_ENVIRONMENT, EXIT_REFUSED = 0, 2, 3, 5
 SOURCES = ("official", "corpus", "both")
@@ -689,6 +698,303 @@ def install_url(share_id: str) -> str:
     if BOT_TEMPLATE_SHARE_ID_PATTERN.fullmatch(sid) is None:
         raise ValueError("gb market: refuse — share_id is not a 21-char install id")
     return INSTALL_URL_PREFIX + sid
+
+
+def share_ids_from_text(text: Any) -> List[str]:
+    """21-char share ids observed in a harvest string. Never invented."""
+    found = SHARE_LINK_RE.findall(str(text or ""))
+    return [sid for sid in found if BOT_TEMPLATE_SHARE_ID_PATTERN.fullmatch(sid)]
+
+
+def newest_harvest(root: pathlib.Path) -> Optional[pathlib.Path]:
+    rows = dated_children(root / "x", ".json")
+    return rows[-1] if rows else None
+
+
+def parse_published_at(raw: Any) -> Optional[dt.datetime]:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        when = dt.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=dt.timezone.utc)
+    return when
+
+
+def denver_day(when: Optional[dt.datetime]) -> Optional[dt.date]:
+    if when is None:
+        return None
+    return when.astimezone(DENVER).date()
+
+
+def parse_hot_n(tokens: Sequence[str]) -> Tuple[Optional[int], Optional[str]]:
+    if not tokens:
+        return DEFAULT_HOT_N, None
+    if len(tokens) > 1:
+        return None, "gb market hot: refuse — N is one optional integer"
+    raw = str(tokens[0] or "").strip()
+    if not raw.isdigit() or int(raw) < 1:
+        return None, "gb market hot: refuse — N must be a positive integer"
+    return int(raw), None
+
+
+def catalog_index_by_share_id(root: pathlib.Path) -> Dict[str, dict]:
+    """Charter/name by share_id only. Same name + different id stays two rows."""
+    out: Dict[str, dict] = {}
+    _newest, stamp, _prev, _prev_doc = stamp_pair(root, "usecases")
+    for row in corpus_rows(stamp):
+        sid = official_share_id(row)
+        if sid and BOT_TEMPLATE_SHARE_ID_PATTERN.fullmatch(str(sid)) and sid not in out:
+            out[str(sid)] = row
+    cached, _links = cache_corpus(root)
+    if cached:
+        for row in cached:
+            sid = official_share_id(row)
+            if sid and BOT_TEMPLATE_SHARE_ID_PATTERN.fullmatch(str(sid)):
+                out[str(sid)] = row
+    return out
+
+
+def harvest_mentions(doc: dict) -> Dict[str, dict]:
+    """Unique authored posts per 21-char share link. Dedupe tweet_id."""
+    mentions: Dict[str, dict] = {}
+
+    def bucket(sid: str) -> dict:
+        row = mentions.get(sid)
+        if row is None:
+            row = {
+                "authors": set(),
+                "harvest_line": "",
+                "harvest_name": "",
+                "likes_by_tweet": {},
+                "share_id": sid,
+                "source_url": "",
+                "tweet_ids": set(),
+            }
+            mentions[sid] = row
+        return row
+
+    for row in doc.get("rows") or []:
+        if not isinstance(row, dict):
+            continue
+        kind = str(row.get("kind") or "")
+        text_blob = " ".join(
+            [
+                str(row.get("url") or ""),
+                str(row.get("title") or ""),
+                str(row.get("summary") or ""),
+            ]
+        )
+        sig = row.get("signals") if isinstance(row.get("signals"), dict) else {}
+        urls = sig.get("urls") if isinstance(sig.get("urls"), list) else []
+        for url in urls:
+            text_blob += " " + str(url or "")
+        sids = share_ids_from_text(text_blob)
+        if not sids:
+            continue
+        title = " ".join(str(row.get("title") or "").split())
+        summary = " ".join(str(row.get("summary") or "").split())
+        if kind == "x-link":
+            for sid in sids:
+                got = bucket(sid)
+                if title and title != sid and not got["harvest_name"]:
+                    got["harvest_name"] = title
+                if summary and not got["harvest_line"]:
+                    got["harvest_line"] = summary
+                elif title and title != sid and not got["harvest_line"]:
+                    got["harvest_line"] = title
+            continue
+        if kind != "x-post":
+            continue
+        tweet_id = str(sig.get("tweet_id") or "").strip()
+        if not tweet_id:
+            continue
+        author = str(sig.get("author") or "").strip()
+        try:
+            likes = int(sig.get("likes") or 0)
+        except (TypeError, ValueError):
+            likes = 0
+        source = str(row.get("url") or "")
+        published = parse_published_at(row.get("published_at"))
+        for sid in sids:
+            got = bucket(sid)
+            if tweet_id not in got["tweet_ids"]:
+                got["tweet_ids"].add(tweet_id)
+                got["likes_by_tweet"][tweet_id] = likes
+                if author:
+                    got["authors"].add(author)
+                if source and not got["source_url"]:
+                    got["source_url"] = source
+                if published is not None:
+                    days = got.setdefault("denver_days", set())
+                    day = denver_day(published)
+                    if day is not None:
+                        days.add((tweet_id, day))
+            if title and title != sid and not got["harvest_name"]:
+                got["harvest_name"] = title
+            if summary and not got["harvest_line"]:
+                got["harvest_line"] = summary
+    return mentions
+
+
+def build_hot_payload(
+    doc: dict,
+    harvest_path: pathlib.Path,
+    catalog: Dict[str, dict],
+    n: int,
+    *,
+    now: Optional[dt.datetime] = None,
+) -> dict:
+    mentions = harvest_mentions(doc)
+    today = denver_day((now or dt.datetime.now(dt.timezone.utc)))
+    today_tweets = set()
+    rows: List[dict] = []
+    unread: List[dict] = []
+    for sid, mention in mentions.items():
+        catalog_row = catalog.get(sid)
+        catalog_charter = (
+            str((catalog_row or {}).get("charter") or "").strip() if catalog_row else ""
+        )
+        catalog_name = (
+            str((catalog_row or {}).get("name") or "").strip() if catalog_row else ""
+        )
+        harvest_line = str(mention.get("harvest_line") or "").strip()
+        harvest_name = str(mention.get("harvest_name") or "").strip()
+        if catalog_charter:
+            charter, charter_source = catalog_charter, "catalog"
+        elif harvest_line:
+            charter, charter_source = harvest_line, "harvest"
+        else:
+            charter, charter_source = "UNREAD", "unread"
+        name = catalog_name or harvest_name or "UNREAD"
+        if charter_source == "unread":
+            unread.append(
+                {
+                    "share_id": sid,
+                    "why": "no catalog charter and no harvest line",
+                }
+            )
+        posts = len(mention.get("tweet_ids") or ())
+        likes = sum(int(v) for v in (mention.get("likes_by_tweet") or {}).values())
+        authors = len(mention.get("authors") or ())
+        try:
+            inst = install_url(sid)
+        except ValueError:
+            inst = None
+        rows.append(
+            {
+                "authors": authors,
+                "charter": charter,
+                "charter_source": charter_source,
+                "install_url": inst,
+                "likes": likes,
+                "name": name,
+                "posts": posts,
+                "share_id": sid,
+                "source_url": mention.get("source_url") or None,
+            }
+        )
+        for tweet_id, day in mention.get("denver_days") or ():
+            if today is not None and day == today:
+                today_tweets.add(tweet_id)
+    rows.sort(
+        key=lambda r: (
+            -int(r.get("posts") or 0),
+            -int(r.get("likes") or 0),
+            -int(r.get("authors") or 0),
+            str(r.get("share_id") or ""),
+        )
+    )
+    ranked = []
+    for i, row in enumerate(rows[: max(0, n)], 1):
+        item = dict(row)
+        item["rank"] = i
+        ranked.append(item)
+    today_n = len(today_tweets)
+    if today_n == 0:
+        today_note = (
+            "America/Denver today share mentions: 0 — not a today leaderboard"
+        )
+    else:
+        today_note = "America/Denver today share mentions: %d" % today_n
+    signal = (
+        "harvest proxy: unique authored X posts in the newest x harvest that "
+        "contain this share link — not public install counts. %s." % today_note
+    )
+    return {
+        "as_of": doc.get("captured_at") or None,
+        "harvest_path": str(harvest_path),
+        "rows": ranked,
+        "schema": HOT_SCHEMA,
+        "signal": signal,
+        "unread_markets": unread,
+    }
+
+
+def print_hot_human(payload: dict) -> None:
+    emit("HOT  %s" % (payload.get("signal") or "harvest proxy"))
+    emit("     plan card only; hire stays gb stack … --apply")
+    for row in payload.get("rows") or []:
+        emit(
+            "  %s  %s  posts=%s likes=%s authors=%s"
+            % (
+                row.get("rank"),
+                row.get("name") or "UNREAD",
+                row.get("posts") or 0,
+                row.get("likes") or 0,
+                row.get("authors") or 0,
+            )
+        )
+        charter = str(row.get("charter") or "UNREAD")
+        if row.get("charter_source") == "harvest":
+            emit("     harvest  %s" % charter)
+        else:
+            emit("     %s" % charter)
+        sid = str(row.get("share_id") or "")
+        inst = row.get("install_url") or ""
+        if inst:
+            emit("     %s  INSTALL %s" % (sid, inst))
+        else:
+            emit("     %s" % sid)
+        source = row.get("source_url") or ""
+        if source:
+            emit("     %s" % source)
+
+
+def cmd_hot(
+    root: pathlib.Path,
+    n: int,
+    as_json: bool,
+    offline: bool = False,
+    apply: bool = False,
+) -> int:
+    del apply  # plan card only; hire stays gb stack --apply
+    path = newest_harvest(root)
+    if path is None:
+        emit("gb market hot: missing X harvest — run: gb x collect")
+        emit("  expected %s/x/<stamp>.json" % root)
+        return EXIT_ENVIRONMENT
+    doc = load_doc(path)
+    if not isinstance(doc, dict) or not isinstance(doc.get("rows"), list):
+        emit(
+            "gb market hot: refuse — unreadable harvest %s — run: gb x collect"
+            % path
+        )
+        return EXIT_ENVIRONMENT
+    if not offline:
+        cmd_refresh(True, quiet=True)
+    catalog = catalog_index_by_share_id(root)
+    payload = build_hot_payload(doc, path, catalog, n)
+    if as_json:
+        emit(dumps(payload))
+        return EXIT_OK
+    print_hot_human(payload)
+    return EXIT_OK
 
 
 def catalog_share_ids_with_prefix(bots: Sequence[dict], prefix: str) -> List[str]:
@@ -2170,6 +2476,252 @@ def selftest() -> int:
             str(sales_payload)[:200] + sales[1][:200],
         )
 
+        # --- gb market hot: harvest proxy leaderboard (not a hire) -------------------------
+        hot_root = root / "hot-cache"
+        (hot_root / "usecases").mkdir(parents=True)
+        (hot_root / "x").mkdir(parents=True)
+        optima_sid = "-E8sQr0Yrd_oSQlTaAzWy"
+        grocery_a = "GroceryBotShareId_AAA"
+        grocery_b = "GroceryBotShareId_BBB"
+        harvest_sid = "HarvestOnlyShareId_01"
+        unread_sid = "UnreadMarketShareId01"
+        optima_charter = "Deletes leftover old rules leftover from the last pack."
+
+        def _xpost(
+            tweet_id: str,
+            share_id: str,
+            *,
+            author: str,
+            likes: int,
+            summary: str = "",
+            title: str = "",
+            published_at: str = "2026-09-10T18:00:00Z",
+            extra_urls: Optional[List[str]] = None,
+        ) -> dict:
+            share = "https://x.ai/bot/%s" % share_id
+            urls = [share] + list(extra_urls or [])
+            return {
+                "id": "post-%s" % tweet_id,
+                "kind": "x-post",
+                "url": "https://x.com/i/status/%s" % tweet_id,
+                "title": title or summary or share_id,
+                "summary": summary,
+                "published_at": published_at,
+                "signals": {
+                    "tweet_id": tweet_id,
+                    "author": author,
+                    "author_id": author,
+                    "likes": likes,
+                    "urls": urls,
+                },
+            }
+
+        harvest_rows = [
+            _xpost("1001", optima_sid, author="ada", likes=1, summary=optima_charter),
+            _xpost("1002", optima_sid, author="ada", likes=0, summary=optima_charter),
+            _xpost("1003", optima_sid, author="ada", likes=0, summary=optima_charter),
+            _xpost("1004", optima_sid, author="ada", likes=0, summary=optima_charter),
+            # Same tweet_id twice must not inflate Optima's score.
+            _xpost("1004", optima_sid, author="ada", likes=0, summary=optima_charter),
+            _xpost("2001", grocery_a, author="bev", likes=2, summary="AAA grocery list"),
+            _xpost("2002", grocery_a, author="cal", likes=0, summary="AAA grocery list"),
+            _xpost("2003", grocery_a, author="bev", likes=1, summary="AAA grocery list"),
+            _xpost("3001", grocery_b, author="dee", likes=2, summary="BBB grocery list"),
+            _xpost(
+                "4001",
+                harvest_sid,
+                author="eli",
+                likes=3,
+                summary="weekly meal plan from receipts",
+                title="Meal Plan Bot",
+            ),
+            _xpost(
+                "4002",
+                harvest_sid,
+                author="eli",
+                likes=1,
+                summary="weekly meal plan from receipts",
+            ),
+            _xpost("5001", unread_sid, author="fin", likes=0, summary="", title=""),
+        ]
+        harvest_doc = {
+            "schema": "gb-x/1",
+            "captured_at": "2026-09-10T18:00:00Z",
+            "rows": harvest_rows,
+        }
+        harvest_path = hot_root / "x" / "2026-09-10T1800.json"
+        harvest_path.write_text(json.dumps(harvest_doc) + "\n")
+        mdb.rebuild(
+            hot_root / "usecases" / mdb.DB_NAME,
+            [
+                mdb.canonicalize_row(
+                    {
+                        "name": "Optima",
+                        "category": "Ops",
+                        "share_id": optima_sid,
+                        "from_shares": True,
+                        "origin": "shares",
+                        "charter": optima_charter,
+                    }
+                ),
+                mdb.canonicalize_row(
+                    {
+                        "name": "Grocery Bot",
+                        "category": "Personal",
+                        "share_id": grocery_a,
+                        "from_shares": True,
+                        "origin": "shares",
+                        "charter": "AAA grocery list",
+                    }
+                ),
+            ],
+            [],
+        )
+        # Same name, different share_id — sqlite unique-keys name_key, so the
+        # collision lives on the usecases stamp. Join must be by share_id.
+        (hot_root / "usecases" / "2026-09-11T0600.json").write_text(
+            json.dumps(
+                {
+                    "schema": "gb-usecases/1",
+                    "rows": [
+                        {
+                            "name": "Grocery Bot",
+                            "category": "Personal",
+                            "share_id": grocery_b,
+                            "charter": "BBB grocery list",
+                            "source": "https://x.com/dee/status/3001",
+                        }
+                    ],
+                    "links": [],
+                }
+            )
+            + "\n"
+        )
+        hot_cli = _capture(
+            lambda: body(["hot", "--offline", "--json", "--root", str(hot_root)])
+        )
+        hot_payload = (
+            json.loads(hot_cli[1]) if hot_cli[1].strip().startswith("{") else {}
+        )
+        hot_rows = list(hot_payload.get("rows") or [])
+        hot_sids = [r.get("share_id") for r in hot_rows]
+        check(
+            "hot-json-schema",
+            hot_cli[0] == 0
+            and HOT_SCHEMA == "gb-market-hot/1"
+            and hot_payload.get("schema") == HOT_SCHEMA
+            and set(hot_payload) >= {
+                "as_of",
+                "harvest_path",
+                "rows",
+                "schema",
+                "signal",
+                "unread_markets",
+            },
+            str(hot_payload)[:400],
+        )
+        check(
+            "hot-rank-order-unique-posts",
+            hot_cli[0] == 0
+            and [r.get("share_id") for r in hot_rows[:3]]
+            == [optima_sid, grocery_a, harvest_sid]
+            and hot_rows[0].get("posts") == 4
+            and hot_rows[0].get("likes") == 1
+            and hot_rows[0].get("authors") == 1
+            and hot_rows[0].get("name") == "Optima"
+            and hot_rows[0].get("charter") == optima_charter,
+            str([ (r.get("rank"), r.get("name"), r.get("share_id"), r.get("posts")) for r in hot_rows ]),
+        )
+        grocery_hits = [r for r in hot_rows if r.get("name") == "Grocery Bot"]
+        check(
+            "hot-same-name-different-share-not-merged",
+            len(grocery_hits) == 2
+            and {r.get("share_id") for r in grocery_hits} == {grocery_a, grocery_b}
+            and {r.get("charter") for r in grocery_hits}
+            == {"AAA grocery list", "BBB grocery list"}
+            and grocery_a in hot_sids
+            and grocery_b in hot_sids,
+            str([(r.get("name"), r.get("share_id"), r.get("posts")) for r in grocery_hits]),
+        )
+        harvest_row = next((r for r in hot_rows if r.get("share_id") == harvest_sid), {})
+        unread = list(hot_payload.get("unread_markets") or [])
+        unread_ids = {
+            u.get("share_id") if isinstance(u, dict) else u for u in unread
+        }
+        check(
+            "hot-harvest-charter-labeled-not-invented",
+            harvest_row.get("charter_source") == "harvest"
+            and "weekly meal plan from receipts" in str(harvest_row.get("charter") or "")
+            and "invent" not in str(harvest_row.get("charter") or "").lower()
+            and unread_sid in unread_ids,
+            str(harvest_row)[:300] + str(unread)[:200],
+        )
+        signal = str(hot_payload.get("signal") or "")
+        check(
+            "hot-signal-is-harvest-proxy-not-installs",
+            "harvest" in signal.lower()
+            and "install" in signal.lower()
+            and "denver" in signal.lower()
+            and ("0" in signal or "zero" in signal.lower()),
+            signal,
+        )
+        hot_human = _capture(
+            lambda: body(["hot", "--offline", "--root", str(hot_root)])
+        )
+        check(
+            "hot-human-row-prints-together",
+            hot_human[0] == 0
+            and "Optima" in hot_human[1]
+            and "posts=4" in hot_human[1]
+            and "likes=1" in hot_human[1]
+            and "authors=1" in hot_human[1]
+            and optima_charter.split()[0] in hot_human[1]
+            and optima_sid in hot_human[1]
+            and "INSTALL grokbot://app/v1/bot-template?id=%s" % optima_sid
+            in hot_human[1]
+            and "https://x.com/i/status/1001" in hot_human[1]
+            and "installs" not in hot_human[1].lower(),
+            hot_human[1][:500],
+        )
+        missing_root = root / "hot-missing"
+        missing_root.mkdir()
+        missing = _capture(
+            lambda: body(["hot", "--offline", "--root", str(missing_root)])
+        )
+        check(
+            "hot-missing-harvest-is-environment",
+            missing[0] == EXIT_ENVIRONMENT
+            and "gb x collect" in missing[1]
+            and "1  " not in missing[1]
+            and "Optima" not in missing[1],
+            missing[1],
+        )
+        applied = _capture(
+            lambda: body(
+                ["hot", "--apply", "--offline", "--root", str(hot_root)]
+            )
+        )
+        import inspect as _inspect_hot
+
+        hot_fn = globals().get("cmd_hot")
+        hot_src = _inspect_hot.getsource(hot_fn) if callable(hot_fn) else ""
+        check(
+            "hot-apply-is-not-a-hire",
+            applied[0] == 0
+            and "CreateGrokBot" not in applied[1]
+            and "CreateGrokBot" not in hot_src
+            and optima_sid in applied[1],
+            applied[1][:300] + hot_src[:200],
+        )
+        check(
+            "hot-help-one-liner",
+            "hot" in help_txt
+            and "harvest" in help_txt.lower()
+            and "charter" in help_txt.lower()
+            and "score" in help_txt.lower(),
+            help_txt,
+        )
+
     check("refresh-producer-exists", (BIN / "gb-market-snapshot.py").is_file(), "")
     check("corpus-refresh-producer-exists", (BIN / "gb-usecases.py").is_file(), "")
 
@@ -2188,7 +2740,17 @@ def _capture(fn: Callable[[], int]) -> Tuple[int, str]:
     buf = io.StringIO()
     err = io.StringIO()
     with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
-        code = fn()
+        try:
+            code = fn()
+        except SystemExit as e:
+            raw = e.code
+            if raw is None:
+                code = 1
+            elif isinstance(raw, int):
+                code = raw
+            else:
+                code = 1
+                err.write(str(raw))
     return code, buf.getvalue() + err.getvalue()
 
 
@@ -2200,9 +2762,23 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "action",
         nargs="?",
-        choices=("refresh", "bots", "new", "jobs", "keep", "skip", "ban", "deploy", "pack"),
+        choices=(
+            "refresh",
+            "bots",
+            "new",
+            "jobs",
+            "keep",
+            "skip",
+            "ban",
+            "deploy",
+            "pack",
+            "hot",
+        ),
         default="bots",
-        help="refresh | bots | new | jobs | keep | skip | ban | deploy | pack",
+        help=(
+            "refresh | bots | new | jobs | keep | skip | ban | deploy | pack | hot. "
+            "hot: top share-linked Bots from X harvest with charter + score"
+        ),
     )
     ap.add_argument(
         "share_ids",
@@ -2211,7 +2787,8 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "pack: founder | engineer | seller (sales → seller). "
             "deploy: one or more catalog share_ids or unique prefixes. "
-            "keep/skip/ban: one stored share_id or unique prefix"
+            "keep/skip/ban: one stored share_id or unique prefix. "
+            "hot: optional N (default 10)"
         ),
     )
     ap.add_argument(
@@ -2233,12 +2810,18 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--offline",
         action="store_true",
-        help="bots/new: stamps only; jobs/deploy/pack: valid catalog cache only",
+        help=(
+            "bots/new: stamps only; jobs/deploy/pack: valid catalog cache only; "
+            "hot: local harvest + catalog cache"
+        ),
     )
     ap.add_argument(
         "--apply",
         action="store_true",
-        help="deploy/pack: print the grokbot:// install URL (does not call CreateGrokBot)",
+        help=(
+            "deploy/pack: print the grokbot:// install URL (does not call CreateGrokBot). "
+            "hot: plan card only, not a hire"
+        ),
     )
     ap.add_argument("--root", default="", help="artifact root (tests)")
     ap.add_argument("--selftest", action="store_true")
@@ -2258,6 +2841,18 @@ def body(argv: Optional[Sequence[str]] = None) -> int:
     if args.action == "jobs":
         return cmd_jobs(root, bool(args.json), bool(args.offline))
     share_ids = list(getattr(args, "share_ids", None) or [])
+    if args.action == "hot":
+        n, err = parse_hot_n(share_ids)
+        if err or n is None:
+            emit(err or "gb market hot: refuse — N must be a positive integer")
+            return EXIT_USAGE
+        return cmd_hot(
+            root,
+            n,
+            bool(args.json),
+            bool(args.offline),
+            bool(getattr(args, "apply", False)),
+        )
     if args.action == "pack":
         if len(share_ids) > 1:
             emit("gb market pack: refuse — persona is founder, engineer, or seller")
