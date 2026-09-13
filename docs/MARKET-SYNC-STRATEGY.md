@@ -27,7 +27,7 @@ Engine is stock sqlite3 (Python stdlib). fsqlite is not involved.
 
 ## Versioning
 
-- DB marker: `PRAGMA user_version` (schema cookie). Now 2 (taxonomy column). Bump on every DDL. A v1 cache is refused, then rebuilt from live catalogs.
+- DB marker: `PRAGMA user_version` (schema cookie). Now 3 (job column). Bump on every DDL. A v1 cache is refused, then rebuilt from live catalogs.
 - JSONL/JSON marker: `schema` field `gb-usecases/1` until the sqlite layer ships `gb-usecases/2`.
 - Row identity: `name_key` (casefold collapsed space) plus optional `share_id`. share_id is passed through from the catalog, never invented.
 
@@ -58,3 +58,7 @@ A tick that ships persona rank on top of smashed categories and missing share_id
 ## Taxonomy aliases (user_version 2)
 
 See `TAXONOMY_MAP` in `bin/gb-market-db.py`. Only those keys map. Everything else is `unmapped`.
+
+## Jobs (user_version 3)
+
+`job` is assigned only from `taxonomy` via `JOB_FROM_TAXONOMY`. personal / productivity / success / unmapped → `none`. Name and charter never assign a job. decide and refuse have no taxonomy yet.

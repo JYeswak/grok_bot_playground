@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from gbtypes import main as gbmain  # noqa: E402
 
-USER_VERSION = 2
+USER_VERSION = 3
 DB_NAME = "market.sqlite"
 LOCK_NAME = "market.sqlite.lock"
 
@@ -33,6 +33,7 @@ CREATE TABLE bots (
   category TEXT,
   category_src TEXT,
   taxonomy TEXT NOT NULL,
+  job TEXT NOT NULL,
   share_id TEXT,
   import_url TEXT,
   charter TEXT,
@@ -88,6 +89,25 @@ def taxonomy_of(category: Any) -> str:
     return TAXONOMY_MAP.get(key, "unmapped")
 
 
+# Jobs sit on taxonomy only. Junk drawers stay none.
+# Do not read name or charter. decide/refuse have no taxonomy yet — none.
+JOB_FROM_TAXONOMY = {
+    "research": "brief",
+    "finance": "spend",
+    "calendar": "calendar",
+    "sales": "sell",
+    "engineering": "ship",
+    "publishing": "publish",
+    "ops": "operate",
+    "teams": "handoff",
+    "marketing": "market",
+}
+
+
+def job_of(taxonomy: Any) -> str:
+    return JOB_FROM_TAXONOMY.get(str(taxonomy or ""), "none")
+
+
 class CacheRefused(Exception):
     """integrity_check failed, user_version mismatch, or the file is not a database."""
 
@@ -122,6 +142,7 @@ def canonicalize_row(row: Dict[str, Any], *, origin_hint: str = "") -> Dict[str,
         "category": row.get("category") or "Uncategorised",
         "category_src": row.get("category_src") or origin,
         "taxonomy": taxonomy_of(row.get("category") or "Uncategorised"),
+        "job": job_of(taxonomy_of(row.get("category") or "Uncategorised")),
         "charter": charter,
         "charter_chars": len(charter),
         "contributor": row.get("contributor"),
@@ -250,10 +271,10 @@ def rebuild(
                 conn.execute(
                     """
                     INSERT INTO bots (
-                      name_key, name, category, category_src, taxonomy, share_id, import_url,
+                      name_key, name, category, category_src, taxonomy, job, share_id, import_url,
                       charter, charter_chars, contributor, source, added_at, origin,
                       has_approval_language, prompt_chars, integrations_json
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     (
                         c["name_key"],
@@ -261,6 +282,7 @@ def rebuild(
                         c["category"],
                         c["category_src"],
                         c["taxonomy"],
+                        c["job"],
                         c["share_id"],
                         c["import_url"],
                         c["charter"],
@@ -337,6 +359,7 @@ def load_bots(path: pathlib.Path) -> List[Dict[str, Any]]:
                     "category": row["category"],
                     "category_src": row["category_src"],
                     "taxonomy": row["taxonomy"],
+                    "job": row["job"],
                     "charter": row["charter"] or "",
                     "contributor": row["contributor"],
                     "has_approval_language": bool(row["has_approval_language"]),
@@ -483,7 +506,7 @@ def selftest() -> int:
             conn.executescript(SCHEMA_SQL)
             conn.execute("PRAGMA user_version = 0")
             conn.execute(
-                "INSERT INTO bots (name_key, name, origin, taxonomy) VALUES ('x','X','directory','ops')"
+                "INSERT INTO bots (name_key, name, origin, taxonomy, job) VALUES ('x','X','directory','ops','operate')"
             )
             conn.commit()
         finally:
@@ -524,6 +547,18 @@ def selftest() -> int:
             weird["category"] == "Brand New Shelf" and weird["taxonomy"] == "unmapped",
             str(weird),
         )
+        check("research-is-brief", job_of("research") == "brief", job_of("research"))
+        check("personal-has-no-job", job_of("personal") == "none", job_of("personal"))
+        check("productivity-has-no-job", job_of("productivity") == "none", job_of("productivity"))
+        check("success-has-no-job", job_of("success") == "none", job_of("success"))
+        named = canonicalize_row({"name": "Morning Briefing", "category": "Personal"})
+        check(
+            "name-does-not-assign-job",
+            named["job"] == "none" and named["taxonomy"] == "personal",
+            str(named),
+        )
+        check("ops-job-on-row", loaded[0]["job"] == "operate", str(loaded[0]))
+        check("sales-job-on-row", [r["job"] for r in loaded if r["name_key"]=="gamma desk"] == ["sell"], str(loaded))
 
         missing = refuse_path(root / "nope.sqlite")
         check("missing-is-refused", missing is not None and "no cache" in missing, str(missing))
