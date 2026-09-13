@@ -593,7 +593,12 @@ def cmd_scan(
         print("gb-skills: scan --copy needs --match SLUG (or a positional slug)", file=sys.stderr)
         return EXIT_USAGE
     if do_copy:
+        seen_slugs = set()
         for hit in hits:
+            slug = str(hit.get("slug") or "")
+            if slug in seen_slugs:
+                continue
+            seen_slugs.add(slug)
             copies.append(copy_match(hit, repo_path, home_path, force))
     out = {
         "schema": SCAN_SCHEMA,
@@ -1478,7 +1483,7 @@ def selftest() -> int:
 
         mbuf = io.StringIO()
         with contextlib.redirect_stdout(mbuf):
-            mrc = cmd_scan(match="alpha", home=home, repo=repo, as_json=True)
+            mrc = cmd_scan(match="frankensqlite", home=home, repo=repo, as_json=True)
         mdoc = json.loads(mbuf.getvalue())
         matches = mdoc.get("matches") or []
         check("scan-match-exit-ok", mrc == EXIT_OK)
@@ -1486,7 +1491,7 @@ def selftest() -> int:
         check(
             "scan-match-aliases-deduped",
             matches
-            and matches[0].get("name") == "alpha-skill"
+            and matches[0].get("name") == "frankensqlite-mega-skill"
             and set(matches[0].get("aliases") or []) >= {"claude", "codex", "cursor"},
         )
         check("scan-match-no-body", alpha_body not in mbuf.getvalue())
