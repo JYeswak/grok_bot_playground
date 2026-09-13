@@ -194,14 +194,17 @@ def missing_stamps(
     usecases_path: Optional[pathlib.Path],
     verb: str,
 ) -> Optional[str]:
-    parts: List[str] = []
-    if market_path is None:
-        parts.append("no market/<stamp>.json — run: gb market refresh")
-    if usecases_path is None:
-        parts.append("no usecases/<stamp>.json — run: gb market refresh --corpus")
-    if not parts:
-        return None
-    return "gb market %s: %s" % (verb, "; ".join(parts))
+    """Fail only when BOTH public sources are absent.
+
+    A stranger clone has no desktop token, so official market/ never appears.
+    Corpus-only (usecases/ from botdirectory) is a valid scan.
+    """
+    if market_path is None and usecases_path is None:
+        return (
+            "gb market %s: no market/<stamp>.json — run: gb market refresh; "
+            "no usecases/<stamp>.json — run: gb market refresh --corpus" % verb
+        )
+    return None
 
 
 def build_payload(
@@ -221,7 +224,7 @@ def build_payload(
     display = {name_key(b.get("name")): b.get("name") for b in bots}
     new_names = (
         sorted((display[k] for k in (cur_ids - prev_ids) if k in display), key=name_key)
-        if (m_prev_path and u_prev_path)
+        if (m_prev_path or u_prev_path)
         else []
     )
     creators = {name_key(r.get("creator")) for r in official if name_key(r.get("creator"))}
@@ -270,6 +273,15 @@ def print_human(payload: dict, *, new_only: bool) -> None:
         "  stamps  market=%s  usecases=%s"
         % (stamps.get("market"), stamps.get("usecases"))
     )
+    if payload["official"] == 0:
+        emit(
+            "  official  0 — no market stamp (Grok Bot desktop login). "
+            "Corpus still printed."
+        )
+    if payload["corpus"] == 0:
+        emit(
+            "  corpus  0 — no usecases stamp. Run: gb market refresh --corpus"
+        )
     emit(
         "  builders  official_creators=%d  corpus_builders=%d"
         % (payload["official_creators"], payload["corpus_builders"])
@@ -332,9 +344,14 @@ def cmd_refresh(
         lambda: subprocess.call([sys.executable, str(snap)])
     )
     rc = run_snap()
-    if rc != 0:
-        emit("gb market refresh: snapshot failed (exit %s)" % rc)
-        return int(rc) if isinstance(rc, int) and rc != 0 else EXIT_ENVIRONMENT
+    snap_ok = rc == 0
+    if not snap_ok:
+        emit(
+            "gb market refresh: snapshot failed (exit %s) — official catalog "
+            "needs a Grok Bot desktop login" % rc
+        )
+        if not corpus:
+            return int(rc) if isinstance(rc, int) and rc != 0 else EXIT_ENVIRONMENT
     if not corpus:
         return EXIT_OK
     use = BIN / "gb-usecases.py"
@@ -348,6 +365,11 @@ def cmd_refresh(
     if rc2 != 0:
         emit("gb market refresh --corpus: usecases refresh failed (exit %s)" % rc2)
         return int(rc2) if isinstance(rc2, int) and rc2 != 0 else EXIT_ENVIRONMENT
+    if not snap_ok:
+        emit(
+            "gb market refresh --corpus: corpus wrote; official catalog still "
+            "missing (desktop login). `gb market bots` will print corpus-only."
+        )
     return EXIT_OK
 
 
@@ -369,10 +391,10 @@ def cmd_new(root: pathlib.Path, as_json: bool) -> int:
         emit((err or "gb market new: missing stamps").replace("gb market bots:", "gb market new:"))
         return EXIT_ENVIRONMENT
     stamps = payload["stamps"]
-    if not (stamps.get("previous_market") and stamps.get("previous_usecases")):
+    if not (stamps.get("previous_market") or stamps.get("previous_usecases")):
         emit(
-            "gb market new: need a previous market/ stamp and a previous "
-            "usecases/ stamp — run: gb market refresh --corpus"
+            "gb market new: need a previous market/ or usecases/ stamp — "
+            "run: gb market refresh --corpus"
         )
         return EXIT_ENVIRONMENT
     if as_json:
@@ -573,7 +595,7 @@ def selftest() -> int:
         (market_only / "market").mkdir(parents=True)
         (market_only / "market" / "2026-09-11T0600.json").write_text(json.dumps(official_cur) + "\n")
         mcode, mout = _capture(lambda: cmd_bots(market_only, False, False))
-        check("missing-usecases-names-corpus", mcode == 3 and "refresh --corpus" in mout, mout)
+        check("official-only-is-ok", mcode == 0 and "official=" in mout, mout)
 
         hello = root / "hello-corpus"
         (hello / "market").mkdir(parents=True)
@@ -620,6 +642,24 @@ def selftest() -> int:
             lambda: cmd_refresh(True, runners={"snapshot": lambda: 0, "usecases": lambda: 2})
         )
         check("refresh-corpus-fails-out-loud", rc_c == 2 and "usecases refresh failed" in out_c, out_c)
+        rc_s, out_s = _capture(
+            lambda: cmd_refresh(True, runners={"snapshot": lambda: 1, "usecases": lambda: 0})
+        )
+        check(
+            "refresh-corpus-survives-snapshot-fail",
+            rc_s == 0 and "snapshot failed" in out_s and "corpus wrote" in out_s,
+            out_s,
+        )
+
+        corpus_only = root / "corpus-only"
+        (corpus_only / "usecases").mkdir(parents=True)
+        (corpus_only / "usecases" / "2026-09-11T0600.json").write_text(json.dumps(corpus_cur) + "\n")
+        ccode, cout = _capture(lambda: cmd_bots(corpus_only, False, False))
+        check(
+            "corpus-only-is-ok",
+            ccode == 0 and "corpus=" in cout and "official=0" in cout,
+            cout,
+        )
 
     check("refresh-producer-exists", (BIN / "gb-market-snapshot.py").is_file(), "")
     check("corpus-refresh-producer-exists", (BIN / "gb-usecases.py").is_file(), "")
