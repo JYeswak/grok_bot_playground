@@ -761,26 +761,31 @@ class GalaxyArgs:
 
 @dataclasses.dataclass(frozen=True)
 class FleetArgs:
-    """Talk to the live fleet: roster and routines from the SERVER, or one message to one Bot.
+    """Talk to the live fleet: roster and routines from the SERVER, one message, or a named delete.
 
     Reads the roster from `ListGrokBotAgents`, deliberately, not from the local
     `sand-client-persistence` cache — that cache lagged the API by minutes and reported a live
-    Bot as deleted.
+    Bot as deleted. Delete is the hire inverse: named Bots only, same `--apply --yes` gate as
+    rollback. Routines are not removed by the RPC.
     """
 
     action: str = arg(
         default="roster",
-        help="roster | routines | send | rebuild | rollback",
-        choices=("roster", "routines", "send", "rebuild", "rollback"),
+        help="roster | routines | send | rebuild | rollback | delete",
+        choices=("roster", "routines", "send", "rebuild", "rollback", "delete"),
+        positional=True,
+    )
+    names: Tuple[str, ...] = arg(
+        help="delete: Bot name(s), numeric id, or uuid",
         positional=True,
     )
     bot: Optional[str] = arg(help="Bot name (exact, or a unique prefix)")
     role: Optional[str] = arg(help="delegate a human role phrase to gb role (first hour is refused)")
     text: Optional[str] = arg(help="send: the message body")
-    yes: bool = arg(help="send: send it; rollback: separately confirm destructive deletion")
+    yes: bool = arg(help="send: send it; rollback/delete: separately confirm destructive deletion")
     only: Optional[str] = arg(help="rebuild: just this source Bot name")
     spec: Optional[str] = arg(help="rebuild: Bot list PATH instead of fleet-spec.json")
-    apply: bool = arg(help="rebuild: create; rollback: delete (both plan without this)")
+    apply: bool = arg(help="rebuild: create; rollback/delete: delete (plan without this)")
     manifest: Optional[str] = arg(help="rollback: recovery manifest written by fleet rebuild")
     json: bool = arg(help="machine-readable envelope on stdout")
 
@@ -4643,15 +4648,18 @@ def cmd_fleet(a: FleetArgs) -> int:
     if a.role:
         mixed = (
             a.action != "roster" or a.bot or a.text or a.yes or a.only
-            or a.spec or a.apply or a.manifest
+            or a.spec or a.apply or a.manifest or a.names
         )
         if mixed:
             return _role_redirect_error(
                 "fleet", a.role, a.json,
                 "--role cannot be combined with fleet reads or mutations",
-                refused=bool(a.yes or a.apply or a.action in ("send", "rebuild", "rollback")),
+                refused=bool(a.yes or a.apply or a.action in ("send", "rebuild", "rollback", "delete")),
             )
         return _delegate_role(a.role, a.json, "fleet role")
+    if a.action != "delete" and a.names:
+        print("gb: unexpected arguments for this fleet action", file=sys.stderr)
+        return EXIT_USAGE
     if a.action in ("rebuild", "rollback"):
         # Both mutations plan by default. Rollback is the sharper edge and the producer refuses
         # it unless BOTH --apply and --yes survive this pass-through; the bound manifest and
@@ -4675,6 +4683,10 @@ def cmd_fleet(a: FleetArgs) -> int:
             argv.append("--apply")
         return _passthrough(argv, budget_s=600, label="fleet rebuild")
     argv = [sys.executable, str(BIN / "gb-fleet.py"), a.action]
+    if a.action == "delete":
+        argv.extend(a.names or ())
+        if a.apply:
+            argv.append("--apply")
     if a.bot:
         argv += ["--bot", a.bot]
     if a.text:

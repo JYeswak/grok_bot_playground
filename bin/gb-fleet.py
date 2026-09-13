@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""gb-fleet — talk to the live fleet: roster, routines, and one message to one Bot.
+"""gb-fleet — talk to the live fleet: roster, routines, one message, or a named delete.
 
 WHY THIS EXISTS (measured 2026-09-11, and it is an indictment of the previous surface).
 
@@ -23,13 +23,19 @@ Three verbs, so none of that has to be rediscovered:
     gb fleet roster              every Bot the SERVER knows, with both ids
     gb fleet routines [--bot N]  every routine, its schedule, run count and provenance
     gb fleet send --bot N --text ...   one message to one Bot
+    gb fleet delete NAME [NAME…]       plan a named delete; --apply --yes performs it
 
-ON `send` BEING A WRITE. It is the only verb here that changes anything, and it is deliberately
-narrow: one Bot, one message, no broadcast. It earns its place because it is now load-bearing —
-a Bot creates its own routine when asked in chat (measured: `Weekly receipt`, cron
-`CRON_TZ=America/Denver 45 7 * * 1`, `provenance: "user"`), which makes "deploy a template, then
-send one message" the one-touch path. It refuses without `--yes` so it cannot fire by accident,
-and it prints the exact text first.
+ON `send` BEING A WRITE. It is deliberately narrow: one Bot, one message, no broadcast. It
+earns its place because it is now load-bearing — a Bot creates its own routine when asked in
+chat (measured: `Weekly receipt`, cron `CRON_TZ=America/Denver 45 7 * * 1`,
+`provenance: "user"`), which makes "deploy a template, then send one message" the one-touch
+path. It refuses without `--yes` so it cannot fire by accident, and it prints the exact text
+first.
+
+ON `delete` BEING A WRITE. Rollback already deletes through `DeleteGrokBotAgent` with a string
+id and the dual `--apply --yes` gate. Hire-on-demand had no inverse. This verb is that inverse:
+named Bots only, never `--all`, never the rest of the fleet. Routines are NOT deleted by the
+RPC (measured 2026-09-12); leftover automations print ORPHAN_AUTOMATION_RESIDUE, not CLEAN.
 """
 
 from __future__ import annotations
@@ -41,7 +47,7 @@ import json
 import pathlib
 import sys
 import uuid
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
@@ -52,7 +58,7 @@ import gbtypes  # noqa: E402
 # it normally deletes the python 3.9.6 `spec_from_file_location` + `sys.modules` dance that
 # every borrower had to remember, and stops `gb dogfood audit` counting this file as one
 # more hand-roller of gb-pull-inventory's read.
-from gbrpc import SUPPORT, access_token, rpc  # noqa: E402
+from gbrpc import SUPPORT, access_token, rpc, write_rpc  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BIN = ROOT / "bin"
@@ -80,11 +86,12 @@ def load_module(name: str, path: pathlib.Path) -> Any:
 
 
 class _Transport:
-    """The three transport names, bound from `gbrpc` rather than dynamically imported."""
+    """The transport names, bound from `gbrpc` rather than dynamically imported."""
 
     SUPPORT = SUPPORT
     access_token = staticmethod(access_token)
     rpc = staticmethod(rpc)
+    write_rpc = staticmethod(write_rpc)
 
 
 def puller() -> Any:
@@ -237,6 +244,121 @@ def pick(bots: Sequence[Bot], needle: str) -> Optional[Bot]:
     return hits[0] if len(hits) == 1 else None
 
 
+# Delete is identity-strict: a name collision is ambiguous, and a human may paste a
+# numeric_id or uuid from `gb fleet roster`. send keeps pick() so two "Template"
+# clones still message the first exact name (that path is load-bearing).
+def resolve(bots: Sequence[Bot], needle: str) -> Optional[Bot]:
+    """Unique Bot for a delete needle: unique exact name, unique numeric_id, unique uuid,
+    else unique case-insensitive prefix. Anything else (missing or collision) is None."""
+    exact = [b for b in bots if b.name == needle]
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
+        return None
+    by_id = [b for b in bots if b.numeric_id == needle]
+    if len(by_id) == 1:
+        return by_id[0]
+    if len(by_id) > 1:
+        return None
+    by_uuid = [b for b in bots if b.uuid == needle]
+    if len(by_uuid) == 1:
+        return by_uuid[0]
+    if len(by_uuid) > 1:
+        return None
+    hits = [b for b in bots if b.name.lower().startswith(needle.lower())]
+    return hits[0] if len(hits) == 1 else None
+
+
+Rpc = Callable[[str, str, Dict[str, Any]], Tuple[int, Any]]
+EXIT_OK = 0
+EXIT_FINDINGS = 1
+EXIT_USAGE = 2
+EXIT_REFUSED = 5
+
+
+def delete_bots(
+    needles: Sequence[str],
+    bots: Sequence[Bot],
+    *,
+    apply: bool,
+    yes: bool,
+    write_rpc: Optional[Rpc] = None,
+    read_rpc: Optional[Rpc] = None,
+    token: str = "offline",
+    routines: Optional[Sequence[Routine]] = None,
+    delete_and_confirm: Optional[Callable[..., Dict[str, Any]]] = None,
+) -> Tuple[int, List[str]]:
+    """Plan or apply a named delete. Writes only when both --apply and --yes survive.
+
+    Returns (exit_code, human lines). Resolves every needle before the first write.
+    Two needles for one Bot delete it once. Residue is not CLEAN.
+    """
+    lines: List[str] = []
+    if apply ^ yes:
+        lines.append(
+            "REFUSED: deletion requires both --apply and --yes; nothing was written"
+        )
+        return EXIT_REFUSED, lines
+    if not needles:
+        lines.append("gb-fleet: delete needs a Bot name, numeric id, or uuid")
+        return EXIT_USAGE, lines
+
+    resolved: List[Bot] = []
+    seen: Set[str] = set()
+    for needle in needles:
+        bot = resolve(bots, needle)
+        if bot is None:
+            lines.append(f"gb-fleet: no unique Bot matching {needle!r}")
+            return EXIT_USAGE, lines
+        key = bot.uuid or bot.numeric_id
+        if key in seen:
+            continue
+        seen.add(key)
+        resolved.append(bot)
+
+    counts: Dict[str, int] = {}
+    if routines:
+        for r in routines:
+            counts[r.bot] = counts.get(r.bot, 0) + 1
+
+    if not apply:
+        for bot in resolved:
+            n = counts.get(bot.name)
+            extra = f"  routines={n}" if n is not None else ""
+            lines.append(
+                f"  {bot.name}  numeric_id={bot.numeric_id}  uuid={bot.uuid}{extra}"
+            )
+        shown = " ".join(needles)
+        lines.append("Nothing deleted. Apply with: gb fleet delete … --apply --yes")
+        lines.append(f"  gb fleet delete {shown} --apply --yes")
+        return EXIT_OK, lines
+
+    if write_rpc is None or read_rpc is None:
+        raise FleetError("delete apply needs write_rpc and read_rpc")
+    confirm = delete_and_confirm
+    if confirm is None:
+        rebuild = load_module("gb_rebuild_fleet_delete", BIN / "gb-rebuild-fleet.py")
+        confirm = rebuild.delete_and_confirm
+
+    failed = False
+    for bot in resolved:
+        outcome = confirm(
+            write_rpc=write_rpc,
+            read_rpc=read_rpc,
+            token=token,
+            numeric_id=bot.numeric_id,
+            agent_uuid=bot.uuid,
+            emit=False,
+        )
+        verdict = str(outcome.get("verdict") or "DELETE_FAILED")
+        lines.append(
+            f"  {verdict} {bot.name} numeric_id={bot.numeric_id} uuid={bot.uuid}"
+        )
+        if verdict != "DELETED":
+            failed = True
+    return (EXIT_FINDINGS if failed else EXIT_OK), lines
+
+
 def selftest() -> int:
     fails: List[str] = []
     checks = 0
@@ -291,6 +413,207 @@ def selftest() -> int:
         "both ids must survive to json",
     )
 
+    # delete resolve: unique id / uuid, and a name collision is not identity
+    twins = [
+        Bot("Template", "10", "uuid-a", "t", 10, 1),
+        Bot("Template", "11", "uuid-b", "t", 10, 2),
+        Bot("Optima", "42", "uuid-opt", "t", 100, 3),
+    ]
+    check(resolve(twins, "Optima") is twins[2], "resolve exact unique name")
+    check(resolve(twins, "42") is twins[2], "resolve unique numeric_id")
+    check(resolve(twins, "uuid-opt") is twins[2], "resolve unique uuid")
+    check(resolve(twins, "Template") is None, "resolve refuses a name collision")
+    check(resolve(twins, "Chief") is None, "resolve refuses a missing name")
+    check(pick(twins, "Template") is twins[0], "pick still first-exact-name for send")
+
+    class _WriteSpy:
+        def __init__(self) -> None:
+            self.calls: List[Tuple[str, Dict[str, Any]]] = []
+
+        def __call__(
+            self, token: str, method: str, body: Dict[str, Any]
+        ) -> Tuple[int, Any]:
+            self.calls.append((method, body))
+            return 200, {}
+
+    def _read_still(
+        _token: str, method: str, _body: Dict[str, Any]
+    ) -> Tuple[int, Any]:
+        if method == "ListGrokBotAgents":
+            return 200, {
+                "agents": [
+                    {"id": "42", "agentId": "uuid-opt", "name": "Optima"},
+                ]
+            }
+        return 200, {"automations": []}
+
+    def _read_absent_clean(
+        _token: str, method: str, _body: Dict[str, Any]
+    ) -> Tuple[int, Any]:
+        if method == "ListGrokBotAgents":
+            return 200, {"agents": []}
+        return 200, {"automations": []}
+
+    def _read_absent_orphan(
+        _token: str, method: str, _body: Dict[str, Any]
+    ) -> Tuple[int, Any]:
+        if method == "ListGrokBotAgents":
+            return 200, {"agents": []}
+        return 200, {"automations": [{"automationId": "routine-7"}]}
+
+    def _confirm(
+        *,
+        write_rpc: Rpc,
+        read_rpc: Rpc,
+        token: str,
+        numeric_id: str,
+        agent_uuid: str,
+        emit: bool = False,
+    ) -> Dict[str, Any]:
+        rebuild = load_module(
+            "gb_rebuild_fleet_delete_selftest", BIN / "gb-rebuild-fleet.py"
+        )
+        return rebuild.delete_and_confirm(
+            write_rpc=write_rpc,
+            read_rpc=read_rpc,
+            token=token,
+            numeric_id=numeric_id,
+            agent_uuid=agent_uuid,
+            emit=emit,
+        )
+
+    # 1. plan without --apply/--yes never calls write_rpc
+    spy = _WriteSpy()
+    rc, out = delete_bots(
+        ["Optima"],
+        twins,
+        apply=False,
+        yes=False,
+        write_rpc=spy,
+        routines=[Routine("Optima", "tick", "daily", True, 0, 0, "user")],
+    )
+    check(rc == 0 and not spy.calls, "plan without apply/yes wrote")
+    check(
+        any("numeric_id=42" in line and "uuid=uuid-opt" in line for line in out),
+        "plan card lost identity",
+    )
+    check(
+        any("routines=1" in line for line in out),
+        "plan card lost routine count",
+    )
+    check(
+        any("Nothing deleted. Apply with: gb fleet delete" in line for line in out),
+        "plan lost the apply hint",
+    )
+
+    # 2. --apply without --yes (and the reverse) never calls write_rpc, exit 5
+    spy = _WriteSpy()
+    rc, _out = delete_bots(
+        ["Optima"], twins, apply=True, yes=False, write_rpc=spy
+    )
+    check(rc == 5 and not spy.calls, "apply without yes did not refuse")
+    spy = _WriteSpy()
+    rc, _out = delete_bots(
+        ["Optima"], twins, apply=False, yes=True, write_rpc=spy
+    )
+    check(rc == 5 and not spy.calls, "yes without apply did not refuse")
+
+    # 3. ambiguous prefix refuses, zero writes
+    spy = _WriteSpy()
+    chiefs = fleet
+    rc, _out = delete_bots(
+        ["Chief"], chiefs, apply=True, yes=True, write_rpc=spy, read_rpc=_read_absent_clean
+    )
+    check(rc == 2 and not spy.calls, "ambiguous prefix did not refuse before write")
+
+    # 7. two names, one missing: refuse before any write (before 4 so the spy is clean)
+    spy = _WriteSpy()
+    rc, _out = delete_bots(
+        ["Optima", "Missing"],
+        twins,
+        apply=True,
+        yes=True,
+        write_rpc=spy,
+        read_rpc=_read_absent_clean,
+        delete_and_confirm=_confirm,
+    )
+    check(rc == 2 and not spy.calls, "missing name among two did not refuse before write")
+
+    # 8. two needles for the same Bot: one delete
+    spy = _WriteSpy()
+    rc, _out = delete_bots(
+        ["Optima", "42"],
+        twins,
+        apply=True,
+        yes=True,
+        write_rpc=spy,
+        read_rpc=_read_absent_clean,
+        delete_and_confirm=_confirm,
+    )
+    check(
+        rc == 0 and len(spy.calls) == 1,
+        "two needles for one Bot did not delete once",
+    )
+
+    # 4. Delete body id is a str, never an int
+    spy = _WriteSpy()
+    rc, _out = delete_bots(
+        ["Optima"],
+        twins,
+        apply=True,
+        yes=True,
+        write_rpc=spy,
+        read_rpc=_read_absent_clean,
+        delete_and_confirm=_confirm,
+    )
+    check(spy.calls, "apply+yes never called write_rpc")
+    if spy.calls:
+        method, body = spy.calls[0]
+        check(method == "DeleteGrokBotAgent", "delete used the wrong method")
+        check(
+            body.get("id") == "42" and isinstance(body.get("id"), str),
+            "Delete body id was not a JSON string",
+        )
+        check(not isinstance(body.get("id"), int), "Delete body id was an int")
+
+    # 5. 200 + still on roster = STILL_PRESENT
+    spy = _WriteSpy()
+    rc, out = delete_bots(
+        ["Optima"],
+        twins,
+        apply=True,
+        yes=True,
+        write_rpc=spy,
+        read_rpc=_read_still,
+        delete_and_confirm=_confirm,
+    )
+    check(rc != 0, "still-present delete exited 0")
+    check(
+        any("STILL_PRESENT" in line for line in out),
+        "200 + still on roster did not print STILL_PRESENT",
+    )
+
+    # 6. 200 + absent + leftover automation = ORPHAN / non-zero
+    spy = _WriteSpy()
+    rc, out = delete_bots(
+        ["Optima"],
+        twins,
+        apply=True,
+        yes=True,
+        write_rpc=spy,
+        read_rpc=_read_absent_orphan,
+        delete_and_confirm=_confirm,
+    )
+    check(rc != 0, "orphan residue exited 0 (lied CLEAN)")
+    check(
+        any("ORPHAN_AUTOMATION_RESIDUE" in line for line in out),
+        "leftover automation did not print ORPHAN_AUTOMATION_RESIDUE",
+    )
+    check(
+        not any(line.strip().startswith("DELETED") for line in out),
+        "orphan residue printed DELETED (lied CLEAN)",
+    )
+
     for f in fails:
         print(f"FAIL: {f}")
     print(
@@ -301,20 +624,29 @@ def selftest() -> int:
 
 @dataclasses.dataclass(frozen=True)
 class FleetArgs:
-    """Talk to the live fleet: roster, routines, and one message to one Bot."""
+    """Talk to the live fleet: roster, routines, one message, or a named delete."""
 
     action: str = gbargs.arg(
         default="roster",
-        help="roster | routines | send",
-        choices=("roster", "routines", "send"),
+        help="roster | routines | send | delete",
+        choices=("roster", "routines", "send", "delete"),
+        positional=True,
+    )
+    names: Tuple[str, ...] = gbargs.arg(
+        default=(),
+        help="delete: Bot name(s), numeric id, or uuid",
         positional=True,
     )
     bot: Optional[str] = gbargs.arg(
         default=None, help="Bot name (exact, or a unique prefix)"
     )
     text: Optional[str] = gbargs.arg(default=None, help="send: the message body")
+    apply: bool = gbargs.arg(
+        default=False, help="delete: actually delete (requires --yes)"
+    )
     yes: bool = gbargs.arg(
-        default=False, help="send: actually send it (otherwise a dry run)"
+        default=False,
+        help="send: actually send it; delete: separately confirm destructive deletion",
     )
     json_out: bool = gbargs.arg(
         default=False, help="machine-readable envelope on stdout"
@@ -335,6 +667,25 @@ def body() -> int:
 
     action = str(ns.action)
     as_json = bool(getattr(ns, "json_out", False))
+    names = tuple(getattr(ns, "names", None) or ())
+    apply = bool(getattr(ns, "apply", False))
+    yes = bool(ns.yes)
+    if action != "delete" and names:
+        print("gb-fleet: unexpected arguments for this action", file=sys.stderr)
+        return EXIT_USAGE
+    if action == "delete":
+        if apply ^ yes:
+            print(
+                "REFUSED: deletion requires both --apply and --yes; nothing was written",
+                file=sys.stderr,
+            )
+            return EXIT_REFUSED
+        if not names:
+            print(
+                "gb-fleet: delete needs a Bot name, numeric id, or uuid",
+                file=sys.stderr,
+            )
+            return EXIT_USAGE
     try:
         pull = puller()
         token = pull.access_token(pull.SUPPORT)
@@ -397,6 +748,46 @@ def body() -> int:
                     f"{mark:<9} prov={r.provenance}"
                 )
         return 0
+
+    if action == "delete":
+        routines: Optional[List[Routine]] = None
+        if not apply:
+            chosen: List[Bot] = []
+            seen: Set[str] = set()
+            for needle in names:
+                one = resolve(bots, needle)
+                if one is None:
+                    chosen = []
+                    break
+                key = one.uuid or one.numeric_id
+                if key in seen:
+                    continue
+                seen.add(key)
+                chosen.append(one)
+            if chosen:
+                routines = fetch_routines(pull, token, chosen)
+        rc, lines = delete_bots(
+            names,
+            bots,
+            apply=apply,
+            yes=yes,
+            write_rpc=pull.write_rpc if apply else None,
+            read_rpc=pull.rpc if apply else None,
+            token=token,
+            routines=routines,
+        )
+        dest = sys.stderr if rc in (EXIT_USAGE, EXIT_REFUSED) else sys.stdout
+        if as_json:
+            print(
+                json.dumps(
+                    {"schema": "gb-fleet-delete/1", "exit": rc, "lines": lines},
+                    indent=1,
+                )
+            )
+        else:
+            for line in lines:
+                print(line, file=dest)
+        return rc
 
     # send
     if not ns.bot or not ns.text:
