@@ -1020,6 +1020,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(
             "  taxonomy: " + ", ".join(f"{k} {v}" for k, v in tax.most_common())
         )
+        jobs = collections.Counter(b.get("job") or "none" for b in bots)
+        print(
+            "  jobs: " + ", ".join(f"{k} {v}" for k, v in jobs.most_common())
+        )
         print("  top integrations (✓ = installed here):")
         for g in doc["integration_gap"][:12]:
             print(
