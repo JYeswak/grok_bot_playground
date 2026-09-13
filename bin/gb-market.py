@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -29,9 +30,12 @@ BIN = ROOT / "bin"
 SCHEMA = "gb-market-bots/1"
 JOBS_SCHEMA = "gb-market-jobs/4"
 VERDICT_SCHEMA = "gb-market-verdict/1"
-DEPLOY_SCHEMA = "gb-market-deploy/1"
-PACK_SCHEMA = "gb-market-pack/1"
+DEPLOY_SCHEMA = "gb-market-deploy/2"
+PACK_SCHEMA = "gb-market-pack/2"
 SHARE_HOST = "https://x.ai/bot/"
+# Same family as plugin add: grokbot://app/v1/plugin/add?id=
+INSTALL_URL_PREFIX = "grokbot://app/v1/bot-template?id="
+BOT_TEMPLATE_SHARE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{21}$")
 PREVIEW_ROWS = 20
 EXIT_OK, EXIT_USAGE, EXIT_ENVIRONMENT, EXIT_REFUSED = 0, 2, 3, 5
 SOURCES = ("official", "corpus", "both")
@@ -675,8 +679,16 @@ class DeployRefused(Exception):
 
 
 def share_url(share_id: str) -> str:
-    """Official one-click URL. Full share_id, never a 16-char slice."""
+    """Official page URL. Full share_id, never a 16-char slice."""
     return "%s%s" % (SHARE_HOST, share_id)
+
+
+def install_url(share_id: str) -> str:
+    """Click-to-install deep link. Refuse to build unless share_id is 21 chars."""
+    sid = str(share_id or "")
+    if BOT_TEMPLATE_SHARE_ID_PATTERN.fullmatch(sid) is None:
+        raise ValueError("gb market: refuse — share_id is not a 21-char install id")
+    return INSTALL_URL_PREFIX + sid
 
 
 def catalog_share_ids_with_prefix(bots: Sequence[dict], prefix: str) -> List[str]:
@@ -746,9 +758,14 @@ def resolve_deploy_share_id(
 def deploy_card(row: dict) -> dict:
     mdb = _market_db()
     sid = mdb.real_share_id(row) or ""
+    try:
+        inst = install_url(sid)
+    except ValueError:
+        inst = None
     return {
         "category": row.get("category") or "",
         "charter": str(row.get("charter") or ""),
+        "install_url": inst,
         "job": row.get("job") or "none",
         "name": row.get("name") or "",
         "origin": row.get("origin") or "",
@@ -764,6 +781,9 @@ def print_deploy_human(cards: Sequence[dict]) -> None:
         emit("NAME       %s" % (card.get("name") or "-"))
         emit("JOB        %s" % (card.get("job") or "none"))
         emit("SHARE_URL  %s" % (card.get("share_url") or ""))
+        inst = card.get("install_url") or ""
+        if inst:
+            emit("INSTALL %s" % inst)
         origin = card.get("origin") or "-"
         category = card.get("category") or "-"
         emit("ORIGIN     %s  category=%s" % (origin, category))
@@ -782,12 +802,8 @@ def cmd_deploy(
     offline: bool = False,
     apply: bool = False,
 ) -> int:
-    if apply:
-        emit(
-            "gb market deploy: refuse — open the SHARE_URL "
-            "(do not call CreateGrokBot or templates)"
-        )
-        return EXIT_REFUSED
+    # --apply still emits cards (INSTALL is the click-to-install path). No RPC.
+    del apply
     tokens = [str(t).strip() for t in share_ids if str(t).strip()]
     if not tokens:
         emit("gb market deploy: refuse — no share_id")
@@ -833,6 +849,7 @@ def cmd_deploy(
                 "charter": c.get("charter") or "",
                 "job": c.get("job"),
                 "name": c.get("name"),
+                "install_url": c.get("install_url"),
                 "origin": c.get("origin"),
                 "share_id": c.get("share_id"),
                 "share_url": c.get("share_url"),
@@ -878,12 +895,8 @@ def cmd_pack(
     apply: bool = False,
     rng: Any = None,
 ) -> int:
-    if apply:
-        emit(
-            "gb market pack: refuse — open the SHARE_URLs "
-            "(do not call CreateGrokBot, templates, or gb swarm)"
-        )
-        return EXIT_REFUSED
+    # --apply still emits cards (INSTALL is the click-to-install path). No RPC.
+    del apply
     persona = normalize_pack_persona(persona_token)
     if persona is None or persona not in PACKS:
         emit("gb market pack: refuse — persona is founder, engineer, or seller")
@@ -1556,6 +1569,13 @@ def selftest() -> int:
             and "deploy" in help_txt,
             help_txt,
         )
+        check(
+            "apply-help-is-install-url-not-refuse",
+            "grokbot://" in help_txt
+            and "CreateGrokBot" in help_txt
+            and "refused" not in help_txt,
+            help_txt,
+        )
 
         deploy_root = root / "deploy-cache"
         (deploy_root / "usecases").mkdir(parents=True)
@@ -1638,13 +1658,15 @@ def selftest() -> int:
             lambda: body(["deploy", long_sid, "--offline", "--root", str(deploy_root)])
         )
         exact_url = "https://x.ai/bot/%s" % long_sid
+        install_line = "INSTALL grokbot://app/v1/bot-template?id=%s" % long_sid
         check(
             "deploy-exact-id-prints-full-url-and-charter",
             exact[0] == 0
             and exact_url in exact[1]
             and deploy_charter in exact[1]
             and "Long Share Desk" in exact[1]
-            and "JOB        spend" in exact[1],
+            and "JOB        spend" in exact[1]
+            and install_line in exact[1],
             exact[1][:400],
         )
         pref = _capture(
@@ -1706,7 +1728,8 @@ def selftest() -> int:
             "deploy-job-none-allowed-when-named",
             none_job[0] == 0
             and "JOB        none" in none_job[1]
-            and "https://x.ai/bot/persShare" in none_job[1],
+            and "https://x.ai/bot/persShare" in none_job[1]
+            and "grokbot://" not in none_job[1],
             none_job[1][:300],
         )
         empty_c = _capture(
@@ -1718,7 +1741,9 @@ def selftest() -> int:
             "deploy-empty-charter-prints-missing-and-url",
             empty_c[0] == 0
             and "CHARTER MISSING" in empty_c[1]
-            and "https://x.ai/bot/emptyShareXYZ" in empty_c[1],
+            and "https://x.ai/bot/emptyShareXYZ" in empty_c[1]
+            and "INSTALL" not in empty_c[1]
+            and "grokbot://" not in empty_c[1],
             empty_c[1][:300],
         )
         applied = _capture(
@@ -1734,13 +1759,51 @@ def selftest() -> int:
             )
         )
         check(
-            "deploy-apply-refuses-open-share-url",
-            applied[0] == EXIT_REFUSED
-            and "SHARE_URL" in applied[1]
-            and "CreateGrokBot" in applied[1]
-            and "templates" in applied[1]
-            and applied[1].count("\n") <= 2,
+            "deploy-apply-prints-install-url",
+            applied[0] == 0
+            and install_line in applied[1]
+            and exact_url in applied[1]
+            and long_sid in applied[1]
+            and all(
+                not line.strip().endswith("id=" + long_prefix)
+                for line in applied[1].splitlines()
+            )
+            and "cursor.com/grok-bot/link" not in applied[1]
+            and "CreateGrokBot" not in applied[1],
             applied[1],
+        )
+
+        def _install_url_fails(sid: str) -> bool:
+            fn = globals().get("install_url")
+            if not callable(fn):
+                return False
+            try:
+                fn(sid)
+            except ValueError:
+                return True
+            return False
+
+        built = globals().get("install_url")
+        built_url = built(long_sid) if callable(built) else ""
+        check(
+            "install-url-valid-21-char",
+            callable(built)
+            and len(long_sid) == 21
+            and built_url == "grokbot://app/v1/bot-template?id=%s" % long_sid
+            and built_url.endswith(long_sid)
+            and "cursor.com" not in built_url,
+            str(built_url),
+        )
+        check(
+            "install-url-refuses-short-or-malformed",
+            _install_url_fails("emptyShareXYZ")
+            and _install_url_fails("persShare")
+            and _install_url_fails("")
+            and _install_url_fails("ANv3NrqPfRcS9PdXku7h")
+            and _install_url_fails("ANv3NrqPfRcS9PdXku7h8X")
+            and _install_url_fails("ANv3NrqPfRcS9PdXku7h!")
+            and _install_url_fails("https://x.ai/bot/" + long_sid),
+            "install_url",
         )
         dj = _capture(
             lambda: body(
@@ -1760,13 +1823,18 @@ def selftest() -> int:
         check(
             "deploy-json-schema-and-rows",
             dj[0] == 0
+            and DEPLOY_SCHEMA == "gb-market-deploy/2"
             and dpayload.get("schema") == DEPLOY_SCHEMA
             and [r.get("share_id") for r in drows] == [long_sid, "persShare"]
             and drows[0].get("share_url") == exact_url
+            and drows[0].get("install_url")
+            == "grokbot://app/v1/bot-template?id=%s" % long_sid
             and drows[0].get("charter") == deploy_charter
             and drows[0].get("job") == "spend"
+            and drows[1].get("install_url") in (None, "")
             and set(drows[0]) == {
                 "charter",
+                "install_url",
                 "job",
                 "name",
                 "origin",
@@ -1868,6 +1936,8 @@ def selftest() -> int:
             _inspect.getsource(cmd_deploy)
             + _inspect.getsource(resolve_deploy_share_id)
             + _inspect.getsource(print_deploy_human)
+            + _inspect.getsource(install_url)
+            + _inspect.getsource(deploy_card)
         )
         check(
             "deploy-does-not-invoke-gb-role",
@@ -1875,6 +1945,7 @@ def selftest() -> int:
             and "gb-role" not in role_blob
             and "gb-role" not in deploy_src
             and "first-hour" not in deploy_src
+            and "CreateGrokBot" not in deploy_src
             and not any("gb-role" in str(c) for c in called),
             role_blob[:300] + deploy_src[:200],
         )
@@ -1902,6 +1973,19 @@ def selftest() -> int:
             and (not pack_const or pack_const == founder_jobs)
             and pack_row_jobs == [j for j in founder_jobs if j in pack_row_jobs]
             and all(r.get("share_id") for r in pack_rows),
+            str(pack_payload)[:400],
+        )
+        check(
+            "pack-json-schema-v2-install-url",
+            pack_cli[0] == 0
+            and PACK_SCHEMA == "gb-market-pack/2"
+            and pack_payload.get("schema") == PACK_SCHEMA
+            and any(
+                r.get("share_id") == "ANv3NrqPfRcS9PdXku7h8"
+                and r.get("install_url")
+                == "grokbot://app/v1/bot-template?id=ANv3NrqPfRcS9PdXku7h8"
+                for r in pack_rows
+            ),
             str(pack_payload)[:400],
         )
         unknown = _capture(
@@ -1945,11 +2029,12 @@ def selftest() -> int:
             )
         )
         check(
-            "pack-apply-refuses",
-            pack_apply[0] == EXIT_REFUSED
-            and "SHARE_URL" in pack_apply[1]
-            and pack_apply[1].count("\n") <= 2
-            and "CreateGrokBot" in pack_apply[1],
+            "pack-apply-prints-install-url",
+            pack_apply[0] == 0
+            and install_line in pack_apply[1]
+            and "ANv3NrqPfRcS9PdXku7h8" in pack_apply[1]
+            and "CreateGrokBot" not in pack_apply[1]
+            and "cursor.com/grok-bot/link" not in pack_apply[1],
             pack_apply[1],
         )
         import inspect as _inspect_pack
@@ -2153,7 +2238,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--apply",
         action="store_true",
-        help="deploy/pack: refused — open the SHARE_URL (does not create Bots)",
+        help="deploy/pack: print the grokbot:// install URL (does not call CreateGrokBot)",
     )
     ap.add_argument("--root", default="", help="artifact root (tests)")
     ap.add_argument("--selftest", action="store_true")

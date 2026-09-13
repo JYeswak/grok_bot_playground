@@ -14,7 +14,7 @@ Engine is stock sqlite3 (Python stdlib). fsqlite is not involved.
 
 ## Status honesty
 
-- Live: live HTTP pull, stamp write, `PRAGMA integrity_check`, `user_version`. `gb market deploy` prints one-click cards (name, job, catalog charter, official `https://x.ai/bot/<id>`). Dry-run is the whole door. Does not create Bots.
+- Live: live HTTP pull, stamp write, `PRAGMA integrity_check`, `user_version`. `gb market deploy` prints one-click cards (name, job, catalog charter, official `https://x.ai/bot/<id>`, INSTALL `grokbot://app/v1/bot-template?id=<id>`). Door 2 is live click-to-install. `--apply` does not create via RPC. Does not create Bots.
 - Dormant: official desktop snapshot on Linux (skip, exit 3, no traceback).
 - Live: persona shortlist (`gb market pack founder|engineer|seller`). Pack job lists are explicit named constants. Winner pick is the same Thompson as `gb market jobs` — not `gb swarm`, not a hardcoded champion list.
 - Design: swarm-from-live-shares. Not this file.
@@ -94,10 +94,10 @@ Live. Cards plus the official share URL. Not a Bot create. Not `gb templates dep
 - One or more catalog `share_id`s. No args is usage. Do not auto-deploy job draws (that would be a pack).
 - Resolve an exact id, or a unique prefix, against the catalog and — when the id is in the bandit store — via `resolve_share_id` / `list_share_ids_with_prefix`. 0 or 2+ matches refuse. Never invent a share_id.
 - Job `none` is allowed on deploy if they named the id. Taxonomy job only; name and charter do not assign one.
-- Card: NAME, JOB, SHARE_URL `https://x.ai/bot/<full share_id>` (never truncated), CHARTER as stored (or CHARTER MISSING), ORIGIN / category as display only. Empty charter still prints the URL. Do not scrape x.ai and guess a prompt.
-- JSON schema `gb-market-deploy/1` with `rows[{name, job, share_id, share_url, charter, origin}]`.
+- Card: NAME, JOB, SHARE_URL `https://x.ai/bot/<full share_id>` (never truncated), INSTALL `grokbot://app/v1/bot-template?id=<id>` when the id is a 21-char share_id (`^[A-Za-z0-9_-]{21}$`), CHARTER as stored (or CHARTER MISSING), ORIGIN / category as display only. Empty charter still prints the official URL. Do not scrape x.ai and guess a prompt. Do not invent a share_id or a different deep-link path.
+- JSON schema `gb-market-deploy/2` with `rows[{name, job, share_id, share_url, install_url, charter, origin}]`. `install_url` is built only for a 21-char catalog share_id; short or malformed ids cannot produce one.
 - `--offline` is the same refuse rules as jobs.
-- Dry-run is v1. `--apply` refuses with one line: open the SHARE_URL (do not call CreateGrokBot or templates).
+- Door 2 is live click-to-install via `grokbot://app/v1/bot-template?id=`. `--apply` prints the same cards including INSTALL (does not call CreateGrokBot, templates, or any RPC). The user taps the INSTALL line; the host installs. Without `--apply`, INSTALL is still on the card. Not `gb swarm`.
 
 ## Persona shortlist (`gb market pack`)
 
@@ -110,10 +110,10 @@ Live. A persona-shaped filter over the same Thompson draws as `gb market jobs`, 
   - seller: sell, market, brief, calendar
 - Same live pull as jobs unless `--offline`. Load catalog + bandit with the same refuse rules.
 - Call existing `pick_jobs(...)` once. Filter the draws to the pack list, preserving pack order. Record an impression on each drawn arm. Do not invent rewards.
-- Each drawn share_id becomes a door-2 deploy card (`https://x.ai/bot/<full id>`). A pack job with no deployable arm (no share_id / all banned) is blocked — do not fill it with a no-share row or a different job.
+- Each drawn share_id becomes a door-2 deploy card (`https://x.ai/bot/<full id>` plus INSTALL `grokbot://app/v1/bot-template?id=` when the id is 21 chars). A pack job with no deployable arm (no share_id / all banned) is blocked — do not fill it with a no-share row or a different job.
 - Human: `PERSONA <id>`, then one deploy card per drawn job, then blocked jobs.
-- JSON schema `gb-market-pack/1`: `{schema, persona, jobs, selector, bandit_user_version, rows, blocked}`. Selector stays `method=thompson`, `prior=beta(1,1)`, `candidate_cold=8`, no weights.
-- `--apply` refuses with one line: open the SHARE_URLs (do not call CreateGrokBot, templates, or gb swarm). Exit 5.
+- JSON schema `gb-market-pack/2`: `{schema, persona, jobs, selector, bandit_user_version, rows, blocked}`. Rows include `install_url` next to `share_url`. Selector stays `method=thompson`, `prior=beta(1,1)`, `candidate_cold=8`, no weights.
+- `--apply` prints the cards including INSTALL lines and exits 0. It does not create via RPC (not CreateGrokBot, not templates, not `gb swarm`). The user taps the INSTALL line.
 
 ## Bandit store (`usecases/bandit.sqlite`, user_version 2)
 
