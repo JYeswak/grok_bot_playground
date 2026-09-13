@@ -58,12 +58,23 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from gblib import dated_children, load  # noqa: E402
 from gbtypes import atomic_write_text  # noqa: E402
 from gbtypes import main as gbmain  # noqa: E402
+import importlib.util as _ilu  # noqa: E402
+
+def _market_db():
+    path = pathlib.Path(__file__).resolve().parent / "gb-market-db.py"
+    spec = _ilu.spec_from_file_location("gb_market_db", path)
+    mod = _ilu.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    return mod
 
 UA = "grokbot-usecase-index/1 (+local weekly refresh)"
 CORPUS = ("elie222/botdirectory.ai", "main", "bots/")
 SHARES_URL = "https://raw.githubusercontent.com/kydlikebtc/awesome-grokbot/main/catalog.json"
 SHARES_REPO = "kydlikebtc/awesome-grokbot"
+LINKS_REPO = ("RongleCat/awesome-grok-bot", "main")
 LINK_RE = re.compile(r"^-\s*\[([^\]]+)\]\((https?://[^)]+)\)\s*-?\s*(.*)$")
+MD_LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)]+)\)")
 
 
 def tarball(repo: str, ref: str) -> tarfile.TarFile | None:
@@ -466,28 +477,93 @@ def merge_corpus(
                 by[key]["import_url"] = row["import_url"]
         else:
             by[key] = dict(row)
-    return sorted(by.values(), key=lambda b: b.get("name") or "")
+    mdb = _market_db()
+    out = []
+    for row in by.values():
+        out.append(mdb.canonicalize_row(row))
+    return sorted(out, key=lambda b: b.get("name") or "")
 
-def harvest_links(path: pathlib.Path) -> List[Dict[str, Any]]:
-    """Curated link lists already fetched into the surface snapshot — parsed, not re-fetched."""
-    if not path.is_file():
-        return []
+def harvest_links_from_text(text: str) -> List[Dict[str, Any]]:
+    """Parse a markdown index. List form first; leftover MD links still count."""
     out: List[Dict[str, Any]] = []
+    seen = set()
     section = ""
-    for line in path.read_text(errors="replace").splitlines():
+    for line in text.splitlines():
         if line.startswith("## "):
             section = line[3:].strip()
+            continue
         m = LINK_RE.match(line.strip())
         if m:
+            url = m.group(2)
+            if url in seen:
+                continue
+            seen.add(url)
             out.append(
                 {
                     "title": m.group(1),
-                    "url": m.group(2),
+                    "url": url,
                     "description": redact_home_paths(m.group(3)[:220]),
                     "section": section,
                 }
             )
+            continue
+        for title, url in MD_LINK.findall(line):
+            if url in seen:
+                continue
+            if any(url.lower().endswith(ext) for ext in (".png", ".jpg", ".svg", ".gif", ".webp")):
+                continue
+            seen.add(url)
+            out.append(
+                {
+                    "title": title,
+                    "url": url,
+                    "description": "",
+                    "section": section,
+                }
+            )
     return out
+
+
+def harvest_links(path: pathlib.Path) -> List[Dict[str, Any]]:
+    """Curated link lists already fetched into the surface snapshot."""
+    if not path.is_file():
+        return []
+    return harvest_links_from_text(path.read_text(errors="replace"))
+
+
+def harvest_links_live() -> List[Dict[str, Any]]:
+    """RongleCat awesome-grok-bot README tarball. A clone has no local index."""
+    repo, ref = LINKS_REPO
+    tf = tarball(repo, ref)
+    if tf is None:
+        return []
+    texts: List[str] = []
+    for m in tf.getmembers():
+        base = m.name.rsplit("/", 1)[-1]
+        if base.startswith("README") and base.endswith(".md") and m.isfile():
+            f = tf.extractfile(m)
+            if f:
+                texts.append(f.read().decode("utf-8", "replace"))
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    for text in texts:
+        for row in harvest_links_from_text(text):
+            url = row.get("url")
+            if url in seen:
+                continue
+            seen.add(url)
+            out.append(row)
+    return out
+
+
+def merge_links(*groups: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    by: Dict[str, Dict[str, Any]] = {}
+    for group in groups:
+        for row in group:
+            url = str(row.get("url") or "")
+            if url and url not in by:
+                by[url] = dict(row)
+    return sorted(by.values(), key=lambda r: (r.get("section") or "", r.get("title") or "", r.get("url") or ""))
 
 
 # ---------------------------------------------------------------------------------------------
@@ -820,7 +896,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         if snaps
         else pathlib.Path("/nonexistent")
     )
-    links = harvest_links(idx)
+    links = merge_links(harvest_links(idx), harvest_links_live())
 
     cats = collections.Counter(b["category"] for b in bots)
     integ = collections.Counter(i for b in bots for i in b["integrations"])
@@ -887,6 +963,30 @@ def main(argv: Optional[List[str]] = None) -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(out, payload)
 
+    mdb = _market_db()
+    db_path = root / "usecases" / mdb.DB_NAME
+    try:
+        mdb.rebuild(
+            db_path,
+            bots,
+            links,
+            {
+                "captured_at": str(doc["captured_at"]),
+                "corpus_repo": str(doc["corpus_repo"]),
+                "shares_repo": str(doc["shares_repo"]),
+                "stamp": out.name,
+            },
+        )
+        db_line = "cache  %s  user_version=%s  bots=%s  links=%s" % (
+            db_path.name,
+            mdb.USER_VERSION,
+            len(bots),
+            len(links),
+        )
+    except mdb.CacheRefused as e:
+        print("ERROR %s" % e, file=sys.stderr)
+        return 2
+
     if args.json:
         print(
             json.dumps(
@@ -899,6 +999,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             f"(botdirectory {len(directory)} ∪ shares {len(shares)}), "
             f"{len(links)} curated links, {len(integ)} distinct integrations"
         )
+        print(db_line)
         print(f"  approval language in {doc['approval_share']:.0%} of prompts")
         ct = doc["charter_text"]
         print(
