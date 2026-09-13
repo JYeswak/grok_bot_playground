@@ -284,6 +284,7 @@ EXAMPLES = """\
   gb market skip <share_id>      record_outcome success=false
   gb market ban  <share_id>      mark the arm ineligible (hard filter, not a beta bump)
   gb market deploy <share_id> [...]  one-click cards: name, job, charter, https://x.ai/bot/<id>
+  gb market hot [N]              top share-linked Bots from X harvest with charter + score
   gb market pack founder         persona shortlist of Thompson draws (not swarm)
   gb market refresh --corpus     official snapshot + public corpus + shares
   gb market bots                 official ∪ corpus ∪ URL finds; denominators printed
@@ -638,15 +639,30 @@ class MarketArgs:
 
     action: str = arg(
         default="bots",
-        help="refresh | bots | new | jobs | keep | skip | ban | deploy | pack",
-        choices=("refresh", "bots", "new", "jobs", "keep", "skip", "ban", "deploy", "pack"),
+        help=(
+            "refresh | bots | new | jobs | keep | skip | ban | deploy | pack | hot. "
+            "hot: top share-linked Bots from X harvest with charter + score"
+        ),
+        choices=(
+            "refresh",
+            "bots",
+            "new",
+            "jobs",
+            "keep",
+            "skip",
+            "ban",
+            "deploy",
+            "pack",
+            "hot",
+        ),
         positional=True,
     )
     share_ids: Optional[List[str]] = arg(
         help=(
             "pack: founder | engineer | seller (sales → seller). "
             "deploy: one or more catalog share_ids or unique prefixes. "
-            "keep/skip/ban: one stored share_id or unique prefix"
+            "keep/skip/ban: one stored share_id or unique prefix. "
+            "hot: optional N (default 10)"
         ),
         positional=True,
     )
@@ -654,10 +670,16 @@ class MarketArgs:
     urls: bool = arg(help="bots: dump curated URL rows (default: counts by section/host)")
     full: bool = arg(help="bots: print every row (default: first 20)")
     offline: bool = arg(
-        help="bots/new: stamps only; jobs/deploy/pack: valid catalog cache only"
+        help=(
+            "bots/new: stamps only; jobs/deploy/pack: valid catalog cache only; "
+            "hot: local harvest + catalog cache"
+        )
     )
     apply: bool = arg(
-        help="deploy/pack: print the grokbot:// install URL (does not call CreateGrokBot)"
+        help=(
+            "deploy/pack: print the grokbot:// install URL (does not call CreateGrokBot). "
+            "hot: plan card only, not a hire"
+        )
     )
     json: bool = arg(help="machine-readable envelope on stdout")
     selftest: bool = arg(help="offline stamp fixtures")
@@ -3930,6 +3952,7 @@ ARMY. Four-command first hour. There is no first-hour role plan.
     gb market refresh --corpus                 official snapshot + public corpus
     gb market bots                             official ∪ corpus ∪ URL finds; print the union with denominators
     gb market pack founder                     persona shortlist of Thompson draws (not swarm)
+    gb market hot [N]                          top share-linked Bots from X harvest with charter + score
     gb stack founder                           hire plan: ROOM + seats + INSTALL
     gb stack founder --apply                   hire gate; REFUSES if share-install RPC is unproven
 
