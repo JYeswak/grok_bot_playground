@@ -131,14 +131,12 @@ EXIT_CODES: Dict[int, str] = {
 
 # Four-command first hour. Newbie guesses and empty `gb` name these, not a role plan.
 ARMY_NEXT = (
-    "gb market refresh --corpus, gb market bots, gb templates deploy <id> --apply, "
-    "gb swarm <persona>, gb stack"
+    "gb market bots, gb market deploy, gb market pack, gb stack"
 )
 ARMY_COMMANDS = (
-    "gb market refresh --corpus",
     "gb market bots",
-    "gb templates deploy",
-    "gb swarm",
+    "gb market deploy",
+    "gb market pack",
     "gb stack",
 )
 ARMY_GUESSES = frozenset({
@@ -284,13 +282,11 @@ EXAMPLES = """\
   gb market keep <share_id>      record_outcome success=true for that subject's arm
   gb market skip <share_id>      record_outcome success=false
   gb market ban  <share_id>      mark the arm ineligible (hard filter, not a beta bump)
-  gb market deploy <share_id> [...]  one-click cards: name, job, charter, https://x.ai/bot/<id>
+  gb market deploy <share_id> [...]  one-click cards: name, job, charter, grokbot:// install URL
   gb market pack founder         persona shortlist of Thompson draws (not swarm)
   gb market refresh --corpus     official snapshot + public corpus + shares
   gb market bots                 official ∪ corpus ∪ URL finds; denominators printed
-  gb templates deploy <id> --apply   create that Bot (CreateGrokBotAgentFromTemplate + Update)
-  gb swarm <persona>             deploy one persona pack's Bot list
-  gb stack                       plugins catalog, attachable skills, gb x methods
+  gb stack founder               desk: skills + plugin install URLs + methods
   gb triage                      what is wrong right now, and the command that fixes it
   gb triage --json | jq .red     the same answer, for a script
   gb work                        what to pick up next, and whether the ranking is trustworthy
@@ -540,7 +536,7 @@ class BootstrapArgs:
     role: Optional[str] = arg(help="human role phrase (omit for the army path)")
     json: bool = arg(help="machine-readable envelope on stdout")
     for_agent: bool = arg(
-        help="print the four-command first hour for an agent: market, deploy, swarm, stack"
+        help="print the four-command first hour for an agent: market bots, deploy, pack, stack"
     )
 
 @dataclasses.dataclass(frozen=True)
@@ -676,10 +672,17 @@ class SwarmArgs:
 
 @dataclasses.dataclass(frozen=True)
 class StackArgs:
-    """Plugin catalog total, attachable skills, and gb x methods by distinct authors."""
+    """First-hour desk: skills on disk, plugin install URLs, existing gb methods."""
 
+    persona: Optional[str] = arg(
+        help="founder | engineer | seller (sales → seller)",
+        positional=True,
+    )
+    apply: bool = arg(
+        help="print the same cards including INSTALL (does not call an install RPC)"
+    )
     json: bool = arg(help="machine-readable envelope on stdout")
-    selftest: bool = arg(help="offline snapshot fixtures")
+    selftest: bool = arg(help="offline planted-skill fixtures")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -3906,14 +3909,14 @@ taking seconds or not returning. It is the second stop, after `gb setup --apply`
 
 ARMY. Four-command first hour. There is no first-hour role plan.
 
-    gb market refresh --corpus                 official snapshot + public corpus
     gb market bots                             official ∪ corpus ∪ URL finds; print the union with denominators
-    gb templates deploy <id> --apply           create that Bot (charter + instructions)
-    gb swarm <persona>                         one persona pack's Bot list (not the prove-a-job trio)
-    gb stack                                   plugins catalog, attachable skills, gb x methods
+    gb market deploy <share_id>                one-click cards + grokbot://bot-template install URL
+    gb market pack founder                     persona shortlist of those draws (not swarm)
+    gb stack founder                           desk: skills + plugin install URLs + methods
 
     Honest limits: bot_marketplace rows often lack share_id (one-click blocked until
-    the scan carries it). Plugin install is HUMAN Settings → Plugins (no install RPC).
+    the scan carries it). Plugin install is the grokbot:// tap
+    (`grokbot://app/v1/plugin/add?id=`), not an install RPC.
 
 ONCE CONFIGURED, triage is the loop.
 
@@ -3976,7 +3979,7 @@ sentence on this page.
 CANCELLATION. Every command is safe to SIGINT: artifact writes are atomic, so you get either the
 old artifact or the new one, and the process exits 130.
 
-AGENT DROP FILES. The four-command first hour does not need AGENTS.md — market, deploy, swarm, and stack are enough.
+AGENT DROP FILES. The four-command first hour does not need AGENTS.md — market bots, deploy, pack, and stack are enough.
 A fresh clone also carries AGENTS.md plus CLAUDE.md and .cursor/rules/grok-bot.mdc, which are
 pointers rather than copies.
 """)
@@ -3990,15 +3993,14 @@ gb — quickstart
 This repo watches one thing: a live Grok Bot deployment (the account, its Bots, its plugins, and
 the vendor surface those depend on). The producers in bin/ measure it; `gb` is how you ask.
 
-Four-command first hour (scan, deploy, swarm, stack):
-  gb market refresh --corpus
+Four-command first hour (scan, deploy, pack, stack):
   gb market bots
-  gb templates deploy <id> --apply
-  gb swarm <persona>
+  gb market deploy
+  gb market pack
   gb stack
 
   Honest limits: marketplace rows often lack share_id (one-click blocked).
-  Plugin install is HUMAN Settings → Plugins (no install RPC).
+  Plugin install is the grokbot:// tap, not an install RPC.
 
   0. gb setup             fresh clone? this registers this machine and takes the first
                           measurements (dry run unless --apply). Until something has been
@@ -4526,14 +4528,18 @@ def cmd_swarm(a: SwarmArgs) -> int:
 
 
 def cmd_stack(a: StackArgs) -> int:
-    """Pass through to `bin/gb-stack.py` — plugins catalog, skills, gb x methods."""
+    """Pass through to `bin/gb-stack.py` — skills, plugin install URLs, existing methods."""
     argv: List[str] = [sys.executable, str(BIN / "gb-stack.py")]
     if a.selftest:
         argv.append("--selftest")
         return _passthrough(argv, budget_s=30, label="stack")
+    if a.persona:
+        argv.append(a.persona)
+    if a.apply:
+        argv.append("--apply")
     if a.json:
         argv.append("--json")
-    return _passthrough(argv, budget_s=180, label="stack")
+    return _passthrough(argv, budget_s=30, label="stack")
 
 
 def cmd_jobs(a: JobsArgs) -> int:
@@ -5540,10 +5546,9 @@ def body() -> int:
         ),
         epilog=(
             "ARMY / AGENT:\n"
-            "  gb market refresh --corpus\n"
             "  gb market bots\n"
-            "  gb templates deploy <id> --apply\n"
-            "  gb swarm <persona>\n"
+            "  gb market deploy\n"
+            "  gb market pack\n"
             "  gb stack"
         ),
     )

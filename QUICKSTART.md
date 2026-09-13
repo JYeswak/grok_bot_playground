@@ -1,25 +1,26 @@
 # Quickstart — four-command first hour
 
-Scan the live marketplace, deploy the Bots you name, swarm a persona pack,
-then read the stack before you copy a weak Bot.
+Scan the live marketplace, open a deploy card, pack a persona shortlist,
+then read the desk (skills + plugin install URLs + methods).
 
 ```sh
-gb market refresh --corpus
 gb market bots
-gb templates deploy <id> --apply
-gb swarm <persona>
+gb market deploy
+gb market pack
 gb stack
 ```
 
 `gb market bots` reprints the official + public-corpus union (name, source,
 category, builder) with official / corpus / overlap / union denominators, plus
 curated URL finds (counts; `--urls` dumps them). `gb market new` is names in
-the current identity set that were not in the previous stamps. `deploy --apply`
-creates each named Bot via CreateGrokBotAgentFromTemplate + Update. `gb swarm
-founder-operator` plans that pack's Bot list. `gb stack` reprints the plugin
-catalog total from the newest market snapshot, lists attachable skills, and
-runs `gb x` methods ranked by distinct authors. This path never redirects to
-`gb role "first hour"`.
+the current identity set that were not in the previous stamps. `gb market
+deploy <share_id>` prints the one-click card including INSTALL
+`grokbot://app/v1/bot-template?id=`. `gb market pack founder` is a persona
+shortlist of those draws. `gb stack founder` prints the desk: skills that
+exist on disk, marketplace plugins with INSTALL
+`grokbot://app/v1/plugin/add?id=`, and existing `gb` methods. `--apply` on
+stack reprints the same cards including INSTALL and does not call an install
+RPC. This path never redirects to `gb role "first hour"`.
 
 **Here for Galaxy week (Sept 15-17)?** Find your session in
 [GALAXY.md](GALAXY.md) and paste that row's Bot.
@@ -28,13 +29,15 @@ runs `gb x` methods ranked by distinct authors. This path never redirects to
 Two things you will actually do in the next five minutes:
 
 1. get the CLI, and scan official listings + the public corpus + URL finds
-2. deploy the Bots you name, or swarm one persona, then read the stack
+2. open a deploy card or pack a persona, then read the desk with `gb stack`
 
 ### Honest limits
 
-Official marketplace rows often lack `share_id`. One-click deploy is blocked
-until the scan carries it. Plugin install is still human: Settings → Plugins.
-There is no install RPC. usecases/ is a public-source refresh a clone can run.
+Official marketplace rows often lack `share_id`. One-click deploy is the
+INSTALL `grokbot://` line on the deploy card when the scan carries a real
+id. Plugin install is the grokbot:// tap
+(`grokbot://app/v1/plugin/add?id=`), not an install RPC. usecases/ is a
+public-source refresh a clone can run.
 
 `gb` does not drive the Grok Bot app, cannot sign in, and never asks for a credential.
 There is no connector-install call — connectors are installed in the app. What it CAN do,
@@ -130,9 +133,9 @@ Then the four-command first hour:
 
 ```sh
 gb market bots
-gb templates deploy <id> --apply
-gb swarm founder-operator
-gb stack
+gb market deploy
+gb market pack founder
+gb stack founder
 ```
 
 `gb bootstrap --for-agent` prints the same four commands. `gb walk bots --paste <id>`
@@ -182,9 +185,10 @@ python3 bin/gb-templates.py stats      # ours vs the 645-Bot corpus vs the live 
 
 ## 4. Paste or deploy one Bot (1 minute)
 
-Scan first (`gb market bots`), then name slugs and deploy them. `gb swarm
-founder-operator` stands up that pack. `hello-computer` remains a deployable Bot
-if you want a machine check; it is not the on-ramp.
+Scan first (`gb market bots`), then name a share_id and open the deploy
+card (`gb market deploy`). `gb market pack founder` shortlists that
+persona's jobs. `hello-computer` remains a deployable Bot if you want a
+machine check; it is a gate, not the on-ramp.
 
 ```sh
 gb walk bots --paste research-desk | pbcopy       # macOS
@@ -204,9 +208,11 @@ Then, in the Grok Bot app:
    <id> --apply` creates the Bot from the seed template and asks it, in chat, to
    schedule itself (there is no direct routine-create RPC; the chat path is proven
    live, prompt content verified back, never the count).
-3. **Read the stack** with `gb stack` before you copy a weak Bot. Enable a
-   plugin for that Bot in the app; installed is not enabled. Plugin install
-   is Settings → Plugins (no install RPC).
+3. **Read the desk** with `gb stack founder` before you copy a weak Bot.
+   Plugin install is the INSTALL `grokbot://app/v1/plugin/add?id=` line.
+   Installed is not enabled — that toggle is still in the app. The CLI
+   does not call an install RPC and does not claim the account already
+   has Gmail.
 4. **Leave notifications as you found them.** Per-Bot switches read ON over the
    authoritative echo where measured (8/8 on 2026-09-12); the old "all off" line was
    roster-blob cache (NE-19). Whether an approval actually surfaces on-device is unmeasured.
@@ -239,7 +245,7 @@ gb doctor --scope <subsystem>
 
 | you want | read |
 |---|---|
-| the four-command first hour | `gb market bots` then `gb templates deploy` then `gb swarm` then `gb stack` |
+| the four-command first hour | `gb market bots` then `gb market deploy` then `gb market pack` then `gb stack` |
 | the whole surface, written for an agent | `gb robot-docs` |
 | the machine contract (verbs, exit codes, subsystems) | `gb capabilities --json` |
 | the template schema and the vendor boundary | `templates/SCHEMA.md` |

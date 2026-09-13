@@ -17,12 +17,13 @@ Engine is stock sqlite3 (Python stdlib). fsqlite is not involved.
 - Live: live HTTP pull, stamp write, `PRAGMA integrity_check`, `user_version`. `gb market deploy` prints one-click cards (name, job, catalog charter, official `https://x.ai/bot/<id>`, INSTALL `grokbot://app/v1/bot-template?id=<id>`). Door 2 is live click-to-install. `--apply` does not create via RPC. Does not create Bots.
 - Dormant: official desktop snapshot on Linux (skip, exit 3, no traceback).
 - Live: persona shortlist (`gb market pack founder|engineer|seller`). Pack job lists are explicit named constants. Winner pick is the same Thompson as `gb market jobs` — not `gb swarm`, not a hardcoded champion list.
+- Live: Door 4 first-hour desk (`gb stack founder|engineer|seller`). Skill / plugin / method lists are explicit named constants. Plugin install is the `grokbot://app/v1/plugin/add?id=` tap, not an RPC. Not swarm. Not a ranked champion.
 - Design: swarm-from-live-shares. Not this file.
 - Issue-limited: RongleCat link harvest still 0 on a clone (local index only).
 
 ## Sync Triggers
 
-- On command: `gb market bots` (default live pull), `gb market jobs` (same live pull, then one Thompson draw per job), `gb market pack founder|engineer|seller` (same live pull, then those draws filtered to an explicit job list), `gb market deploy <share_id> [...]` (cards + official share URL), and `gb market refresh --corpus`. `gb market keep|skip|ban <share_id>` write the bandit store only. They do not import, deploy, or invent a share_id.
+- On command: `gb market bots` (default live pull), `gb market jobs` (same live pull, then one Thompson draw per job), `gb market pack founder|engineer|seller` (same live pull, then those draws filtered to an explicit job list), `gb market deploy <share_id> [...]` (cards + official share URL), and `gb market refresh --corpus`. `gb stack founder|engineer|seller` prints the first-hour desk from named lists on disk — no market stamp, no live pull. `gb market keep|skip|ban <share_id>` write the bandit store only. They do not import, deploy, or invent a share_id.
 - On exit: none.
 - Timer/throttle: none required. `--offline` reads cache only. `gb market jobs --offline`, `gb market pack --offline`, and `gb market deploy --offline` refuse if the catalog `integrity_check` or `user_version` fail. A planted-bad bandit store is also refused. A missing bandit store is a cold start (explore), not a refuse.
 - One-way: catalog → sqlite → optional JSON stamp. Never sqlite → catalog. Never JSON → sqlite unless `--offline` and sqlite missing (rebuild cache from newest stamp, then integrity_check). Never catalog rebuild → bandit store.
@@ -114,6 +115,20 @@ Live. A persona-shaped filter over the same Thompson draws as `gb market jobs`, 
 - Human: `PERSONA <id>`, then one deploy card per drawn job, then blocked jobs.
 - JSON schema `gb-market-pack/2`: `{schema, persona, jobs, selector, bandit_user_version, rows, blocked}`. Rows include `install_url` next to `share_url`. Selector stays `method=thompson`, `prior=beta(1,1)`, `candidate_cold=8`, no weights.
 - `--apply` prints the cards including INSTALL lines and exits 0. It does not create via RPC (not CreateGrokBot, not templates, not `gb swarm`). The user taps the INSTALL line.
+
+## Door 4 (`gb stack`)
+
+Live. Lists explicit. Not swarm. Plugin install is the `grokbot://` tap, not RPC.
+
+Explicit named lists per persona, same ids as pack (`founder` | `engineer` | `seller`; `sales` → `seller`). Not a plugin catalog dump. Not Thompson. Not a ranked champion. Not `gb swarm`. Not Pstack's skill list.
+
+- A stranger clone needs no `market/<stamp>.json`. Skills are only slugs that exist as `plugin/skills/<slug>/SKILL.md`. A missing slug is a blocked row, not an invented skill.
+- hello-computer is a gate, not a hook: it is not on any first-hour skill list.
+- Plugins are named marketplace plugins with the three measured ids (SearchPlugins, 2026-09-13): Gmail `45893410`, Google Calendar `45893411`, GitHub `48677658`. INSTALL is `grokbot://app/v1/plugin/add?id=<id>` — same family as plugin add, the tap, not an RPC. Do not invent ids. Do not claim installed or connected. The CLI cannot know account state.
+- Methods are existing `gb` verbs only, one line each. If `gb x` needs a harvest the clone lacks, print the method and an honest ENVIRONMENT note. Do not crash. Do not dump a preview as the product.
+- `--apply` prints the same cards including plugin INSTALL lines and exits 0. It does not call an install RPC, CreateGrokBot, templates, or `gb swarm`.
+- Human card: `PERSONA`, then `SKILL` rows, then `PLUGIN` + `INSTALL` pairs, then `METHOD` rows, then blocked rows.
+- JSON schema `gb-stack/2`: `{schema, persona, skills, plugins[{name, plugin_id, install_url}], methods[{verb, argv}], blocked}`.
 
 ## Bandit store (`usecases/bandit.sqlite`, user_version 2)
 
