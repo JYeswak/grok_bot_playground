@@ -129,8 +129,18 @@ EXIT_CODES: Dict[int, str] = {
     130: "CANCELLED — SIGINT arrived; no partial artifact was written",
 }
 
-# Army on-ramp. Newbie guesses and empty `gb` name these verbs, not a role plan.
-ARMY_NEXT = "gb templates deploy <id> --apply, gb skills attach, gb plugins"
+# Four-command first hour. Newbie guesses and empty `gb` name these, not a role plan.
+ARMY_NEXT = (
+    "gb market refresh, gb market bots, gb templates deploy <id> --apply, "
+    "gb swarm <persona>, gb stack"
+)
+ARMY_COMMANDS = (
+    "gb market refresh",
+    "gb market bots",
+    "gb templates deploy",
+    "gb swarm",
+    "gb stack",
+)
 ARMY_GUESSES = frozenset({
     "start", "launch", "hello", "onboard", "onboarding", "init",
     "begin", "intro", "getting-started", "gettingstarted",
@@ -267,11 +277,11 @@ EXAMPLES = """\
   gb setup --apply               measure first, then commit this desktop transactionally
   gb setup --apply --device brain    name the machine yourself instead of using the hostname
   gb setup --selftest            offline fake-producer rollback and commit proofs
-  gb templates                   list the Bot templates this repo proposes
-  gb walk bots --paste <id>      one charter, ready to paste
-  gb templates deploy <id> --apply   create that Bot from the seed template
-  gb skills attach               attach a skill to a live Bot
-  gb plugins                     marketplace catalog and this account's installs
+  gb market refresh              snapshot live marketplace Bots (network)
+  gb market bots                 name, creator, category, updated; new since last stamp
+  gb templates deploy <id> --apply   create that Bot (CreateGrokBotAgentFromTemplate + Update)
+  gb swarm <persona>             deploy one persona pack's Bot list
+  gb stack                       plugins catalog, attachable skills, gb x methods
   gb triage                      what is wrong right now, and the command that fixes it
   gb triage --json | jq .red     the same answer, for a script
   gb work                        what to pick up next, and whether the ranking is trustworthy
@@ -521,7 +531,7 @@ class BootstrapArgs:
     role: Optional[str] = arg(help="human role phrase (omit for the army path)")
     json: bool = arg(help="machine-readable envelope on stdout")
     for_agent: bool = arg(
-        help="print the army path for an agent: templates, skills, plugins"
+        help="print the four-command first hour for an agent: market, deploy, swarm, stack"
     )
 
 @dataclasses.dataclass(frozen=True)
@@ -609,6 +619,42 @@ class PluginsArgs:
     job: Optional[str] = arg(help="create-brief: one-sentence job")
     json: bool = arg(help="machine-readable envelope on stdout")
     selftest: bool = arg(help="offline known-good/known-bad legs")
+
+
+@dataclasses.dataclass(frozen=True)
+class MarketArgs:
+    """Scan live marketplace Bots from the newest market/<stamp>.json."""
+
+    action: str = arg(
+        default="bots",
+        help="refresh | bots",
+        choices=("refresh", "bots"),
+        positional=True,
+    )
+    json: bool = arg(help="machine-readable envelope on stdout")
+    selftest: bool = arg(help="offline stamp fixtures")
+
+
+@dataclasses.dataclass(frozen=True)
+class SwarmArgs:
+    """Deploy every Bot in one persona pack via templates deploy."""
+
+    persona: Optional[str] = arg(
+        help="persona pack id, e.g. founder-operator",
+        positional=True,
+    )
+    apply: bool = arg(help="deploy each template for real (dry-run plan without it)")
+    json: bool = arg(help="machine-readable envelope on stdout")
+    selftest: bool = arg(help="offline persona fixtures")
+
+
+@dataclasses.dataclass(frozen=True)
+class StackArgs:
+    """Plugin catalog total, attachable skills, and gb x methods by distinct authors."""
+
+    json: bool = arg(help="machine-readable envelope on stdout")
+    selftest: bool = arg(help="offline snapshot fixtures")
+
 
 @dataclasses.dataclass(frozen=True)
 class JobsArgs:
@@ -1301,6 +1347,9 @@ COMMANDS: Dict[str, type] = {
     "mirror": MirrorArgs,
     "demand": DemandArgs,
     "plugins": PluginsArgs,
+    "market": MarketArgs,
+    "swarm": SwarmArgs,
+    "stack": StackArgs,
     "jobs": JobsArgs,
     "blast": BlastArgs,
     "galaxy": GalaxyArgs,
@@ -3829,13 +3878,16 @@ taking seconds or not returning. It is the second stop, after `gb setup --apply`
     gb platform --json     | jq -r .status                is this OS even measured here
     gb mirror                                             your own fleet, off disk, no token
 
-ARMY. Build Bots with templates, skills, and plugins. There is no first-hour role plan.
+ARMY. Four-command first hour. There is no first-hour role plan.
 
-    gb templates                               list the shelf
-    gb walk bots --paste <id>                  one charter, ready to paste
-    gb templates deploy <id> --apply           create that Bot from the seed template
-    gb skills attach                           attach a skill to a live Bot
-    gb plugins                                 marketplace catalog and this account's installs
+    gb market refresh                          snapshot live marketplace Bots
+    gb market bots                             name, creator, category, updated; new since last stamp
+    gb templates deploy <id> --apply           create that Bot (charter + instructions)
+    gb swarm <persona>                         one persona pack's Bot list (not the prove-a-job trio)
+    gb stack                                   plugins catalog, attachable skills, gb x methods
+
+    Honest limits: bot_marketplace rows often lack share_id (one-click blocked until
+    the scan carries it). Plugin install is HUMAN Settings → Plugins (no install RPC).
 
 ONCE CONFIGURED, triage is the loop.
 
@@ -3898,7 +3950,7 @@ sentence on this page.
 CANCELLATION. Every command is safe to SIGINT: artifact writes are atomic, so you get either the
 old artifact or the new one, and the process exits 130.
 
-AGENT DROP FILES. The army path does not need AGENTS.md — templates, skills, and plugins are enough.
+AGENT DROP FILES. The four-command first hour does not need AGENTS.md — market, deploy, swarm, and stack are enough.
 A fresh clone also carries AGENTS.md plus CLAUDE.md and .cursor/rules/grok-bot.mdc, which are
 pointers rather than copies.
 """)
@@ -3912,12 +3964,15 @@ gb — quickstart
 This repo watches one thing: a live Grok Bot deployment (the account, its Bots, its plugins, and
 the vendor surface those depend on). The producers in bin/ measure it; `gb` is how you ask.
 
-Army path (templates, skills, plugins):
-  gb templates
-  gb walk bots --paste <id>
+Four-command first hour (scan, deploy, swarm, stack):
+  gb market refresh
+  gb market bots
   gb templates deploy <id> --apply
-  gb skills attach
-  gb plugins
+  gb swarm <persona>
+  gb stack
+
+  Honest limits: marketplace rows often lack share_id (one-click blocked).
+  Plugin install is HUMAN Settings → Plugins (no install RPC).
 
   0. gb setup             fresh clone? this registers this machine and takes the first
                           measurements (dry run unless --apply). Until something has been
@@ -4167,7 +4222,7 @@ def cmd_templates(a: TemplatesArgs) -> int:
     argv: List[str] = [sys.executable, str(BIN / "gb-templates.py"), a.action]
     if a.action in ("show", "deploy", "publish"):
         if not a.id:
-            hint = f"gb templates {a.action} hello-computer"
+            hint = f"gb templates {a.action} <id>"
             listing = "gb templates list"
             if a.apply:
                 print(
@@ -4266,7 +4321,7 @@ def cmd_walk(a: WalkArgs) -> int:
     if not a.track:
         print(
             "gb: walk needs a track: cli | bots\n"
-            "    army:        gb templates\n"
+            "    army:        gb market bots\n"
             "    CLI tour:    gb walk cli\n"
             "    Bot tour:    gb walk bots\n"
             "    paste one:   gb walk bots --paste <id>\n"
@@ -4301,7 +4356,7 @@ def cmd_bootstrap(a: BootstrapArgs) -> int:
         status="OK",
         mutates=False,
         next=ARMY_NEXT,
-        commands=["gb templates", "gb skills attach", "gb plugins"],
+        commands=list(ARMY_COMMANDS),
     )
     emit(payload, a.json, reason)
     return EXIT_OK
@@ -4401,6 +4456,45 @@ def cmd_plugins(a: PluginsArgs) -> int:
         argv.append("--json")
     budget = 120 if a.action != "refresh" else 120
     return _passthrough(argv, budget_s=budget, label="plugins")
+
+
+def cmd_market(a: MarketArgs) -> int:
+    """Pass through to `bin/gb-market.py` — live marketplace Bots from market/<stamp>.json."""
+    argv: List[str] = [sys.executable, str(BIN / "gb-market.py")]
+    if a.selftest:
+        argv.append("--selftest")
+        return _passthrough(argv, budget_s=30, label="market")
+    argv.append(a.action)
+    if a.json:
+        argv.append("--json")
+    budget = 180 if a.action == "refresh" else 30
+    return _passthrough(argv, budget_s=budget, label="market")
+
+
+def cmd_swarm(a: SwarmArgs) -> int:
+    """Pass through to `bin/gb-swarm.py` — one persona pack via templates deploy."""
+    argv: List[str] = [sys.executable, str(BIN / "gb-swarm.py")]
+    if a.selftest:
+        argv.append("--selftest")
+        return _passthrough(argv, budget_s=30, label="swarm")
+    if a.persona:
+        argv.append(a.persona)
+    if a.apply:
+        argv.append("--apply")
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=1800 if a.apply else 30, label="swarm")
+
+
+def cmd_stack(a: StackArgs) -> int:
+    """Pass through to `bin/gb-stack.py` — plugins catalog, skills, gb x methods."""
+    argv: List[str] = [sys.executable, str(BIN / "gb-stack.py")]
+    if a.selftest:
+        argv.append("--selftest")
+        return _passthrough(argv, budget_s=30, label="stack")
+    if a.json:
+        argv.append("--json")
+    return _passthrough(argv, budget_s=180, label="stack")
 
 
 def cmd_jobs(a: JobsArgs) -> int:
@@ -5271,7 +5365,9 @@ def cmd_dm(a: DmArgs) -> int:
 HANDLERS: Dict[str, Callable[[Any], int]] = {
     "setup": cmd_setup, "role": cmd_role, "bootstrap": cmd_bootstrap, "platform": cmd_platform, "mine": cmd_mine, "monitor": cmd_monitor,
     "templates": cmd_templates, "walk": cmd_walk, "daily": cmd_daily, "digest": cmd_digest,
-    "mirror": cmd_mirror, "demand": cmd_demand, "plugins": cmd_plugins, "jobs": cmd_jobs, "galaxy": cmd_galaxy, "fleet": cmd_fleet,
+    "mirror": cmd_mirror, "demand": cmd_demand, "plugins": cmd_plugins,
+    "market": cmd_market, "swarm": cmd_swarm, "stack": cmd_stack,
+    "jobs": cmd_jobs, "galaxy": cmd_galaxy, "fleet": cmd_fleet,
     "blast": cmd_blast,
     "corpus": cmd_corpus, "dogfood": cmd_dogfood, "gatesdoc": cmd_gatesdoc,
     "readme": cmd_readme,
@@ -5340,8 +5436,8 @@ def _hint_army(token: str, as_json: bool) -> int:
             error=f"no command {token!r}",
             mutates=False,
             next=ARMY_NEXT,
-            recovery_argv=["gb", "templates"],
-            list_argv=["gb", "templates"],
+            recovery_argv=["gb", "market", "bots"],
+            list_argv=["gb", "market", "bots"],
         ), True, "")
     else:
         print(
@@ -5393,7 +5489,7 @@ def body() -> int:
             status="OK",
             mutates=False,
             next=ARMY_NEXT,
-            commands=["gb templates", "gb skills attach", "gb plugins"],
+            commands=list(ARMY_COMMANDS),
         )
         emit(payload, "--json" in rest, reason)
         return EXIT_OK
@@ -5405,9 +5501,11 @@ def body() -> int:
         ),
         epilog=(
             "ARMY / AGENT:\n"
-            "  gb templates\n"
-            "  gb walk bots --paste <id>\n"
-            f"  {ARMY_NEXT}"
+            "  gb market refresh\n"
+            "  gb market bots\n"
+            "  gb templates deploy <id> --apply\n"
+            "  gb swarm <persona>\n"
+            "  gb stack"
         ),
     )
     return HANDLERS[name](args)

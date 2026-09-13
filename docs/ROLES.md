@@ -3,14 +3,14 @@
 This is the human index for `personas/` and `templates/`.
 It does not invent Bots. Every id below is a file that already ships.
 
-Stand a Bot up with the army path, then repeat:
+Stand Bots up with the four-command first hour, then repeat:
 
 ```sh
-gb templates
-gb walk bots --paste <id>
+gb market refresh
+gb market bots
 gb templates deploy <id> --apply
-gb skills attach
-gb plugins
+gb swarm <persona>
+gb stack
 ```
 
 `gb role "first hour"` is refused. Packs remain files you can walk; they are
@@ -74,7 +74,8 @@ The 645 attributed Bots other people built sit at a median charter of **625**
 characters. Every template in this repo is one job, under a 900-character cap,
 with a `verify` line that names the number that should move.
 
-Start with `gb templates`, paste or deploy one Bot, attach a skill, list
-plugins, and repeat. `hello-computer`, `first-file-desk`, and `plugin-proof`
-remain deployable Bots. They are not the on-ramp. Founders paste
-`morning-briefing`.
+Start with `gb market bots`, deploy the slugs you name, `gb swarm
+founder-operator` for that pack, then `gb stack`. `hello-computer`,
+`first-file-desk`, and `plugin-proof` remain deployable Bots. They are not
+the on-ramp, and `gb swarm` refuses a pack whose list is exactly those three.
+Founders swarm `founder-operator` (first Bot: `morning-briefing`).

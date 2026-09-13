@@ -160,7 +160,7 @@ def resolve_persona(phrase: str) -> str:
     if key in {"first hour", "firsthour"} or key.replace(" ", "") == "firsthour":
         raise JourneyRefused(
             "ROLE_REFUSED: first-hour is not an on-ramp; next: "
-            "gb templates deploy <id> --apply, gb skills attach, gb plugins"
+            "gb market bots, gb templates deploy <id> --apply, gb swarm <persona>, gb stack"
         )
     matches = [
         row
@@ -553,9 +553,10 @@ def _check_resolution_selftests(leg: Callable[[str, bool], None]) -> None:
         leg(
             "first-hour-role-refuses",
             msg.startswith("ROLE_REFUSED:")
+            and "gb market bots" in msg
             and "gb templates deploy" in msg
-            and "gb skills attach" in msg
-            and "gb plugins" in msg,
+            and "gb swarm" in msg
+            and "gb stack" in msg,
         )
     try:
         resolve_persona("eng-lead")
@@ -1691,7 +1692,7 @@ def _emit_role_resolution_error(args: Any, exc: JourneyRefused) -> int:
                     "mutates": False,
                     "error": detail.strip(),
                     "next": (
-                        "gb templates deploy <id> --apply, gb skills attach, gb plugins"
+                        "gb market bots, gb templates deploy <id> --apply, gb swarm <persona>, gb stack"
                         if refused
                         else None
                     ),

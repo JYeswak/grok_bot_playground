@@ -15,23 +15,33 @@
   <img alt="zero required runtime dependencies" src="https://img.shields.io/badge/required%20deps-0-black">
 </p>
 
-## Build a Bot army
+## First hour — four commands
 
-Use the CLI to list templates, paste or deploy a Bot, attach skills, install
-plugins, and repeat. That is the on-ramp. There is no staged first-hour role.
+Scan the live marketplace, deploy the Bots you name, swarm a persona pack,
+then read the stack before you copy a weak Bot. That is the on-ramp. There
+is no staged first-hour role.
 
 ```sh
-gb templates
-gb walk bots --paste <id>
+gb market refresh
+gb market bots
 gb templates deploy <id> --apply
-gb skills attach
-gb plugins
+gb swarm <persona>
+gb stack
 ```
 
-`--paste` prints one charter. `deploy --apply` creates the Bot from the seed
-template when a desktop session is live. `gb skills attach` attaches a skill.
-`gb plugins` lists the marketplace and this account's installs. Then pick the
-next template.
+1. **Scan.** `gb market refresh` then `gb market bots` lists live marketplace
+   Bots from `market/*.json` (`bot_marketplace.rows`): name, creator, category,
+   updated, plus new since the previous stamp. Not a 101.
+2. **Pick and deploy.** Name slugs. `gb templates deploy <id> --apply` creates
+   each Bot via CreateGrokBotAgentFromTemplate + Update. Repeat for each slug.
+   This path never redirects to `gb role "first hour"`.
+3. **Persona swarm.** `gb swarm founder-operator` plans that pack's Bot list
+   (13 templates in this tree). `--apply` walks the same deploy path. `gb swarm`
+   refuses `first-hour` and any pack whose list is exactly hello-computer +
+   first-file-desk + plugin-proof.
+4. **Stack.** `gb stack` reprints the plugin catalog total from the newest
+   market snapshot (same source as `gb plugins catalog`), lists attachable
+   skills on disk, and runs `gb x` methods ranked by distinct authors.
 
 **Here for Grok Bot Galaxy (Sept 15-17)?** Pick your seat in
 [GALAXY.md](GALAXY.md) and paste that row's Bot.
@@ -47,21 +57,27 @@ next template.
 | Marketing / marketing ops | `galaxy-marketing-ops` |
 
 Every template id above exists in this tree.
-[docs/ROLES.md](docs/ROLES.md) maps seats to packs; the army path above is how
-you stand a Bot up.
+[docs/ROLES.md](docs/ROLES.md) maps seats to packs; the four commands above
+are how you stand Bots up.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/JYeswak/grok_bot_playground/main/install.sh | bash
 ```
 
 ```console
-$ gb templates
-$ gb walk bots --paste research-desk
-$ gb walk cli            # guided tour of the read-only verbs
-$ gb walk bots           # the Bots this repo proposes
+$ gb market refresh
+$ gb market bots
+$ gb templates deploy <id> --apply
+$ gb swarm founder-operator
+$ gb stack
 ```
 
 ### Honest limits
+
+Marketplace rows today often lack `share_id`. One-click deploy is blocked until
+the scan carries it. `gb` does not invent share ids. Plugin install is still
+human: Settings → Plugins. There is no install RPC. `gb x` needs a collected
+corpus; a clone without `x/*.json` refuses and names the missing input.
 
 Two paths create a Bot, and they are different. The paste path does not create one
 for you: you paste the charter into the app and the Bot is yours. The deploy path
@@ -96,8 +112,8 @@ It does three jobs:
 **Built for an agent as much as for a person.** Every verb takes `--json` and returns a
 schema-stamped envelope; exit codes are semantic, not cosmetic; `gb robot-docs` is a handbook
 written for a model rather than a human; and `gb capabilities --json` describes the whole
-surface so an agent can plan without reading `bin/`. Start with `gb templates`,
-then `gb skills attach` and `gb plugins`.
+surface so an agent can plan without reading `bin/`. Start with
+`gb market bots`, then `gb templates deploy`, `gb swarm`, and `gb stack`.
 
 **It refuses rather than guesses.** An unmeasured check is an error, never a pass. A verb with
 no data says which command produces it. Numbers ship with their denominators, and a claim whose
@@ -120,8 +136,8 @@ your `PATH`, is safe to re-run, **verifies itself by running `gb capabilities --
 what it answered**, and removes only what it created on `--uninstall`. `bash install.sh --dry-run`
 prints the exact plan and touches nothing.
 
-New here? **[QUICKSTART.md](QUICKSTART.md)** is the five-minute path: list
-templates, paste or deploy a Bot, attach skills, list plugins, repeat.
+New here? **[QUICKSTART.md](QUICKSTART.md)** is the five-minute path: scan
+the marketplace, deploy the Bots you name, swarm a persona, read the stack.
 
 Python 3.9 or newer. **No required runtime dependencies**: the tool is stdlib only, and the
 exporter that builds this tree resolves every import in it against the interpreter's standard
@@ -140,11 +156,11 @@ Two forms, one implementation: the console script runs the very same `bin/gb` th
 The difference is what is on disk around it. See [what it does not do](#limitations-what-this-does-not-do).
 
 ```sh
-gb templates               # list the Bot shelf
-gb walk bots --paste <id>  # one charter, ready to paste
+gb market refresh
+gb market bots
 gb templates deploy <id> --apply
-gb skills attach
-gb plugins
+gb swarm <persona>
+gb stack
 gb quickstart              # the orientation page
 gb robot-docs              # the same thing for an agent
 gb capabilities --json     # the machine-readable contract

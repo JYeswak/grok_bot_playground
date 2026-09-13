@@ -14,8 +14,8 @@ fires on a number a human has to retype will keep firing. The remedy is to stop 
 number. So the README has two halves, and only one of them is written by a person:
 
   HANDWRITTEN   the hero, "Build a Bot army", "What this is", "Install", "What it does not do" —
-                judgement, voice, and the promises a tool makes. The army pitch
-                (list templates, paste/deploy, attach skills, list plugins) lives HERE,
+                judgement, voice, and the promises a tool makes. The four-command
+                first hour (market scan, deploy, swarm, stack) lives HERE,
                 never in the derived block. A generator has no business writing these,
                 and this file never touches them.
   DERIVED       the verbs, the exit codes, the oracles, the layout, the build stamp. Every one
@@ -82,11 +82,11 @@ EXIT_ENVIRONMENT = 3
 # Army pitch MUST stay in the handwritten head. A derive that moved it
 # into render() would replace the capability pitch with measurement tables.
 PITCH_NEEDLES = (
-    "gb templates",
-    "gb walk bots --paste",
+    "gb market refresh",
+    "gb market bots",
     "gb templates deploy",
-    "gb skills attach",
-    "gb plugins",
+    "gb swarm",
+    "gb stack",
 )
 PITCH_COP_OUT = "Honest limit, stated before you start"
 
@@ -597,11 +597,11 @@ def selftest() -> int:
     check("57 producers" in body, "the producer count is missing")
 
     army_head = (
-        "gb templates\n"
-        "gb walk bots --paste <id>\n"
+        "gb market refresh\n"
+        "gb market bots\n"
         "gb templates deploy <id> --apply\n"
-        "gb skills attach\n"
-        "gb plugins\n"
+        "gb swarm <persona>\n"
+        "gb stack\n"
     )
     check(
         not _pitch_problems(army_head),
