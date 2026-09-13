@@ -27,7 +27,7 @@ from gbtypes import main as gbmain  # noqa: E402
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BIN = ROOT / "bin"
 SCHEMA = "gb-market-bots/1"
-JOBS_SCHEMA = "gb-market-jobs/1"
+JOBS_SCHEMA = "gb-market-jobs/2"
 PREVIEW_ROWS = 20
 EXIT_OK, EXIT_USAGE, EXIT_ENVIRONMENT = 0, 2, 3
 SOURCES = ("official", "corpus", "both")
@@ -484,7 +484,11 @@ def cmd_bots(
 def print_jobs_human(payload: dict) -> None:
     winners = list(payload.get("winners") or [])
     blocked = list(payload.get("blocked") or [])
-    emit("JOB WINNERS  n=%d  blocked=%d" % (len(winners), len(blocked)))
+    sel = payload.get("selector") or {}
+    emit(
+        "JOB ARMS  n=%d  blocked=%d  selector=%s"
+        % (len(winners), len(blocked), sel.get("method") or "thompson")
+    )
     emit(
         "%-28s %-10s %-16s %-10s %5s %s"
         % ("NAME", "JOB", "SHARE_ID", "ORIGIN", "CHARS", "ADDED")
@@ -530,13 +534,14 @@ def cmd_jobs(root: pathlib.Path, as_json: bool, offline: bool = False) -> int:
         return EXIT_ENVIRONMENT
     try:
         rows = mdb.load_bots(path)
-        picked = mdb.job_winners(rows)
+        picked = mdb.job_winners(rows, posteriors=mdb.load_posteriors(path))
     except mdb.CacheRefused as e:
         emit(str(e).replace("gb-market-db:", "gb market jobs:", 1))
         return EXIT_ENVIRONMENT
     payload = {
         "blocked": picked.get("blocked") or [],
         "schema": JOBS_SCHEMA,
+        "selector": picked.get("selector") or {},
         "user_version": mdb.USER_VERSION,
         "winners": picked.get("winners") or [],
     }
@@ -914,8 +919,8 @@ def selftest() -> int:
             jout,
         )
         check(
-            "jobs-both-beats-shares-only",
-            "Zzz Both" in jout and "zzzShare" in jout and "Aaa Shares" not in jout,
+            "jobs-selector-is-thompson",
+            "selector=thompson" in jout or "JOB ARMS" in jout,
             jout,
         )
         check(
@@ -928,7 +933,7 @@ def selftest() -> int:
             "BLOCKED" in jout and "sell" in jout and "Aaa Sales Ghost" not in jout,
             jout,
         )
-        check("jobs-human-has-origin-chars-added", "shares" in jout and "both" in jout and "2020-01-01" in jout, jout)
+        check("jobs-human-has-origin-chars-added", "shares" in jout and "2020-01-01" in jout, jout)
         jj = _capture(lambda: cmd_jobs(jobs_root, True, offline=True))[1]
         jpayload = json.loads(jj) if jj.strip().startswith("{") else {}
         jnames = [w.get("name") for w in jpayload.get("winners") or []]
@@ -937,13 +942,31 @@ def selftest() -> int:
         check("jobs-json-schema", jpayload.get("schema") == JOBS_SCHEMA, str(jpayload.get("schema")))
         check(
             "jobs-json-winners-have-share-id",
-            jsids and all(jsids) and "weakShare" in jsids and "zzzShare" in jsids,
+            jsids and all(jsids) and "weakShare" in jsids,
             str(jsids),
         )
         check(
-            "jobs-json-skips-none-and-name-alpha",
-            "none" not in jjobs and "Aaa Best" not in jnames and "Aaa Shares" not in jnames,
+            "jobs-json-skips-none-and-no-share",
+            "none" not in jjobs and "Aaa Best" not in jnames and all(jsids),
             str(jpayload),
+        )
+        check(
+            "jobs-json-selector-envelope",
+            (jpayload.get("selector") or {}).get("method") == "thompson"
+            and (jpayload.get("selector") or {}).get("predictor") == "linear"
+            and "name" not in ((jpayload.get("selector") or {}).get("features") or []),
+            str(jpayload.get("selector")),
+        )
+        ship_names = set()
+        for _ in range(40):
+            again = json.loads(_capture(lambda: cmd_jobs(jobs_root, True, offline=True))[1])
+            for w in again.get("winners") or []:
+                if w.get("job") == "ship":
+                    ship_names.add(w.get("name"))
+        check(
+            "jobs-no-outcome-explores-ship",
+            ship_names == {"Aaa Shares", "Zzz Both"},
+            str(ship_names),
         )
         blocked = jpayload.get("blocked") or []
         check(
@@ -993,7 +1016,7 @@ def selftest() -> int:
             tout,
         )
         cli = _capture(lambda: body(["jobs", "--offline", "--root", str(jobs_root)]))
-        check("jobs-cli-action", cli[0] == 0 and "Zzz Weak" in cli[1] and "Zzz Both" in cli[1], cli[1][:300])
+        check("jobs-cli-action", cli[0] == 0 and "Zzz Weak" in cli[1] and "Aaa Best" not in cli[1], cli[1][:300])
         help_txt = _build_parser().format_help()
         check(
             "jobs-no-persona-flag",
@@ -1033,7 +1056,7 @@ def _build_parser() -> argparse.ArgumentParser:
         nargs="?",
         choices=("refresh", "bots", "new", "jobs"),
         default="bots",
-        help="refresh | bots | new | jobs (one deployable winner per job)",
+        help="refresh | bots | new | jobs (Thompson-sampled deployable arm per job)",
     )
     ap.add_argument(
         "--corpus",
