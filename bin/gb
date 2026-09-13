@@ -277,7 +277,9 @@ EXAMPLES = """\
   gb setup --apply               measure first, then commit this desktop transactionally
   gb setup --apply --device brain    name the machine yourself instead of using the hostname
   gb setup --selftest            offline fake-producer rollback and commit proofs
-  gb market refresh --corpus     official snapshot + public corpus (network)
+  gb market bots                 live pull (botdirectory ∪ shares), then list
+  gb market bots --offline       stamps only
+  gb market refresh --corpus     official snapshot + public corpus + shares
   gb market bots                 official ∪ corpus ∪ URL finds; denominators printed
   gb templates deploy <id> --apply   create that Bot (CreateGrokBotAgentFromTemplate + Update)
   gb swarm <persona>             deploy one persona pack's Bot list
@@ -634,6 +636,7 @@ class MarketArgs:
     corpus: bool = arg(help="refresh: also run the public usecases/ corpus refresh")
     urls: bool = arg(help="bots: dump curated URL rows (default: counts by section/host)")
     full: bool = arg(help="bots: print every row (default: first 20)")
+    offline: bool = arg(help="bots/new: stamps only, no live pull")
     json: bool = arg(help="machine-readable envelope on stdout")
     selftest: bool = arg(help="offline stamp fixtures")
 
@@ -4474,9 +4477,12 @@ def cmd_market(a: MarketArgs) -> int:
         argv.append("--urls")
     if a.full:
         argv.append("--full")
+    if a.offline:
+        argv.append("--offline")
     if a.json:
         argv.append("--json")
-    budget = 600 if a.action == "refresh" else 30
+    # live bots/new pull botdirectory + shares; 30s was the stamp-only budget
+    budget = 30 if a.offline else 600
     return _passthrough(argv, budget_s=budget, label="market")
 
 
