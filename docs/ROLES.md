@@ -3,22 +3,25 @@
 This is the human index for `personas/` and `templates/`.
 It does not invent Bots. Every id below is a file that already ships.
 
-Choose from the bounded catalog, then ask for its canonical no-write plan:
+Stand Bots up with the four-command first hour, then repeat:
 
 ```sh
-gb role --list
-gb role "<role phrase>"
+gb market refresh --corpus
+gb market bots
+gb templates deploy <id> --apply
+gb swarm <persona>
+gb stack
 ```
 
-The catalog preserves all 14 pack ids. `first-hour` and `founder-operator`
-are active version-one personas; the other 12 remain visible as
-`legacy-unavailable` and cannot produce apply argv until migrated.
+`gb role "first hour"` is refused. Packs remain files you can walk; they are
+not a staged first-hour journey. `founder-operator` stays a pasteable charter
+desk whose first Bot is `morning-briefing`.
 
 ## Livestream seats (Sept 15–17)
 
 | Seat | Session | First paste | Persona pack | Why this one, not a department Bot |
 |---|---|---|---|---|
-| New | Grok Bot 101 | `hello-computer` | `first-hour` | Proves the VM is alive before any plugin. Then a file read and one plugin proof. |
+| New | Grok Bot 101 | `research-desk` | `first-hour` | One question, three cited sources. Works in-session; no plugin required. |
 | Engineer | Engineering | `galaxy-engineering` | `eng-lead` | Makes the review queue visible. Reads GitHub; comments on nothing. |
 | Product | Product Managers | `vendor-watch` | `product-manager` | Reports only what a vendor page changed, quoted. |
 | Founder | Founders | `morning-briefing` | `founder-operator` | One morning block: priorities, calendar, spend, overnight flags. |
@@ -34,12 +37,12 @@ Companion write-up with session times: [GALAXY.md](../GALAXY.md).
 
 ## Every persona pack
 
-`gb role --list` is the authority for whether a pack is runnable. The table
-below remains the complete template mapping; a row is not an install claim.
+The table below remains the complete template mapping; a row is not an install
+claim and is not a staged journey. Deploy any id with `gb templates deploy`.
 
 | Persona | Who it is for | First paste | Then these Bots |
 |---|---|---|---|
-| `first-hour` | New user, first hour | `hello-computer` | `first-file-desk`, `plugin-proof` |
+| `first-hour` | New user | `hello-computer` | `first-file-desk`, `plugin-proof` |
 | `founder-operator` | Solo founder / owner-operator | `morning-briefing` | `chief-of-staff`, `workforce-check`, `refusal-desk`, `decision-ledger`, `allowance-watch`, `approval-desk`, `maker-checker`, `hiring-screen`, `alfred-desk`, `cap-watch`, `calendar-owner`, `plugin-watch` |
 | `eng-lead` | Engineering lead | `galaxy-engineering` | `incident-commander`, `release-notes`, `routine-proof`, `nightly-pipeline`, `plugin-watch`, `alfred-desk`, `cap-watch` |
 | `product-manager` | Product manager | `vendor-watch` | `qbr-prep`, `practitioner-diff`, `plugin-watch`, `meeting-prep` |
@@ -71,7 +74,8 @@ The 645 attributed Bots other people built sit at a median charter of **625**
 characters. Every template in this repo is one job, under a 900-character cap,
 with a `verify` line that names the number that should move.
 
-Start with `hello-computer`. If the kernel string never appears, nothing else in
-the pack will either — and that is cheaper to learn on a canary than on a CRM.
-`routine-proof` is the next canary: one dated line a week, so you know scheduled
-runs fire. Use it after the computer has answered, not instead of it.
+Start with `gb market bots`, deploy the slugs you name, `gb swarm
+founder-operator` for that pack, then `gb stack`. `hello-computer`,
+`first-file-desk`, and `plugin-proof` remain deployable Bots. They are not
+the on-ramp, and `gb swarm` refuses a pack whose list is exactly those three.
+Founders swarm `founder-operator` (first Bot: `morning-briefing`).

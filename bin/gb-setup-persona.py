@@ -4,7 +4,7 @@
 Composes with `gb setup` (which owns preflight, device registration, and the
 first measurements) rather than duplicating it. This walk PRINTS a tailored
 procedure per persona; it never acts. --apply is refused (exit 5) and
-names the print-only plan (`gb setup --persona first-hour`, or the
+names the print-only plan (`gb setup --persona founder-operator`, or the
 given --persona). A future --apply may execute the [mechanical] steps;
 it does not exist yet.
 
@@ -90,7 +90,7 @@ def warn(msg: str) -> None:
 
 
 def _few_ids(ids: List[str], prefer: str, n: int = 6) -> str:
-    """Short known-id preview. Prefer the first-hour pack so a typo still names it."""
+    """Short known-id preview. Prefer a still-active pack so a typo still names it."""
     ordered: List[str] = []
     if prefer in ids:
         ordered.append(prefer)
@@ -1721,7 +1721,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return selftest()
 
     if args.apply:
-        pid = args.persona or "first-hour"
+        pid = args.persona or "founder-operator"
         plan = f"gb setup --persona {pid}"
         print(
             "gb-setup-persona.py: --apply is refused — this walk only prints.\n"
@@ -1768,13 +1768,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             return EXIT_DRIFT
         if pack is None:
             known = sorted(path.stem for path in PERSONA_DIR.glob("*.json"))
-            preview = _few_ids(known, "first-hour")
+            preview = _few_ids(known, "founder-operator")
             listing = "gb setup --list-personas"
             near = nearest(args.persona, known)
             hint = (
                 f"gb setup --persona {near}"
                 if near
-                else "gb setup --persona first-hour"
+                else "gb templates"
             )
             print(
                 f"gb-setup-persona.py: unknown persona {args.persona!r}. "

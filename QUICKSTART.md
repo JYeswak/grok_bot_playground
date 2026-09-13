@@ -1,29 +1,40 @@
-# Quickstart — five minutes, start to finish
+# Quickstart — four-command first hour
 
-Choose a bounded role, then inspect the no-write plan:
+Scan the live marketplace, deploy the Bots you name, swarm a persona pack,
+then read the stack before you copy a weak Bot.
 
 ```sh
-gb role --list
-gb role "first hour"
+gb market refresh --corpus
+gb market bots
+gb templates deploy <id> --apply
+gb swarm <persona>
+gb stack
 ```
 
-The plan resolves one versioned persona and returns exact plan, apply, status,
-resume, and rollback argv. Nothing touches the account until you run the emitted
-apply argv with its current plan hash and approvals. This repo ships **73
-templates**, **14 persona packs**, and Galaxy seats in [GALAXY.md](GALAXY.md).
-`gb role --list` is authoritative: two packs are active; legacy packs remain
-visible as `legacy-unavailable` until they carry the current schema and version.
+`gb market bots` reprints the official + public-corpus union (name, source,
+category, builder) with official / corpus / overlap / union denominators, plus
+curated URL finds (counts; `--urls` dumps them). `gb market new` is names in
+the current identity set that were not in the previous stamps. `deploy --apply`
+creates each named Bot via CreateGrokBotAgentFromTemplate + Update. `gb swarm
+founder-operator` plans that pack's Bot list. `gb stack` reprints the plugin
+catalog total from the newest market snapshot, lists attachable skills, and
+runs `gb x` methods ranked by distinct authors. This path never redirects to
+`gb role "first hour"`.
 
 **Here for Galaxy week (Sept 15-17)?** Find your session in
-[GALAXY.md](GALAXY.md), then pass its supported role phrase to `gb role`.
-[docs/ROLES.md](docs/ROLES.md) maps every pack to its templates and availability.
+[GALAXY.md](GALAXY.md) and paste that row's Bot.
+[docs/ROLES.md](docs/ROLES.md) maps packs to templates.
 
 Two things you will actually do in the next five minutes:
 
-1. get the CLI, and walk it
-2. read a proposed Bot, paste its charter into your own Grok Bot, and verify it works
+1. get the CLI, and scan official listings + the public corpus + URL finds
+2. deploy the Bots you name, or swarm one persona, then read the stack
 
 ### Honest limits
+
+Official marketplace rows often lack `share_id`. One-click deploy is blocked
+until the scan carries it. Plugin install is still human: Settings → Plugins.
+There is no install RPC. usecases/ is a public-source refresh a clone can run.
 
 `gb` does not drive the Grok Bot app, cannot sign in, and never asks for a credential.
 There is no connector-install call — connectors are installed in the app. What it CAN do,
@@ -115,17 +126,19 @@ Useful flags: `--step` pages one stop at a time (and never blocks in a pipe), `-
 clipping long output at 14 lines, `--json` gives you the whole tour as data, and `NO_COLOR=1`
 strips every escape.
 
-Then run the canonical first-hour plan; it works before account mutation:
+Then the four-command first hour:
 
 ```sh
-gb role --list
-gb role "first hour"
+gb market refresh --corpus
+gb market bots
+gb templates deploy <id> --apply
+gb swarm founder-operator
+gb stack
 ```
 
-`gb bootstrap --for-agent`, `gb walk bots --paste hello-computer`, and
-`gb setup --persona first-hour` remain bounded compatibility redirects to this
-same plan. They cannot execute a second paste/deploy/setup sequence.
-`gb mirror` is the later, read-only look at *your* fleet off this machine — no token, no
+`gb bootstrap --for-agent` prints the same four commands. `gb walk bots --paste <id>`
+still prints one charter when you want to paste instead of deploy. `gb mirror` is
+the later, read-only look at *your* fleet off this machine — no token, no
 network. Measured 2026-09-12 on a clean run: **0.18s**, six ranked findings.
 
 `gb triage` is the second stop, not the first. It judges a configured deployment, so on a fresh
@@ -142,7 +155,7 @@ not a failure. `gb setup` shows you the plan; `gb setup --apply` does it. Once t
 gb-walk bots
 ```
 
-Sixty-two templates, walked in tier order. For each one: the single narrow job, the charter with its
+Templates, walked in tier order. For each one: the single narrow job, the charter with its
 character count, the routine and what it leaves behind, the approval boundary, what it remembers
 between runs, and a `verify` line naming the number that should change once it is running.
 
@@ -159,11 +172,6 @@ The tiers are the argument, not decoration:
 - **Tier C** is corpus-proven: shapes that recur across 645 attributed Bots built by real people,
   whose median charter is **625 characters** with **1.9 integrations** each.
 
-The original twelve have a median charter of 757.5 characters (range 727–806, all under a 900 cap) and
-0.5 integrations each — deliberately closer to the corpus than to the account they are proposed
-for. The shelf now holds **62**.
-
-
 Sanity-check the corpus yourself:
 
 ```sh
@@ -173,15 +181,16 @@ python3 bin/gb-templates.py stats      # ours vs the 645-Bot corpus vs the live 
 
 ---
 
-## 4. Paste one charter into your own Grok Bot (1 minute)
+## 4. Paste or deploy one Bot (1 minute)
 
-Pick one. If you are unsure, pick `hello-computer`: it proves the VM answers. After that,
-`routine-proof` is the smallest test of whether scheduled runs on your account fire at all,
-and it cannot do any harm because it only ever posts one line.
+Scan first (`gb market bots`), then name slugs and deploy them. `gb swarm
+founder-operator` stands up that pack. `hello-computer` remains a deployable Bot
+if you want a machine check; it is not the on-ramp.
 
 ```sh
-gb-walk bots --paste hello-computer | pbcopy       # macOS
-gb-walk bots --paste hello-computer | xclip -sel c # Linux
+gb walk bots --paste research-desk | pbcopy       # macOS
+gb walk bots --paste research-desk | xclip -sel c # Linux
+gb templates deploy research-desk --apply         # live desktop session
 ```
 
 
@@ -196,7 +205,9 @@ Then, in the Grok Bot app:
    <id> --apply` creates the Bot from the seed template and asks it, in chat, to
    schedule itself (there is no direct routine-create RPC; the chat path is proven
    live, prompt content verified back, never the count).
-3. **Attach the integration** if the template lists one. At most one per template, on purpose.
+3. **Read the stack** with `gb stack` before you copy a weak Bot. Enable a
+   plugin for that Bot in the app; installed is not enabled. Plugin install
+   is Settings → Plugins (no install RPC).
 4. **Leave notifications as you found them.** Per-Bot switches read ON over the
    authoritative echo where measured (8/8 on 2026-09-12); the old "all off" line was
    roster-blob cache (NE-19). Whether an approval actually surfaces on-device is unmeasured.
@@ -212,10 +223,8 @@ Then, in the Grok Bot app:
 Every template ships a `verify` line naming an **observable** and the number that should change.
 That is the whole discipline of this repo: a Bot you cannot verify is a Bot you are guessing about.
 
-For `routine-proof`, the observable is one dated line appearing in its thread each week. Measured
-on the reference account, `routines_with_runs` was 0; if it becomes 1, the Bot worked. If the line
-never appears, the Bot is fine and your routine never fired — which is exactly the thing worth
-knowing, and exactly what nobody knew before.
+For `research-desk`, the observable is three sources with a quoted line each. For
+`routine-proof`, the observable is one dated line appearing in its thread each week.
 
 Once you have your own deployment measured, the tool takes over:
 
@@ -231,12 +240,12 @@ gb doctor --scope <subsystem>
 
 | you want | read |
 |---|---|
-| the canonical first-hour plan | `gb role "first hour"` |
+| the four-command first hour | `gb market bots` then `gb templates deploy` then `gb swarm` then `gb stack` |
 | the whole surface, written for an agent | `gb robot-docs` |
 | the machine contract (verbs, exit codes, subsystems) | `gb capabilities --json` |
 | the template schema and the vendor boundary | `templates/SCHEMA.md` |
 | one template in full, as data | `python3 bin/gb-templates.py show <id> --json` |
-| everything else | [packaging/README.public.md](packaging/README.public.md) |
+| everything else | [README.md](README.md) |
 
 
 Exit codes, because they are load-bearing and `1` does not mean "crashed":
