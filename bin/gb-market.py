@@ -301,7 +301,7 @@ def print_human(payload: dict, *, new_only: bool) -> None:
             )
     bots = payload["bots"]
     if new_only:
-        new_keys = set(payload.get("new") or [])
+        new_keys = {name_key(n) for n in (payload.get("new") or [])}
         bots = [b for b in bots if name_key(b.get("name")) in new_keys]
         emit("NEW  n=%d  (current official+corpus not in previous stamps)" % len(bots))
     emit("%-28s %-8s %-16s %-18s %s" % ("NAME", "SOURCE", "CATEGORY", "BUILDER", "WHEN"))
@@ -376,7 +376,7 @@ def cmd_new(root: pathlib.Path, as_json: bool) -> int:
         )
         return EXIT_ENVIRONMENT
     if as_json:
-        new_keys = set(payload.get("new") or [])
+        new_keys = {name_key(n) for n in (payload.get("new") or [])}
         focused = dict(payload)
         focused["bots"] = [
             b for b in payload["bots"] if name_key(b.get("name")) in new_keys
