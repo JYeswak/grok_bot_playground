@@ -1,7 +1,7 @@
 {
  "schema": "gb-export-public/1",
  "tool": "gb-export-public",
- "exported_at": "2026-09-13T09:28:24-06:00",
+ "exported_at": "2026-09-13T10:10:05-06:00",
  "source_root": "grokbot",
  "file_count": 3399,
  "files": {
@@ -55,7 +55,7 @@
   "bin/gb-grokbotdev.py": "dbb2022fb42a648fdeb95b673b0ff8625e739d48f789832e5c5e91481068ba6e",
   "bin/gb-group.py": "56d880c8d692ea3f4c02b7c50c1f97b2ce6b18b49f23623da1f68d2945433fc0",
   "bin/gb-handover.py": "aef97996bba5abf377f4e6a3929e168d85210e4c02049c00944d46455b7d13ee",
-  "bin/gb-identity-stage.py": "b9b2fefa9c59e0aca6decae0727b2fe6d2be8d0bc4973288cb462dc0b41b8e45",
+  "bin/gb-identity-stage.py": "3a882c384bcc4967c3f1da2d18e4a7ac8e7eac06830f752023012eb3be3cbd6f",
   "bin/gb-install-schedule.sh": "3382691e6781cfd0086979bf9690a27601a6febf0f01de36b3cd4986d901fadf",
   "bin/gb-inventory.py": "bd4c09991ca0f9daf2c6b18cb6ea72e9fc38f679762653775654ed291d151b51",
   "bin/gb-jobs.py": "9cb7d5d3f6bb899913a98507d59be1a8b663022449fa7c400754fb9b7d0da37c",
@@ -75,7 +75,7 @@
   "bin/gb-post.py": "800daea322e0a679099cb0bf45f8eab5baf79677faaf95d00c3ff5f838765289",
   "bin/gb-pull-inventory.py": "05ea0f2322308237ffb8993a71432ed3737b5e5e1007dbfdf31717538d80e2c7",
   "bin/gb-readme.py": "dcea0cdd756d976c2232fc92254747d5b3766891a45d60febd1eb5ef5d07e1f3",
-  "bin/gb-rebuild-fleet.py": "6bf0c1695e6221c86fb5df3f5ce4278c81065cf1b0e7f657a3d4f7b25e878d5a",
+  "bin/gb-rebuild-fleet.py": "b00e585efd98150fe1df2ea0016b48aa38c373f11863d2c4df6aa67bb63296d3",
   "bin/gb-record-inventory.py": "90b2364a653a2096152da56ff77c75d183980aaec2989f4ef38e3c13bb71e091",
   "bin/gb-research.py": "e940cae387d9df0c249ba9f8f127f7faf361964ebb517fd7e72fda8d5a69fb1f",
   "bin/gb-role-journey.py": "c79eead42cf89dd63b7670e531a037d437448b8389484c8b091af594fb65109b",

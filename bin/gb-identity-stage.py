@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import uuid
 import pathlib
 import sys
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -193,14 +194,48 @@ def apply_rows(
                 "seed_sha": row["seed_sha256_12"],
             }
         )
-        st, body = rpc(SANCTIONED_METHOD, {"share_id": seed})
+        st, body = rpc(SANCTIONED_METHOD, {"share_id": seed, "agent_id": str(uuid.uuid4())})
         if st != 200 or not isinstance(body, dict):
-            raise Refused("create-failed: %s HTTP %s" % (SANCTIONED_METHOD, st))
+            raise Refused(
+                "create-failed: %s HTTP %s %s"
+                % (SANCTIONED_METHOD, st, str(body)[:240])
+            )
         journal(
             {
                 "event": "created",
                 "logical_id": row["logical_id"],
                 "body_keys": sorted(body.keys()),
+            }
+        )
+        agent = body.get("agent") if isinstance(body.get("agent"), dict) else {}
+        raw_id = agent.get("id")
+        if raw_id is None or str(raw_id) == "":
+            raise Refused("create-failed: %s returned no agent.id" % SANCTIONED_METHOD)
+        charter = _charter_of(row)
+        try:
+            tpl = load_template(str(row.get("template") or ""))
+        except Exception:
+            tpl = {}
+        title = str((tpl or {}).get("job") or (tpl or {}).get("name") or row.get("name") or "")[:60]
+        name = str(row.get("name") or (tpl or {}).get("name") or row.get("template") or "Bot")
+        st_u, body_u = rpc(
+            "UpdateGrokBotAgent",
+            {
+                "id": str(raw_id),
+                "name": name,
+                "title": title,
+                "description": charter,
+                "avatar_shape": "hex",
+                "avatar_color": "gray",
+            },
+        )
+        if st_u != 200:
+            raise Refused("shape-failed: UpdateGrokBotAgent HTTP %s" % st_u)
+        journal(
+            {
+                "event": "shaped",
+                "logical_id": row["logical_id"],
+                "rpc_id": str(raw_id),
             }
         )
         st2, roster = rpc("ListGrokBotAgents", {})
@@ -314,7 +349,11 @@ def selftest() -> int:
         def fake_rpc(method: str, body: Dict[str, Any]) -> Tuple[int, Any]:
             log.append(method)
             if method == SANCTIONED_METHOD:
-                return 200, {"agent": {"id": "n1"}}
+                return 200, {"agent": {"id": "n1", "agentId": "u1"}}
+            if method == "UpdateGrokBotAgent":
+                if not isinstance(body.get("id"), str):
+                    raise AssertionError("update id must be string, got %r" % (body.get("id"),))
+                return 200, {"agent": {"id": body.get("id"), "description": "CHARTER"}}
             if method == "ListGrokBotAgents":
                 return 200, {
                     "agents": [{"legacyAgentId": "u1", "description": "CHARTER"}]
@@ -360,6 +399,8 @@ def selftest() -> int:
         # 4. readback drift fails with recovery argv.
         def fake_noshow(method: str, body: Dict[str, Any]) -> Tuple[int, Any]:
             if method == SANCTIONED_METHOD:
+                return 200, {"agent": {"id": "n1"}}
+            if method == "UpdateGrokBotAgent":
                 return 200, {"agent": {"id": "n1"}}
             return 200, {"agents": []}
 
@@ -450,7 +491,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not args.persona:
         print("gb-identity-stage: --persona <id> (see personas/)", file=sys.stderr)
         return EXIT_USAGE
-    if args.apply:
+    if args.apply and not (args.yes and args.approve_all):
         print(
             "gb-identity-stage: apply executes account writes; dry-run first, then --yes --approve-all with every row human-cleared",
             file=sys.stderr,
@@ -466,6 +507,46 @@ def main(argv: Optional[List[str]] = None) -> int:
     except RuntimeError as exc:
         print("gb-identity-stage: %s — unmeasured, not empty" % exc, file=sys.stderr)
         return EXIT_ENVIRONMENT
+    if args.apply:
+        sys.path.insert(0, str(ROOT / "bin"))
+        from gblib import platform_support
+        from gbrpc import access_token, rpc, write_rpc
+
+        support = platform_support().support_dir
+        if support is None:
+            print("gb-identity-stage: no desktop client state on this machine", file=sys.stderr)
+            return EXIT_ENVIRONMENT
+        token = access_token(support)
+        events = []
+        stamp = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        ident_dir = ROOT / "identity"
+        ident_dir.mkdir(exist_ok=True)
+        journal_path = ident_dir / ("%s.json" % stamp)
+
+        def journal(ev):
+            events.append(ev)
+            journal_path.write_text(json.dumps({"events": events}, indent=1) + "\n", encoding="utf-8")
+
+        def rpc_fn(method, body):
+            if method in ("ListGrokBotAgents",) or method.startswith("Get") or method.startswith("List"):
+                return rpc(token, method, body or {})
+            return write_rpc(token, method, body or {})
+
+        try:
+            outcomes = apply_rows(rows, rpc_fn, journal, {}, seed, True)
+        except Refused as exc:
+            print("gb-identity-stage: %s" % exc, file=sys.stderr)
+            return EXIT_REFUSED
+        payload = {
+            "schema": SCHEMA,
+            "persona": args.persona,
+            "applied": True,
+            "journal": str(journal_path),
+            "outcomes": outcomes,
+            "bots": resolve(args.persona, live_roster(), seed),
+        }
+        print(json.dumps(payload, indent=1) if args.json else json.dumps(payload, indent=1))
+        return EXIT_OK
     if args.json:
         print(
             json.dumps(

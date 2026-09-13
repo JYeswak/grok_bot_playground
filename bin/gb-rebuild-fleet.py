@@ -180,7 +180,9 @@ def _read_roster(
         ):
             _emit("roster_read", context=context, classification="MALFORMED", row=index)
             return None, f"agents[{index}] lacks name, numeric id, or UUID"
-        if name in seen_names or numeric_id in seen_ids or agent_uuid in seen_uuids:
+        # Name collisions are real (unshaped seed clones share "Template").
+        # Authoritative identity is numeric id / UUID only.
+        if numeric_id in seen_ids or agent_uuid in seen_uuids:
             _emit("roster_read", context=context, classification="MALFORMED", row=index)
             return None, f"agents[{index}] duplicates an authoritative identity"
         seen_names.add(name)
@@ -331,6 +333,7 @@ def _mutate(
             request_id=request_id,
             http=status,
             response_sha256=_digest(response),
+            response_preview=(str(response)[:240] if status != 200 else None),
             **extra,
         )
     _emit(
@@ -412,7 +415,13 @@ def _delete_and_check(
 ) -> bool:
     numeric_id = row.get("new_numeric_id")
     agent_uuid = str(row.get("new_uuid") or row.get("requested_uuid") or "")
-    if not isinstance(numeric_id, int) or numeric_id <= 0:
+    rpc_id = row.get("new_rpc_id")
+    if not rpc_id:
+        if isinstance(numeric_id, int) and numeric_id > 0:
+            rpc_id = str(numeric_id)
+        elif isinstance(numeric_id, str) and numeric_id.strip():
+            rpc_id = numeric_id.strip()
+    if not rpc_id:
         row["state"] = "DELETE_UNRESOLVED_ID"
         _persist(
             manifest,
@@ -433,7 +442,7 @@ def _delete_and_check(
     status, _response, request_id = _mutate(
         action=action,
         method="DeleteGrokBotAgent",
-        body={"id": numeric_id},
+        body={"id": str(rpc_id)},
         bot_name=str(row.get("name") or "?"),
         manifest=manifest,
         path=path,
@@ -624,8 +633,9 @@ def apply_fleet(
                 else None
             )
             numeric = agent.get("id") if isinstance(agent, dict) else None
+            row["new_rpc_id"] = str(numeric) if numeric is not None and str(numeric) != "" else None
             try:
-                numeric_id = int(numeric)
+                numeric_id = int(str(numeric))
             except (TypeError, ValueError):
                 numeric_id = 0
             actual_uuid = agent.get("agentId") if isinstance(agent, dict) else None
@@ -692,7 +702,7 @@ def apply_fleet(
             action="update",
             method="UpdateGrokBotAgent",
             body={
-                "id": created["new_numeric_id"],
+                "id": str(created.get("new_rpc_id") or created["new_numeric_id"]),
                 "name": expected["name"],
                 "title": expected["title"],
                 "description": expected["description"],
@@ -971,9 +981,10 @@ def rollback_fleet(
             continue
 
         target = matches[0]
+        # Name is not identity. An unshaped seed clone keeps the seed name
+        # ("Template") while the manifest still names the intended Bot.
         identity_disagrees = (
-            target["name"] != row["name"]
-            or (bool(known_uuids) and target["uuid"] not in known_uuids)
+            (bool(known_uuids) and target["uuid"] not in known_uuids)
             or (isinstance(numeric, int) and target["numeric_id"] != numeric)
         )
         if identity_disagrees:
