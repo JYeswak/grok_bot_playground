@@ -22,7 +22,7 @@ Engine is stock sqlite3 (Python stdlib). fsqlite is not involved.
 
 ## Sync Triggers
 
-- On command: `gb market bots` (default live pull), `gb market jobs` (same live pull, then one Thompson draw per job), `gb market pack founder|engineer|seller` (same live pull, then those draws filtered to an explicit job list), `gb market deploy <share_id> [...]` (cards + official share URL), and `gb market refresh --corpus`. `gb market keep|skip|ban <share_id>` write the bandit store only. They do not import, deploy, or invent a share_id.
+- On command: `gb market bots` (default live pull), `gb market jobs` (same live pull, then one Thompson draw per job), `gb market pack founder|engineer|seller` (same live pull, then those draws filtered to an explicit job list), `gb market deploy <share_id> [...]` (cards + official share URL), `gb stack founder|engineer|seller` (hire plan over that pack), and `gb market refresh --corpus`. `gb market keep|skip|ban <share_id>` write the bandit store only. They do not import, deploy, or invent a share_id. `gb stack --apply` is a hire gate, not a catalog write.
 - On exit: none.
 - Timer/throttle: none required. `--offline` reads cache only. `gb market jobs --offline`, `gb market pack --offline`, and `gb market deploy --offline` refuse if the catalog `integrity_check` or `user_version` fail. A planted-bad bandit store is also refused. A missing bandit store is a cold start (explore), not a refuse.
 - One-way: catalog → sqlite → optional JSON stamp. Never sqlite → catalog. Never JSON → sqlite unless `--offline` and sqlite missing (rebuild cache from newest stamp, then integrity_check). Never catalog rebuild → bandit store.
@@ -114,6 +114,16 @@ Live. A persona-shaped filter over the same Thompson draws as `gb market jobs`, 
 - Human: `PERSONA <id>`, then one deploy card per drawn job, then blocked jobs.
 - JSON schema `gb-market-pack/2`: `{schema, persona, jobs, selector, bandit_user_version, rows, blocked}`. Rows include `install_url` next to `share_url`. Selector stays `method=thompson`, `prior=beta(1,1)`, `candidate_cold=8`, no weights.
 - `--apply` prints the cards including INSTALL lines and exits 0. It does not create via RPC (not CreateGrokBot, not templates, not `gb swarm`). The user taps the INSTALL line.
+
+## Team hire plan (`gb stack`)
+
+Door 4. A persona-shaped hire plan over the same Thompson pack as `gb market pack`. Not `gb swarm`. Not a silent hire. Not a URL-only `--apply`.
+
+- `gb stack founder|engineer|seller` prints `ROOM` plus one seat per pack job (seat, job, name, full share_id, INSTALL). Default is a plan. Nothing is created. Winner pick is the same `pick_jobs` Thompson as pack — not a hardcoded champion list.
+- `--apply` is the hire gate (same family as templates deploy / fleet rebuild: plan first, `--apply` acts). If a proven CreateGrokBot / share-install RPC from catalog share_id exists, it hires into this local account. Today that RPC is unproven: `--apply` REFUSES (exit 5), names the missing requirement, and points at the human path (tap INSTALL `grokbot://app/v1/bot-template?id=` and this account's hire/CreateAgent flow). A printed URL is not a successful hire.
+- Room create is gated the same way. The plan names the room. `--apply` creates the room only on a proven create-room path; otherwise it REFUSES and Joshua taps CreateChannel.
+- `gb stack plugins` is the old plugin census (`gb-stack/1`). Bare `gb stack` is usage.
+- Does not change pack/deploy/bandit schemas, PACKS, Thompson, or Door 2/3 `--apply` emit-only cards.
 
 ## Bandit store (`usecases/bandit.sqlite`, user_version 2)
 

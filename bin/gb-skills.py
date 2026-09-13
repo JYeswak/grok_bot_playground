@@ -13,6 +13,7 @@ even with --yes unless they can enter the durable pre-state/manifest/compensatio
     gb skills hunt --bot NAME [--json]          # dry-run, zero candidate RPCs
     gb skills try --method M --payload '{...}' [--service S]
     gb skills attach --bot NAME --file PATH [--yes]
+    gb skills scan [--match SLUG] [--copy] [--force] [--json]
 
 """
 
@@ -21,11 +22,14 @@ import argparse
 import collections
 import contextlib
 import dataclasses
+import hashlib
 import importlib.util
 import io
 import json
+import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -384,6 +388,308 @@ def _parse_skill_text(text: str, fallback_name: str = "") -> Dict[str, str]:
 
 def _skill_file(path: pathlib.Path) -> Dict[str, str]:
     return _parse_skill_text(path.read_text(), path.parent.name)
+
+
+SCAN_VENDORS: Tuple[Tuple[str, str], ...] = (
+    ("claude", ".claude/skills"),
+    ("codex", ".codex/skills"),
+    ("cursor", ".cursor/skills"),
+    ("grok", ".grok/skills"),
+    ("agents", ".agents/skills"),
+)
+SCAN_SCHEMA = "gb-skills-scan/1"
+
+
+def _scan_home(home: Optional[pathlib.Path] = None) -> pathlib.Path:
+    if home is not None:
+        return pathlib.Path(home)
+    return pathlib.Path(os.environ.get("HOME") or pathlib.Path.home())
+
+
+def _count_skill_md(root: pathlib.Path) -> int:
+    if not root.exists():
+        return 0
+    target = root.resolve() if root.is_symlink() else root
+    if not target.is_dir():
+        return 0
+    n = 0
+    for dirpath, _dirnames, filenames in os.walk(target, followlinks=False):
+        if "SKILL.md" in filenames:
+            n += 1
+    return n
+
+
+def _root_row(label: str, path: pathlib.Path) -> Dict[str, Any]:
+    exists = path.exists()
+    alias_of = None
+    if path.is_symlink():
+        try:
+            alias_of = str(path.resolve())
+        except OSError:
+            alias_of = None
+    return {
+        "alias_of": alias_of,
+        "count": _count_skill_md(path) if exists else 0,
+        "exists": exists,
+        "label": label,
+        "path": str(path),
+    }
+
+
+def scan_roots(
+    home: pathlib.Path, repo: pathlib.Path
+) -> List[Dict[str, Any]]:
+    rows = [_root_row(label, home / rel) for label, rel in SCAN_VENDORS]
+    rows.append(_root_row("plugin", repo / "plugin" / "skills"))
+    return rows
+
+
+def _iter_skill_dirs(root: pathlib.Path) -> List[pathlib.Path]:
+    if not root.exists():
+        return []
+    target = root.resolve() if root.is_symlink() or root.is_dir() else root
+    if not target.is_dir():
+        return []
+    found: List[pathlib.Path] = []
+    for dirpath, _dirnames, filenames in os.walk(target, followlinks=False):
+        if "SKILL.md" in filenames:
+            found.append(pathlib.Path(dirpath))
+    return found
+
+
+def _file_digest(path: pathlib.Path) -> str:
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _first_line(text: str) -> str:
+    for line in str(text or "").splitlines():
+        if line.strip():
+            return line.strip()
+    return ""
+
+
+def _safe_slug(slug: str) -> Optional[str]:
+    s = str(slug or "").strip()
+    if not s or s in (".", "..") or "/" in s or "\\" in s:
+        return None
+    return s
+
+
+def match_skills(
+    roots: List[Dict[str, Any]], needle: str
+) -> List[Dict[str, Any]]:
+    want = needle.strip().casefold()
+    if not want:
+        return []
+    grouped: Dict[str, Dict[str, Any]] = {}
+    for row in roots:
+        if not row.get("exists"):
+            continue
+        path = pathlib.Path(str(row["path"]))
+        try:
+            resolved_root = path.resolve()
+        except OSError:
+            continue
+        for skill_dir in _iter_skill_dirs(path):
+            skill_md = skill_dir / "SKILL.md"
+            if not skill_md.is_file():
+                continue
+            try:
+                parsed = _parse_skill_text(skill_md.read_text(), skill_dir.name)
+            except OSError:
+                continue
+            slug = skill_dir.name
+            name = parsed.get("name") or slug
+            if want not in slug.casefold() and want not in name.casefold():
+                continue
+            try:
+                key = str(skill_dir.resolve())
+            except OSError:
+                key = str(skill_dir)
+            hit = grouped.get(key)
+            if hit is None:
+                grouped[key] = {
+                    "aliases": [row["label"]],
+                    "description": _first_line(parsed.get("description") or ""),
+                    "digest": _file_digest(skill_md),
+                    "name": name,
+                    "path": key,
+                    "resolved_root": str(resolved_root),
+                    "slug": slug,
+                }
+            else:
+                if row["label"] not in hit["aliases"]:
+                    hit["aliases"].append(row["label"])
+    hits = list(grouped.values())
+    hits.sort(key=lambda h: (str(h.get("slug") or ""), str(h.get("path") or "")))
+    return hits
+
+
+def _copy_dest(repo: pathlib.Path, slug: str) -> Optional[pathlib.Path]:
+    safe = _safe_slug(slug)
+    if safe is None:
+        return None
+    base = (repo / "plugin" / "skills").resolve()
+    dest = (base / safe).resolve()
+    if dest != base and base not in dest.parents:
+        return None
+    return dest
+
+
+def copy_match(
+    hit: Dict[str, Any],
+    repo: pathlib.Path,
+    home: pathlib.Path,
+    force: bool,
+) -> Dict[str, Any]:
+    slug = str(hit.get("slug") or "")
+    dest = _copy_dest(repo, slug)
+    src = pathlib.Path(str(hit.get("path") or ""))
+    receipt = {
+        "digest": hit.get("digest"),
+        "name": hit.get("name"),
+        "path": str(src),
+        "slug": slug,
+    }
+    if dest is None or not src.is_dir():
+        receipt["ok"] = False
+        receipt["reason"] = "unsafe slug or missing source"
+        return receipt
+    home_res = home.resolve()
+    if home_res in dest.parents or dest == home_res:
+        receipt["ok"] = False
+        receipt["reason"] = "refuse — will not write under $HOME vendor roots"
+        return receipt
+    if dest.exists() and not force:
+        receipt["ok"] = False
+        receipt["dest"] = str(dest)
+        receipt["reason"] = "refuse — dest exists (pass --force to overwrite)"
+        return receipt
+    if dest.exists() and force:
+        shutil.rmtree(dest)
+    shutil.copytree(src, dest)
+    receipt["ok"] = True
+    receipt["dest"] = str(dest)
+    return receipt
+
+
+def cmd_scan(
+    *,
+    match: str = "",
+    do_copy: bool = False,
+    force: bool = False,
+    as_json: bool = False,
+    home: Optional[pathlib.Path] = None,
+    repo: Optional[pathlib.Path] = None,
+) -> int:
+    """Offline local skill-pack census. No account RPC. No attach."""
+    home_path = _scan_home(home)
+    repo_path = pathlib.Path(repo) if repo is not None else ROOT
+    roots = scan_roots(home_path, repo_path)
+    needle = match.strip()
+    hits = match_skills(roots, needle) if needle else []
+    copies: List[Dict[str, Any]] = []
+    if do_copy and not needle:
+        print("gb-skills: scan --copy needs --match SLUG (or a positional slug)", file=sys.stderr)
+        return EXIT_USAGE
+    if do_copy:
+        seen_slugs = set()
+        for hit in hits:
+            slug = str(hit.get("slug") or "")
+            if slug in seen_slugs:
+                continue
+            seen_slugs.add(slug)
+            copies.append(copy_match(hit, repo_path, home_path, force))
+    out = {
+        "schema": SCAN_SCHEMA,
+        "command_mode": "scan",
+        "candidate_rpc_class": "NONE",
+        "write_attempt_count": 0,
+        "roots": [
+            {
+                "alias_of": row.get("alias_of"),
+                "count": row.get("count"),
+                "exists": row.get("exists"),
+                "label": row.get("label"),
+                "path": row.get("path"),
+            }
+            for row in roots
+        ],
+        "matches": [
+            {
+                "aliases": hit.get("aliases"),
+                "description": hit.get("description"),
+                "digest": hit.get("digest"),
+                "name": hit.get("name"),
+                "path": hit.get("path"),
+                "slug": hit.get("slug"),
+            }
+            for hit in hits
+        ],
+        "copied": [
+            {
+                "dest": row.get("dest"),
+                "digest": row.get("digest"),
+                "name": row.get("name"),
+                "ok": row.get("ok"),
+                "path": row.get("path"),
+                "reason": row.get("reason"),
+                "slug": row.get("slug"),
+            }
+            for row in copies
+        ],
+    }
+    if as_json:
+        print(json.dumps(out, indent=1))
+    elif needle:
+        if not hits:
+            print("scan: no match %r" % needle)
+        for hit in hits:
+            aliases = ",".join(hit.get("aliases") or [])
+            print(
+                "MATCH  %s  %s  aliases=%s"
+                % (hit.get("slug"), hit.get("path"), aliases)
+            )
+            print("  name  %s" % (hit.get("name") or "-"))
+            print("  description  %s" % (hit.get("description") or "-"))
+            if not do_copy:
+                print(
+                    "  cp -R %s plugin/skills/%s"
+                    % (hit.get("path"), hit.get("slug"))
+                )
+                print(
+                    "  or: Open Grok Bot → Private skills → New, paste SKILL.md"
+                )
+        for row in copies:
+            if row.get("ok"):
+                print("COPIED  %s -> %s" % (row.get("slug"), row.get("dest")))
+            else:
+                print(
+                    "COPY REFUSED  %s  %s"
+                    % (row.get("slug"), row.get("reason") or "refused")
+                )
+    else:
+        for row in roots:
+            if not row.get("exists"):
+                print("MISSING  %s  %s" % (row.get("label"), row.get("path")))
+            elif row.get("alias_of"):
+                print(
+                    "ALIAS  %s  %s  alias-of %s  n=%s"
+                    % (
+                        row.get("label"),
+                        row.get("path"),
+                        row.get("alias_of"),
+                        row.get("count"),
+                    )
+                )
+            else:
+                print(
+                    "ROOT  %s  %s  n=%s"
+                    % (row.get("label"), row.get("path"), row.get("count"))
+                )
+    if copies and not all(row.get("ok") for row in copies):
+        return EXIT_REFUSED
+    return EXIT_OK
 
 
 def _ledger_module() -> types.ModuleType:
@@ -1112,6 +1418,129 @@ def selftest() -> int:
         and prereg_body not in fixture_receipts
         and fixture_receipts.count("sha256:") >= 5,
     )
+
+    with tempfile.TemporaryDirectory(prefix="gb-skills-scan-") as tmp:
+        home = pathlib.Path(tmp) / "home"
+        repo = pathlib.Path(tmp) / "repo"
+        claude = home / ".claude" / "skills"
+        alpha = claude / "alpha-skill"
+        frank = claude / "frankensqlite-mega-skill"
+        alpha.mkdir(parents=True)
+        frank.mkdir()
+        alpha_body = "ALPHA-BODY-MUST-NOT-ENTER-JSON"
+        (alpha / "SKILL.md").write_text(
+            "---\nname: alpha-skill\ndescription: Alpha pack for the desk\n---\n\n"
+            + alpha_body
+            + "\n"
+        )
+        (frank / "SKILL.md").write_text(
+            "---\nname: frankensqlite-mega-skill\ndescription: SQLite process gates\n---\n"
+        )
+        for vendor in ("codex", "cursor"):
+            dest = home / (".%s" % vendor) / "skills"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.symlink_to(claude)
+        plugin = repo / "plugin" / "skills" / "repo-only"
+        plugin.mkdir(parents=True)
+        (plugin / "SKILL.md").write_text(
+            "---\nname: repo-only\ndescription: Lives in this repo\n---\n"
+        )
+        existing = repo / "plugin" / "skills" / "alpha-skill"
+        existing.mkdir()
+        (existing / "SKILL.md").write_text("---\nname: alpha-skill\n---\nold\n")
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            scan_rc = cmd_scan(home=home, repo=repo, as_json=False)
+        scan_out = buf.getvalue()
+        check("scan-default-exit-ok", scan_rc == EXIT_OK)
+        check(
+            "scan-missing-root-is-a-row",
+            "MISSING  grok" in scan_out and "MISSING  agents" in scan_out,
+        )
+        check(
+            "scan-alias-not-name-dump",
+            "ALIAS  codex" in scan_out
+            and "ALIAS  cursor" in scan_out
+            and scan_out.count("alpha-skill") == 0
+            and "frankensqlite-mega-skill" not in scan_out,
+        )
+        check("scan-claude-count", "ROOT  claude" in scan_out and "n=2" in scan_out)
+        check("scan-no-create-grokbot", "CreateGrokBot" not in scan_out)
+
+        jbuf = io.StringIO()
+        with contextlib.redirect_stdout(jbuf):
+            jrc = cmd_scan(home=home, repo=repo, as_json=True)
+        jdoc = json.loads(jbuf.getvalue())
+        labels = [r.get("label") for r in jdoc.get("roots") or []]
+        check("scan-json-exit-ok", jrc == EXIT_OK)
+        check(
+            "scan-json-all-roots",
+            labels == ["claude", "codex", "cursor", "grok", "agents", "plugin"],
+        )
+        check("scan-json-no-body", alpha_body not in jbuf.getvalue())
+        check("scan-json-no-default-matches", jdoc.get("matches") == [])
+
+        mbuf = io.StringIO()
+        with contextlib.redirect_stdout(mbuf):
+            mrc = cmd_scan(match="frankensqlite", home=home, repo=repo, as_json=True)
+        mdoc = json.loads(mbuf.getvalue())
+        matches = mdoc.get("matches") or []
+        check("scan-match-exit-ok", mrc == EXIT_OK)
+        check("scan-match-once", len(matches) == 1)
+        check(
+            "scan-match-aliases-deduped",
+            matches
+            and matches[0].get("name") == "frankensqlite-mega-skill"
+            and set(matches[0].get("aliases") or []) >= {"claude", "codex", "cursor"},
+        )
+        check("scan-match-no-body", alpha_body not in mbuf.getvalue())
+
+        cbuf = io.StringIO()
+        with contextlib.redirect_stdout(cbuf):
+            crc = cmd_scan(
+                match="alpha",
+                do_copy=True,
+                force=False,
+                home=home,
+                repo=repo,
+                as_json=True,
+            )
+        cdoc = json.loads(cbuf.getvalue())
+        check(
+            "scan-copy-refuses-overwrite",
+            crc == EXIT_REFUSED
+            and any(
+                row.get("ok") is False and "exists" in str(row.get("reason") or "")
+                for row in (cdoc.get("copied") or [])
+            ),
+        )
+        check(
+            "scan-copy-did-not-clobber",
+            "old" in (existing / "SKILL.md").read_text(),
+        )
+        check("scan-copy-no-create-grokbot", "CreateGrokBot" not in cbuf.getvalue())
+        check(
+            "scan-copy-not-into-claude",
+            alpha_body in (alpha / "SKILL.md").read_text()
+            and not any(
+                str(home / ".claude") in str(row.get("dest") or "")
+                for row in (cdoc.get("copied") or [])
+            ),
+        )
+
+        nbuf = io.StringIO()
+        with contextlib.redirect_stdout(nbuf):
+            nrc = cmd_scan(match="repo-only", home=home, repo=repo)
+        nout = nbuf.getvalue()
+        check("scan-match-human", nrc == EXIT_OK and "MATCH  repo-only" in nout)
+        check("scan-prints-cp", "cp -R" in nout and "Private skills" in nout)
+
+        ebuf = io.StringIO()
+        with contextlib.redirect_stderr(ebuf):
+            erc = cmd_scan(do_copy=True, home=home, repo=repo)
+        check("scan-copy-without-match-is-usage", erc == EXIT_USAGE)
+
     return EXIT_OK if fails == 0 else EXIT_FINDINGS
 
 
@@ -1972,8 +2401,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             "census",
             "outcome",
             "bandit",
+            "scan",
         ),
-        help="operation; probe/hunt are dry-run route descriptions, not observations",
+        help="operation; scan is offline local roots; probe/hunt are dry-run route descriptions",
     )
     ap.add_argument("--bot", default="", help="named Bot target")
     ap.add_argument(
@@ -1986,6 +2416,29 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--service", default="", help="try: explicit service name")
     ap.add_argument("--skill", default="")
     ap.add_argument("--result", default="")
+    ap.add_argument(
+        "query",
+        nargs="?",
+        default="",
+        help="scan: substring match of directory or frontmatter name (same as --match)",
+    )
+    ap.add_argument(
+        "--match",
+        default="",
+        help="scan: substring match of directory or frontmatter name",
+    )
+    ap.add_argument(
+        "--copy",
+        action="store_true",
+        dest="do_copy",
+        help="scan: copy a match into this repo plugin/skills/<slug> (never $HOME)",
+    )
+    ap.add_argument(
+        "--force",
+        action="store_true",
+        help="scan --copy: overwrite plugin/skills/<slug>",
+    )
+    ap.add_argument("--root", default="", help="scan: repo root (tests)")
     ap.add_argument(
         "--yes",
         action="store_true",
@@ -2011,6 +2464,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_enable(args.bot, args.file, args.json)
     if args.action == "disk":
         return cmd_disk(args.bot, args.file, args.json)
+    if args.action == "scan":
+        return cmd_scan(
+            match=str(args.match or args.query or ""),
+            do_copy=bool(args.do_copy),
+            force=bool(args.force),
+            as_json=bool(args.json),
+            repo=pathlib.Path(args.root) if args.root else ROOT,
+        )
 
     # These paths are intentionally sessionless: a dry-run must work offline and cannot reach the
     # account even if a future transport implementation changes what an empty POST means.

@@ -131,14 +131,13 @@ EXIT_CODES: Dict[int, str] = {
 
 # Four-command first hour. Newbie guesses and empty `gb` name these, not a role plan.
 ARMY_NEXT = (
-    "gb market refresh --corpus, gb market bots, gb templates deploy <id> --apply, "
-    "gb swarm <persona>, gb stack"
+    "gb market refresh --corpus, gb market bots, gb market pack founder, "
+    "gb stack founder"
 )
 ARMY_COMMANDS = (
     "gb market refresh --corpus",
     "gb market bots",
-    "gb templates deploy",
-    "gb swarm",
+    "gb market pack",
     "gb stack",
 )
 ARMY_GUESSES = frozenset({
@@ -290,7 +289,10 @@ EXAMPLES = """\
   gb market bots                 official ∪ corpus ∪ URL finds; denominators printed
   gb templates deploy <id> --apply   create that Bot (CreateGrokBotAgentFromTemplate + Update)
   gb swarm <persona>             deploy one persona pack's Bot list
-  gb stack                       plugins catalog, attachable skills, gb x methods
+  gb stack founder               hire plan: ROOM + seats + INSTALL (Thompson pack)
+  gb stack founder --apply       hire gate; REFUSES if share-install RPC is unproven
+  gb stack plugins               plugin census, attachable skills, gb x methods
+  gb skills scan                 local Claude/Codex/Cursor/Grok skill roots (offline)
   gb triage                      what is wrong right now, and the command that fixes it
   gb triage --json | jq .red     the same answer, for a script
   gb work                        what to pick up next, and whether the ranking is trustworthy
@@ -540,7 +542,7 @@ class BootstrapArgs:
     role: Optional[str] = arg(help="human role phrase (omit for the army path)")
     json: bool = arg(help="machine-readable envelope on stdout")
     for_agent: bool = arg(
-        help="print the four-command first hour for an agent: market, deploy, swarm, stack"
+        help="print the four-command first hour for an agent: market, pack, stack"
     )
 
 @dataclasses.dataclass(frozen=True)
@@ -676,8 +678,19 @@ class SwarmArgs:
 
 @dataclasses.dataclass(frozen=True)
 class StackArgs:
-    """Plugin catalog total, attachable skills, and gb x methods by distinct authors."""
+    """Hire plan for a pack team: ROOM + seats + INSTALL. --apply is the hire gate."""
 
+    persona: Optional[str] = arg(
+        help="founder | engineer | seller | plugins (sales → seller)",
+        positional=True,
+    )
+    apply: bool = arg(
+        help=(
+            "hire gate: create into this local account if a proven CreateGrokBot / "
+            "share-install RPC exists; otherwise REFUSE (a printed URL is not a hire)"
+        )
+    )
+    offline: bool = arg(help="valid catalog cache only (same refuse rules as gb market pack)")
     json: bool = arg(help="machine-readable envelope on stdout")
     selftest: bool = arg(help="offline snapshot fixtures")
 
@@ -1276,11 +1289,11 @@ class SkillCoverageArgs:
 
 @dataclasses.dataclass(frozen=True)
 class SkillsArgs:
-    """List, probe, or attach skills on live Bots. Oracle is ListGrokBotAgentSkills."""
+    """List, probe, attach, or scan local skill packs. Oracle is ListGrokBotAgentSkills."""
 
     action: str = arg(
         default="list",
-        help="list | probe | attach | try | hunt | enable | roundtrip | disk | census | outcome | bandit",
+        help="list | probe | attach | try | hunt | enable | roundtrip | disk | census | outcome | bandit | scan",
         choices=(
             "list",
             "probe",
@@ -1293,7 +1306,12 @@ class SkillsArgs:
             "census",
             "outcome",
             "bandit",
+            "scan",
         ),
+        positional=True,
+    )
+    query: Optional[str] = arg(
+        help="scan: substring match of directory or frontmatter name (same as --match)",
         positional=True,
     )
     bot: Optional[str] = arg(help="Bot name")
@@ -1303,6 +1321,9 @@ class SkillsArgs:
     service: Optional[str] = arg(help="try: service name")
     skill: Optional[str] = arg(help="outcome: skill id")
     result: Optional[str] = arg(help="outcome: success | failure")
+    match: Optional[str] = arg(help="scan: substring match of directory or frontmatter name")
+    copy: bool = arg(help="scan: copy a match into this repo plugin/skills/<slug> (never $HOME)")
+    force: bool = arg(help="scan --copy: overwrite plugin/skills/<slug>")
     yes: bool = arg(help="attach/roundtrip: spend turns")
     json: bool = arg(help="machine-readable envelope on stdout")
     selftest: bool = arg(help="offline selftest, no network")
@@ -3908,12 +3929,12 @@ ARMY. Four-command first hour. There is no first-hour role plan.
 
     gb market refresh --corpus                 official snapshot + public corpus
     gb market bots                             official ∪ corpus ∪ URL finds; print the union with denominators
-    gb templates deploy <id> --apply           create that Bot (charter + instructions)
-    gb swarm <persona>                         one persona pack's Bot list (not the prove-a-job trio)
-    gb stack                                   plugins catalog, attachable skills, gb x methods
+    gb market pack founder                     persona shortlist of Thompson draws (not swarm)
+    gb stack founder                           hire plan: ROOM + seats + INSTALL
+    gb stack founder --apply                   hire gate; REFUSES if share-install RPC is unproven
 
-    Honest limits: bot_marketplace rows often lack share_id (one-click blocked until
-    the scan carries it). Plugin install is HUMAN Settings → Plugins (no install RPC).
+    Honest limits: a printed grokbot:// URL is not a hire. Plugin install is HUMAN
+    Settings → Plugins (no install RPC). `gb stack plugins` is the old census.
 
 ONCE CONFIGURED, triage is the loop.
 
@@ -3976,7 +3997,7 @@ sentence on this page.
 CANCELLATION. Every command is safe to SIGINT: artifact writes are atomic, so you get either the
 old artifact or the new one, and the process exits 130.
 
-AGENT DROP FILES. The four-command first hour does not need AGENTS.md — market, deploy, swarm, and stack are enough.
+AGENT DROP FILES. The four-command first hour does not need AGENTS.md — market, pack, and stack are enough.
 A fresh clone also carries AGENTS.md plus CLAUDE.md and .cursor/rules/grok-bot.mdc, which are
 pointers rather than copies.
 """)
@@ -3990,14 +4011,13 @@ gb — quickstart
 This repo watches one thing: a live Grok Bot deployment (the account, its Bots, its plugins, and
 the vendor surface those depend on). The producers in bin/ measure it; `gb` is how you ask.
 
-Four-command first hour (scan, deploy, swarm, stack):
+Four-command first hour (market, pack, stack):
   gb market refresh --corpus
   gb market bots
-  gb templates deploy <id> --apply
-  gb swarm <persona>
-  gb stack
+  gb market pack founder
+  gb stack founder
 
-  Honest limits: marketplace rows often lack share_id (one-click blocked).
+  Honest limits: a printed grokbot:// URL is not a hire. --apply is the gate.
   Plugin install is HUMAN Settings → Plugins (no install RPC).
 
   0. gb setup             fresh clone? this registers this machine and takes the first
@@ -4526,11 +4546,17 @@ def cmd_swarm(a: SwarmArgs) -> int:
 
 
 def cmd_stack(a: StackArgs) -> int:
-    """Pass through to `bin/gb-stack.py` — plugins catalog, skills, gb x methods."""
+    """Pass through to `bin/gb-stack.py` — hire plan, or plugins census."""
     argv: List[str] = [sys.executable, str(BIN / "gb-stack.py")]
     if a.selftest:
         argv.append("--selftest")
         return _passthrough(argv, budget_s=30, label="stack")
+    if a.persona:
+        argv.append(a.persona)
+    if a.apply:
+        argv.append("--apply")
+    if a.offline:
+        argv.append("--offline")
     if a.json:
         argv.append("--json")
     return _passthrough(argv, budget_s=180, label="stack")
@@ -5314,8 +5340,10 @@ def cmd_skill_coverage(a: SkillCoverageArgs) -> int:
 
 
 def cmd_skills(a: SkillsArgs) -> int:
-    """Pass through to `bin/gb-skills.py` — list/probe/attach/try live Bot skills."""
+    """Pass through to `bin/gb-skills.py` — list/probe/attach/try/scan skills."""
     argv: List[str] = [sys.executable, str(BIN / "gb-skills.py"), a.action]
+    if a.query:
+        argv.append(a.query)
     if a.bot:
         argv += ["--bot", a.bot]
     if a.file:
@@ -5330,6 +5358,12 @@ def cmd_skills(a: SkillsArgs) -> int:
         argv += ["--skill", a.skill]
     if a.result:
         argv += ["--result", a.result]
+    if a.match:
+        argv += ["--match", a.match]
+    if a.copy:
+        argv.append("--copy")
+    if a.force:
+        argv.append("--force")
     if a.yes:
         argv.append("--yes")
     if a.json:
@@ -5542,9 +5576,8 @@ def body() -> int:
             "ARMY / AGENT:\n"
             "  gb market refresh --corpus\n"
             "  gb market bots\n"
-            "  gb templates deploy <id> --apply\n"
-            "  gb swarm <persona>\n"
-            "  gb stack"
+            "  gb market pack founder\n"
+            "  gb stack founder"
         ),
     )
     return HANDLERS[name](args)
