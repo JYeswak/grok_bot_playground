@@ -27,6 +27,7 @@ from gbtypes import main as gbmain  # noqa: E402
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BIN = ROOT / "bin"
 SCHEMA = "gb-market-bots/1"
+PREVIEW_ROWS = 20
 EXIT_OK, EXIT_USAGE, EXIT_ENVIRONMENT = 0, 2, 3
 SOURCES = ("official", "corpus", "both")
 
@@ -262,7 +263,7 @@ def build_payload(
     }, None
 
 
-def print_human(payload: dict, *, new_only: bool) -> None:
+def print_human(payload: dict, *, new_only: bool, full: bool = False) -> None:
     stamps = payload["stamps"]
     urls = payload["urls"]
     emit(
@@ -316,8 +317,9 @@ def print_human(payload: dict, *, new_only: bool) -> None:
         new_keys = {name_key(n) for n in (payload.get("new") or [])}
         bots = [b for b in bots if name_key(b.get("name")) in new_keys]
         emit("NEW  n=%d  (current official+corpus not in previous stamps)" % len(bots))
+    shown = bots if (new_only or full) else bots[:PREVIEW_ROWS]
     emit("%-28s %-8s %-16s %-18s %s" % ("NAME", "SOURCE", "CATEGORY", "BUILDER", "WHEN"))
-    for row in bots:
+    for row in shown:
         builder = row.get("creator") or row.get("contributor") or "-"
         when = row.get("added_at") or row.get("updated_at_ms") or "-"
         emit(
@@ -330,6 +332,14 @@ def print_human(payload: dict, *, new_only: bool) -> None:
                 str(when)[:16],
             )
         )
+    hidden = 0 if (new_only or full) else max(0, len(bots) - PREVIEW_ROWS)
+    if hidden:
+        emit(
+            "… %d more. Agent path: gb market bots --json   all rows: --full"
+            % hidden
+        )
+    else:
+        emit("next  gb market new   or   gb market bots --json")
 
 
 def cmd_refresh(
@@ -340,16 +350,40 @@ def cmd_refresh(
     if not snap.is_file():
         emit("gb market refresh: missing bin/gb-market-snapshot.py")
         return EXIT_ENVIRONMENT
-    run_snap = (runners or {}).get("snapshot") or (
-        lambda: subprocess.call([sys.executable, str(snap)])
-    )
+    def _snap() -> int:
+        proc = subprocess.run(
+            [sys.executable, str(snap)],
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode == 0:
+            line = (proc.stdout or "").strip().splitlines()
+            if line:
+                emit(line[-1])
+            return 0
+        # Never relay a traceback. Last non-stack line, or a fixed sentence.
+        blob = ((proc.stderr or "") + "\n" + (proc.stdout or "")).splitlines()
+        clean = [
+            ln
+            for ln in blob
+            if ln.strip()
+            and "Traceback" not in ln
+            and not ln.startswith("  File ")
+            and not ln.startswith("    ")
+            and "Error:" not in ln
+        ]
+        emit(
+            clean[-1]
+            if clean
+            else "gb market refresh: official catalog skipped — needs Grok Bot desktop login"
+        )
+        return int(proc.returncode or 1)
+
+    run_snap = (runners or {}).get("snapshot") or _snap
     rc = run_snap()
     snap_ok = rc == 0
     if not snap_ok:
-        emit(
-            "gb market refresh: snapshot failed (exit %s) — official catalog "
-            "needs a Grok Bot desktop login" % rc
-        )
+        emit("gb market refresh: official catalog skipped (exit %s)" % rc)
         if not corpus:
             return int(rc) if isinstance(rc, int) and rc != 0 else EXIT_ENVIRONMENT
     if not corpus:
@@ -358,22 +392,35 @@ def cmd_refresh(
     if not use.is_file():
         emit("gb market refresh --corpus: missing bin/gb-usecases.py")
         return EXIT_ENVIRONMENT
-    run_use = (runners or {}).get("usecases") or (
-        lambda: subprocess.call([sys.executable, str(use)])
-    )
+
+    def _use() -> int:
+        proc = subprocess.run(
+            [sys.executable, str(use)],
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode == 0:
+            line = (proc.stdout or "").strip().splitlines()
+            if line:
+                emit(line[0])
+            return 0
+        err = (proc.stderr or proc.stdout or "").strip().splitlines()
+        emit(err[-1] if err else "gb market refresh --corpus: usecases refresh failed")
+        return int(proc.returncode or 1)
+
+    run_use = (runners or {}).get("usecases") or _use
     rc2 = run_use()
     if rc2 != 0:
         emit("gb market refresh --corpus: usecases refresh failed (exit %s)" % rc2)
         return int(rc2) if isinstance(rc2, int) and rc2 != 0 else EXIT_ENVIRONMENT
     if not snap_ok:
-        emit(
-            "gb market refresh --corpus: corpus wrote; official catalog still "
-            "missing (desktop login). `gb market bots` will print corpus-only."
-        )
+        emit("next  gb market bots   (corpus-only; official catalog needs desktop login)")
+    else:
+        emit("next  gb market bots")
     return EXIT_OK
 
 
-def cmd_bots(root: pathlib.Path, as_json: bool, include_urls: bool) -> int:
+def cmd_bots(root: pathlib.Path, as_json: bool, include_urls: bool, full: bool = False) -> int:
     payload, err = build_payload(root, include_urls)
     if err or payload is None:
         emit(err or "gb market bots: missing stamps — run: gb market refresh")
@@ -381,7 +428,7 @@ def cmd_bots(root: pathlib.Path, as_json: bool, include_urls: bool) -> int:
     if as_json:
         emit(dumps(payload))
         return EXIT_OK
-    print_human(payload, new_only=False)
+    print_human(payload, new_only=False, full=full)
     return EXIT_OK
 
 
@@ -635,7 +682,7 @@ def selftest() -> int:
         )
 
         rc_fail, out_fail = _capture(lambda: cmd_refresh(False, runners={"snapshot": lambda: 4}))
-        check("refresh-fails-out-loud", rc_fail == 4 and "failed" in out_fail, out_fail)
+        check("refresh-fails-out-loud", rc_fail == 4 and "skipped" in out_fail, out_fail)
         rc_ok, _ = _capture(lambda: cmd_refresh(False, runners={"snapshot": lambda: 0}))
         check("refresh-market-ok", rc_ok == 0, str(rc_ok))
         rc_c, out_c = _capture(
@@ -647,7 +694,7 @@ def selftest() -> int:
         )
         check(
             "refresh-corpus-survives-snapshot-fail",
-            rc_s == 0 and "snapshot failed" in out_s and "corpus wrote" in out_s,
+            rc_s == 0 and "corpus-only" in out_s,
             out_s,
         )
 
@@ -705,6 +752,11 @@ def body(argv: Optional[Sequence[str]] = None) -> int:
         action="store_true",
         help="bots: dump curated link rows (default: counts by section/host)",
     )
+    ap.add_argument(
+        "--full",
+        action="store_true",
+        help="bots: print every row (default: first %d)" % PREVIEW_ROWS,
+    )
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--root", default="", help="artifact root (tests)")
     ap.add_argument("--selftest", action="store_true")
@@ -716,7 +768,7 @@ def body(argv: Optional[Sequence[str]] = None) -> int:
     root = pathlib.Path(args.root) if args.root else ROOT
     if args.action == "new":
         return cmd_new(root, bool(args.json))
-    return cmd_bots(root, bool(args.json), bool(args.urls))
+    return cmd_bots(root, bool(args.json), bool(args.urls), bool(getattr(args, 'full', False)))
 
 
 if __name__ == "__main__":

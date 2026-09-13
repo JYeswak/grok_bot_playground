@@ -39,6 +39,7 @@ import base64
 import hashlib
 import json
 import pathlib
+import shutil
 import subprocess
 import sys
 import urllib.error
@@ -84,20 +85,31 @@ def safestorage_key() -> bytes:
     `security` is the right tool, and it still refuses rather than returning an empty key —
     an empty credential that decrypts nothing would be reported upstream as an empty account.
     """
-    r = subprocess.run(
-        [
-            "security",
-            "find-generic-password",
-            "-w",
-            "-s",
-            KEYCHAIN[0],
-            "-a",
-            KEYCHAIN[1],
-        ],
-        capture_output=True,
-        text=True,
-        timeout=SAFESTORAGE_TIMEOUT_S,
-    )
+    if shutil.which("security") is None:
+        raise SystemExit(
+            "gbrpc: no `security` tool — official catalog needs the Grok Bot "
+            "desktop on macOS. Public corpus: gb market refresh --corpus"
+        )
+    try:
+        r = subprocess.run(
+            [
+                "security",
+                "find-generic-password",
+                "-w",
+                "-s",
+                KEYCHAIN[0],
+                "-a",
+                KEYCHAIN[1],
+            ],
+            capture_output=True,
+            text=True,
+            timeout=SAFESTORAGE_TIMEOUT_S,
+        )
+    except FileNotFoundError:
+        raise SystemExit(
+            "gbrpc: no `security` tool — official catalog needs the Grok Bot "
+            "desktop on macOS. Public corpus: gb market refresh --corpus"
+        )
     if r.returncode != 0 or not r.stdout.strip():
         raise SystemExit(
             "could not read the safeStorage password from the keychain — a human must "
