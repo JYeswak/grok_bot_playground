@@ -71,14 +71,17 @@ See `TAXONOMY_MAP` in `bin/gb-market-db.py`. Only those keys map. Everything els
 
 One deployable arm per job. Thompson sampling, Beta(1,1) per arm. Not a frozen sort, not a linear prior, not a persona ranker.
 
+Thompson is over (active outcomes ∪ K random cold), K=8 (`candidate_cold=8`). That is why a keep can reappear. Not a hardcoded champion list. keep/skip/ban still do not deploy.
+
 - Skip job `none`. Do not invent decide/refuse.
 - An arm MUST have a real `share_id` passed through from the catalog. Never invent one.
 - If a job has rows but none are deployable, list it as blocked (count + reason). Do not fill it with a no-share row.
 - Each deployable row (real `share_id`, job ≠ none) is an arm.
 - Catalog fields (`origin`, `has_approval_language`, `prompt_chars`, `added_at`, name, charter) are display only. They are not ranking keys and not a prior mean.
-- Selection: two Gamma(shape, 1) draws, θ = Ga(α,1) / (Ga(α,1) + Ga(β,1)), pick max. Ties are a random choice among equals, not name-alpha. UCB1 is the wrong first-hour algorithm (it walks every arm first; `brief` has 100+ deployable arms).
-- Posterior starts uninformative: α=1, β=1. With no outcomes the draw must explore. Select does not invent a reward.
-- `gb market jobs` records an impression (α/β unchanged). A keep increments α; a skip increments β. Those writes are `record_outcome` on `usecases/bandit.sqlite`. Ban sets `banned=1` and is a hard filter on the next draw, not a silent β bump.
+- After filtering to deployable and not banned: **active** = arms with `pulls > 0` (a keep or skip was recorded); **cold** = the rest (impressions-only or never seen). Candidates = every active arm union a random subset of cold arms of size `min(8, len(cold))`. If there are no active arms, candidates are that cold subset only (first-hour explore among 8, not the whole catalog). Banned arms never enter candidates.
+- Selection (among candidates only): two Gamma(shape, 1) draws, θ = Ga(α,1) / (Ga(α,1) + Ga(β,1)), pick max. Ties are a random choice among equals, not name-alpha. Sampling every deployable arm is the lying want-loop: max of ~100 Uniform(0,1) cold arms swamps Beta(3,1). UCB1 is also the wrong first-hour algorithm (it walks every arm first; `brief` has 100+ deployable arms).
+- Posterior starts uninformative: α=1, β=1. With no outcomes the draw must explore among the cold subset. Select does not invent a reward.
+- `gb market jobs` records an impression (α/β unchanged). A keep increments α; a skip increments β. Those writes are `record_outcome` on `usecases/bandit.sqlite`. Ban sets `banned=1` and is a hard filter on the next draw, not a silent β bump. keep/skip/ban write the store; they do not deploy.
 - Product state lives under `usecases/`. Never under /tmp.
 
 A Thompson draw without a recorded keep or skip is only an impression: the arm was shown, not judged. There is no champion and no WINNER until outcomes exist. `gb market jobs` prints the full catalog `share_id` (never a 16-char slice) after recording the impression, so IMPR is the post-draw count and PULLS stays keep/skip outcomes. `gb market keep <share_id>` and `gb market skip <share_id>` are the verdicts for that subject's latest or only matching arm; they accept a unique prefix of one stored share_id so a copied truncated id still records, and they refuse if the share_id is missing, not in the store, or the prefix matches two or more arms. They never invent one. `gb market ban <share_id>` marks the arm ineligible so constrained select never draws it again. Ban is a hard filter, not a posterior tweak. Charter text and likes are not rewards. keep/skip/ban still do not import or deploy.

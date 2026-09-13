@@ -278,9 +278,11 @@ def build_payload(
     off_keys = {name_key(r.get("name")) for r in official}
     cor_keys = {name_key(r.get("name")) for r in corpus}
     share_n = sum(1 for r in official if official_share_id(r))
+    deployable_n = sum(1 for b in bots if official_share_id(b))
     return {
         "schema": SCHEMA,
         "bots": bots,
+        "deployable": deployable_n,
         "corpus": len(cor_keys),
         "corpus_builders": len(builders),
         "limit": (
@@ -332,7 +334,9 @@ def print_human(payload: dict, *, new_only: bool, full: bool = False) -> None:
     )
     official_n = payload["official"]
     share_n = payload["share_id_present"]
-    deployable = sum(1 for b in payload.get("bots") or [] if b.get("share_id"))
+    deployable = payload.get("deployable")
+    if deployable is None:
+        deployable = sum(1 for b in payload.get("bots") or [] if official_share_id(b))
     emit(
         "  share_id  %d/%d union rows have a live x.ai/bot id"
         % (deployable, payload["union"])
@@ -1016,6 +1020,18 @@ def selftest() -> int:
             str(shares),
         )
         check(
+            "json-deployable-is-union-share-ids",
+            payload.get("deployable") == 2
+            and payload.get("share_id_present") == 1
+            and payload.get("deployable") != payload.get("share_id_present"),
+            str(
+                {
+                    "deployable": payload.get("deployable"),
+                    "share_id_present": payload.get("share_id_present"),
+                }
+            ),
+        )
+        check(
             "sorted-name-then-source",
             [b.get("source") for b in payload.get("bots") or []] == ["official", "corpus", "both"],
             str(payload.get("bots")),
@@ -1252,6 +1268,7 @@ def selftest() -> int:
             "jobs-json-selector-envelope",
             (jpayload.get("selector") or {}).get("method") == "thompson"
             and (jpayload.get("selector") or {}).get("prior") == "beta(1,1)"
+            and (jpayload.get("selector") or {}).get("candidate_cold") == mb.CANDIDATE_COLD
             and "weights" not in (jpayload.get("selector") or {})
             and jpayload.get("bandit_user_version") == mb.USER_VERSION,
             str(jpayload.get("selector")),

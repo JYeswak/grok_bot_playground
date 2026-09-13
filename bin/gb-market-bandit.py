@@ -9,6 +9,9 @@ share_id is a different arm.
 Prior is Beta(1,1) per arm. A draw is two Gamma(shape, 1) samples:
 θ = Ga(α,1) / (Ga(α,1) + Ga(β,1)). hit += α, miss += β. Select does not
 invent a reward. Features on a catalog row are display fields only.
+Per job, Thompson samples only among active arms (pulls>0) union
+CANDIDATE_COLD randomly drawn cold arms so two outcomes are not drowned
+by the max of a hundred uniforms. Still Beta(1,1) on each arm.
 
 See docs/MARKET-SYNC-STRATEGY.md.
 """
@@ -33,6 +36,7 @@ PRODUCT_DIR = "usecases"
 PRIOR_ALPHA = 1.0
 PRIOR_BETA = 1.0
 SELECTOR_METHOD = "thompson"
+CANDIDATE_COLD = 8
 KIND_IMPRESSION = "impression"
 KIND_KEEP = "keep"
 KIND_SKIP = "skip"
@@ -109,10 +113,35 @@ def thompson_sample(alpha: float, beta: float, rng: random.Random) -> float:
 
 def selector_meta() -> Dict[str, Any]:
     return {
+        "candidate_cold": CANDIDATE_COLD,
         "method": SELECTOR_METHOD,
         "prior": "beta(1,1)",
         "store": "%s/%s" % (PRODUCT_DIR, DB_NAME),
     }
+
+
+def candidates_for_job(
+    arms: Sequence[Dict[str, Any]],
+    *,
+    rng: random.Random,
+    k: int = CANDIDATE_COLD,
+) -> List[Dict[str, Any]]:
+    """Active (pulls>0) union a random subset of cold arms. Banned never enter.
+
+    Cold = impressions-only or never seen (pulls==0). When there are no
+    active arms, the candidate set is the cold subset only. The same rng
+    used for Thompson draws the subset so a keep can reappear among many
+    unused catalog rows. Not a hardcoded champion list. Not a feature prior.
+    """
+    eligible = [a for a in arms if not a.get("banned")]
+    active = [a for a in eligible if int(a.get("pulls") or 0) > 0]
+    cold = [a for a in eligible if int(a.get("pulls") or 0) <= 0]
+    cap = min(int(k), len(cold))
+    if cap < len(cold):
+        chosen_cold = rng.sample(list(cold), cap)
+    else:
+        chosen_cold = list(cold)
+    return list(active) + chosen_cold
 
 
 def display_fields(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -612,7 +641,7 @@ def pick_jobs(
     posteriors: Optional[Dict[Tuple[str, str, str], Dict[str, Any]]] = None,
     rng: Optional[random.Random] = None,
 ) -> Dict[str, Any]:
-    """One Thompson draw per job. Features are not a prior. Select writes nothing."""
+    """One Thompson draw per job among (active ∪ K random cold). Select writes nothing."""
     draw = rng or random.Random()
     if posteriors is None:
         if store is not None:
@@ -638,8 +667,7 @@ def pick_jobs(
         if not deployable:
             blocked.append({"count": len(group), "job": job, "reason": "no share_id"})
             continue
-        best_sample: Optional[float] = None
-        chosen: List[Tuple[Dict[str, Any], float, Dict[str, Any]]] = []
+        eligible: List[Dict[str, Any]] = []
         banned_n = 0
         for row in deployable:
             sid = real_share_id(row)
@@ -650,13 +678,27 @@ def pick_jobs(
             if state.get("banned"):
                 banned_n += 1
                 continue
+            eligible.append(
+                {
+                    "banned": False,
+                    "pulls": int(state.get("pulls") or 0),
+                    "row": row,
+                    "share_id": sid,
+                    "state": state,
+                }
+            )
+        candidates = candidates_for_job(eligible, rng=draw)
+        best_sample: Optional[float] = None
+        chosen: List[Tuple[Dict[str, Any], float, Dict[str, Any]]] = []
+        for item in candidates:
+            state = item["state"]
             sample = thompson_sample(float(state["alpha"]), float(state["beta"]), draw)
-            item = (row, sample, state)
+            packed = (item["row"], sample, state)
             if best_sample is None or sample > best_sample:
                 best_sample = sample
-                chosen = [item]
+                chosen = [packed]
             elif sample == best_sample:
-                chosen.append(item)
+                chosen.append(packed)
         if not chosen:
             blocked.append(
                 {
@@ -841,7 +883,9 @@ def selftest() -> int:
     check(
         "selector-is-thompson-beta",
         only["selector"].get("method") == "thompson"
-        and only["selector"].get("prior") == "beta(1,1)",
+        and only["selector"].get("prior") == "beta(1,1)"
+        and only["selector"].get("candidate_cold") == CANDIDATE_COLD
+        and "weights" not in only["selector"],
         str(only["selector"]),
     )
     check(
@@ -886,6 +930,156 @@ def selftest() -> int:
         "select-does-not-invent-reward",
         all(w.get("pulls") == 0 for w in pulls_before["winners"]),
         str(pulls_before),
+    )
+
+    # Large-arm first hour: 80 unique cold brief arms + one kept (α=3, β=1, pulls=2).
+    KEPT_SID = "P2qgQokuPHVJhrkmRDmLv"
+    SKIP_SID = "skipHireBotArm0001"
+    BAN_SID = "bannedArmShare0001"
+    cold_brief: List[Dict[str, Any]] = []
+    for i in range(80):
+        cold_brief.append(
+            {
+                "added_at": "2026-01-01",
+                "has_approval_language": False,
+                "job": "brief",
+                "name": "Cold Brief %02d" % i,
+                "name_key": "cold brief %02d" % i,
+                "origin": "shares",
+                "prompt_chars": 10,
+                "share_id": "coldBriefShare%02d" % i,
+            }
+        )
+    kept_brief = {
+        "added_at": "2026-09-01",
+        "has_approval_language": False,
+        "job": "brief",
+        "name": "Research Runner",
+        "name_key": "research runner",
+        "origin": "shares",
+        "prompt_chars": 100,
+        "share_id": KEPT_SID,
+    }
+    skip_brief = {
+        "added_at": "2026-09-01",
+        "job": "brief",
+        "name": "Skip Hire Bot",
+        "name_key": "skip hire bot",
+        "origin": "shares",
+        "prompt_chars": 10,
+        "share_id": SKIP_SID,
+    }
+    ban_brief = {
+        "added_at": "2026-09-01",
+        "job": "brief",
+        "name": "Banned Runner",
+        "name_key": "banned runner",
+        "origin": "shares",
+        "prompt_chars": 10,
+        "share_id": BAN_SID,
+    }
+    kept_key = _arm_id("brief", "research runner", KEPT_SID)
+    skip_key = _arm_id("brief", "skip hire bot", SKIP_SID)
+    ban_key = _arm_id("brief", "banned runner", BAN_SID)
+    kept_state = _empty_arm(kept_key)
+    kept_state.update({"alpha": 3.0, "beta": 1.0, "hits": 2, "pulls": 2})
+    skip_state = _empty_arm(skip_key)
+    skip_state.update({"alpha": 1.0, "beta": 2.0, "misses": 1, "pulls": 1})
+    ban_state = _empty_arm(ban_key)
+    ban_state.update({"alpha": 3.0, "beta": 1.0, "banned": True, "hits": 2, "pulls": 2})
+    large_posts = {kept_key: kept_state, skip_key: skip_state, ban_key: ban_state}
+
+    def _cand_arm(row: Dict[str, Any], state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        sid = real_share_id(row) or ""
+        key = _arm_id(str(row.get("job") or ""), row.get("name_key") or name_key(row.get("name")), sid)
+        st = dict(state or _empty_arm(key))
+        return {
+            "banned": bool(st.get("banned")),
+            "pulls": int(st.get("pulls") or 0),
+            "row": row,
+            "share_id": sid,
+            "state": st,
+        }
+
+    planted_kept = [_cand_arm(r) for r in cold_brief] + [_cand_arm(kept_brief, kept_state)]
+    kept_always = True
+    kept_counts: List[int] = []
+    for seed in range(20):
+        cset = candidates_for_job(planted_kept, rng=random.Random(seed))
+        ids = [a.get("share_id") for a in cset]
+        kept_counts.append(len(cset))
+        if KEPT_SID not in ids or len(cset) != 1 + CANDIDATE_COLD:
+            kept_always = False
+            break
+    check(
+        "kept-always-in-candidates",
+        kept_always
+        and KEPT_SID in {a.get("share_id") for a in planted_kept}
+        and kept_counts == [1 + CANDIDATE_COLD] * 20,
+        str(kept_counts),
+    )
+
+    # Locked window: Random(4) through Random(23). Old all-arm draw: 0/20.
+    # With the cap, the kept arm (α=3, β=1, pulls=2) wins ≥1 of those 20.
+    KEPT_CAN_WIN_SEED = 4
+    kept_wins = 0
+    for i in range(20):
+        drawn = pick_jobs(
+            cold_brief + [kept_brief],
+            posteriors={kept_key: kept_state},
+            rng=random.Random(KEPT_CAN_WIN_SEED + i),
+        )
+        brief = [w for w in drawn["winners"] if w.get("job") == "brief"]
+        if brief and brief[0].get("share_id") == KEPT_SID:
+            kept_wins += 1
+    check(
+        "kept-can-win-among-many-cold",
+        kept_wins >= 1,
+        "seed=%s wins=%s/20" % (KEPT_CAN_WIN_SEED, kept_wins),
+    )
+
+    cold_only = [_cand_arm(r) for r in cold_brief]
+    cap_counts = []
+    cap_names = set()
+    for seed in range(20):
+        cset = candidates_for_job(cold_only, rng=random.Random(seed))
+        cap_counts.append(len(cset))
+        drawn = pick_jobs(cold_brief, rng=random.Random(seed))
+        brief = [w for w in drawn["winners"] if w.get("job") == "brief"]
+        if brief:
+            cap_names.add(brief[0].get("name"))
+    check(
+        "cold-start-caps-at-K",
+        cap_counts == [CANDIDATE_COLD] * 20 and len(cap_names) > 1,
+        "counts=%s names=%s" % (cap_counts[:3], sorted(cap_names)[:8]),
+    )
+
+    skip_planted = cold_only + [_cand_arm(skip_brief, skip_state)]
+    skip_always = all(
+        SKIP_SID in {a.get("share_id") for a in candidates_for_job(skip_planted, rng=random.Random(seed))}
+        for seed in range(20)
+    )
+    check("skip-stays-active", skip_always, SKIP_SID)
+
+    banned_planted = planted_kept + [_cand_arm(ban_brief, ban_state)]
+    banned_seen = any(
+        BAN_SID in {a.get("share_id") for a in candidates_for_job(banned_planted, rng=random.Random(seed))}
+        for seed in range(20)
+    )
+    never_banned = set()
+    for seed in range(20):
+        drawn = pick_jobs(
+            cold_brief + [kept_brief, ban_brief],
+            posteriors=large_posts,
+            rng=random.Random(seed),
+        )
+        brief = [w for w in drawn["winners"] if w.get("job") == "brief"]
+        if brief:
+            never_banned.add(brief[0].get("share_id"))
+    check(
+        "banned-not-candidate",
+        (not banned_seen) and BAN_SID not in never_banned,
+        str(never_banned),
     )
 
     with tempfile.TemporaryDirectory(prefix="gb-market-bandit-") as tmp:
