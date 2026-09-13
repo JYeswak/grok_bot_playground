@@ -27,7 +27,8 @@ from gbtypes import main as gbmain  # noqa: E402
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BIN = ROOT / "bin"
 SCHEMA = "gb-market-bots/1"
-JOBS_SCHEMA = "gb-market-jobs/1"
+JOBS_SCHEMA = "gb-market-jobs/4"
+VERDICT_SCHEMA = "gb-market-verdict/1"
 PREVIEW_ROWS = 20
 EXIT_OK, EXIT_USAGE, EXIT_ENVIRONMENT = 0, 2, 3
 SOURCES = ("official", "corpus", "both")
@@ -97,6 +98,17 @@ def _market_db():
 
     path = pathlib.Path(__file__).resolve().parent / "gb-market-db.py"
     spec = importlib.util.spec_from_file_location("gb_market_db", path)
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _market_bandit():
+    import importlib.util
+
+    path = pathlib.Path(__file__).resolve().parent / "gb-market-bandit.py"
+    spec = importlib.util.spec_from_file_location("gb_market_bandit", path)
     mod = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(mod)
@@ -482,12 +494,16 @@ def cmd_bots(
 
 
 def print_jobs_human(payload: dict) -> None:
-    winners = list(payload.get("winners") or [])
+    winners = list(payload.get("draws") or payload.get("winners") or [])
     blocked = list(payload.get("blocked") or [])
-    emit("JOB WINNERS  n=%d  blocked=%d" % (len(winners), len(blocked)))
+    sel = payload.get("selector") or {}
     emit(
-        "%-28s %-10s %-16s %-10s %5s %s"
-        % ("NAME", "JOB", "SHARE_ID", "ORIGIN", "CHARS", "ADDED")
+        "JOB DRAWS  n=%d  blocked=%d  method=%s  impression until keep/skip"
+        % (len(winners), len(blocked), sel.get("method") or "thompson")
+    )
+    emit(
+        "%-28s %-10s %-16s %5s %5s %5s %-10s"
+        % ("NAME", "JOB", "SHARE_ID", "PULLS", "ALPHA", "BETA", "ORIGIN")
     )
     rows: List[Tuple[str, dict]] = [("win", w) for w in winners] + [
         ("block", b) for b in blocked
@@ -497,19 +513,20 @@ def print_jobs_human(payload: dict) -> None:
         job = str(row.get("job") or "-")
         if kind == "block":
             emit(
-                "%-28s %-10s %-16s %-10s %5s %s"
-                % ("-", job[:10], "BLOCKED", "-", "-", "-")
+                "%-28s %-10s %-16s %5s %5s %5s %-10s"
+                % ("-", job[:10], "BLOCKED", "-", "-", "-", "-")
             )
             continue
         emit(
-            "%-28s %-10s %-16s %-10s %5s %s"
+            "%-28s %-10s %-16s %5s %5s %5s %-10s"
             % (
                 str(row.get("name") or "-")[:28],
                 job[:10],
                 str(row.get("share_id") or "BLOCKED")[:16],
+                str(row.get("pulls") if row.get("pulls") is not None else 0),
+                str(row.get("alpha") if row.get("alpha") is not None else "-"),
+                str(row.get("beta") if row.get("beta") is not None else "-"),
                 str(row.get("origin") or "-")[:10],
-                str(row.get("prompt_chars") if row.get("prompt_chars") is not None else "-"),
-                str(row.get("added_at") or "-")[:10],
             )
         )
     for row in blocked:
@@ -523,30 +540,102 @@ def cmd_jobs(root: pathlib.Path, as_json: bool, offline: bool = False) -> int:
     if not offline:
         cmd_refresh(True, quiet=as_json)
     mdb = _market_db()
+    mb = _market_bandit()
     path = root / "usecases" / mdb.DB_NAME
     err = mdb.refuse_path(path)
     if err:
         emit(err.replace("gb-market-db:", "gb market jobs:", 1))
         return EXIT_ENVIRONMENT
+    store = mb.store_path(root)
+    bandit_err = mb.refuse_path(store)
+    if bandit_err:
+        emit(bandit_err.replace("gb-market-bandit:", "gb market jobs:", 1))
+        return EXIT_ENVIRONMENT
     try:
         rows = mdb.load_bots(path)
-        picked = mdb.job_winners(rows)
+        picked = mb.pick_jobs(rows, store=store)
+        draws = list(picked.get("draws") or picked.get("winners") or [])
+        for row in draws:
+            mb.record_impression(
+                store,
+                job=str(row.get("job") or ""),
+                name_key=str(row.get("name_key") or ""),
+                share_id=str(row.get("share_id") or ""),
+            )
     except mdb.CacheRefused as e:
         emit(str(e).replace("gb-market-db:", "gb market jobs:", 1))
         return EXIT_ENVIRONMENT
+    except mb.StoreRefused as e:
+        emit(str(e).replace("gb-market-bandit:", "gb market jobs:", 1))
+        return EXIT_ENVIRONMENT
     payload = {
+        "bandit_user_version": mb.USER_VERSION,
         "blocked": picked.get("blocked") or [],
+        "draws": draws,
         "schema": JOBS_SCHEMA,
+        "selector": picked.get("selector") or {},
         "user_version": mdb.USER_VERSION,
-        "winners": picked.get("winners") or [],
     }
-    if any(not w.get("share_id") for w in payload["winners"]):
-        emit("gb market jobs: refuse — a winner is missing share_id")
+    if any(not w.get("share_id") for w in payload["draws"]):
+        emit("gb market jobs: refuse — a draw is missing share_id")
         return EXIT_ENVIRONMENT
     if as_json:
         emit(dumps(payload))
         return EXIT_OK
     print_jobs_human(payload)
+    return EXIT_OK
+
+
+def cmd_verdict(
+    root: pathlib.Path,
+    kind: str,
+    share_id: Optional[str],
+    as_json: bool,
+) -> int:
+    mb = _market_bandit()
+    sid = mb.real_share_id({"share_id": share_id})
+    if not sid:
+        emit("gb market %s: refuse — no share_id" % kind)
+        return EXIT_USAGE
+    store = mb.store_path(root)
+    err = mb.refuse_path(store)
+    if err:
+        emit(err.replace("gb-market-bandit:", "gb market %s:" % kind, 1))
+        return EXIT_ENVIRONMENT
+    try:
+        arm = mb.apply_verdict(store, sid, kind)
+    except mb.StoreRefused as e:
+        emit(str(e).replace("gb-market-bandit:", "gb market %s:" % kind, 1))
+        return EXIT_ENVIRONMENT
+    payload = {
+        "kind": kind,
+        "schema": VERDICT_SCHEMA,
+        "subject": {
+            "alpha": arm.get("alpha"),
+            "banned": bool(arm.get("banned")),
+            "beta": arm.get("beta"),
+            "job": arm.get("job"),
+            "name_key": arm.get("name_key"),
+            "pulls": arm.get("pulls"),
+            "share_id": arm.get("share_id"),
+        },
+    }
+    if as_json:
+        emit(dumps(payload))
+        return EXIT_OK
+    emit(
+        "%s  job=%s  name_key=%s  share_id=%s  pulls=%s  alpha=%s  beta=%s%s"
+        % (
+            kind.upper(),
+            arm.get("job"),
+            arm.get("name_key"),
+            arm.get("share_id"),
+            arm.get("pulls"),
+            arm.get("alpha"),
+            arm.get("beta"),
+            "  banned" if arm.get("banned") else "",
+        )
+    )
     return EXIT_OK
 
 
@@ -835,6 +924,7 @@ def selftest() -> int:
         check("refresh-quiet-is-silent", rc_q == 0 and out_q.strip() == "", repr(out_q))
 
         mdb = _market_db()
+        mb = _market_bandit()
         jobs_root = root / "jobs-cache"
         (jobs_root / "usecases").mkdir(parents=True)
         planted = [
@@ -914,8 +1004,13 @@ def selftest() -> int:
             jout,
         )
         check(
-            "jobs-both-beats-shares-only",
-            "Zzz Both" in jout and "zzzShare" in jout and "Aaa Shares" not in jout,
+            "jobs-selector-is-thompson",
+            "method=thompson" in jout
+            and "JOB DRAWS" in jout
+            and "PULLS" in jout
+            and "ALPHA" in jout
+            and "BETA" in jout
+            and "WINNER" not in jout,
             jout,
         )
         check(
@@ -928,22 +1023,41 @@ def selftest() -> int:
             "BLOCKED" in jout and "sell" in jout and "Aaa Sales Ghost" not in jout,
             jout,
         )
-        check("jobs-human-has-origin-chars-added", "shares" in jout and "both" in jout and "2020-01-01" in jout, jout)
+        check("jobs-human-has-origin-alpha-beta", "shares" in jout and "ALPHA" in jout, jout)
         jj = _capture(lambda: cmd_jobs(jobs_root, True, offline=True))[1]
         jpayload = json.loads(jj) if jj.strip().startswith("{") else {}
-        jnames = [w.get("name") for w in jpayload.get("winners") or []]
-        jsids = [w.get("share_id") for w in jpayload.get("winners") or []]
-        jjobs = [w.get("job") for w in jpayload.get("winners") or []]
+        jnames = [w.get("name") for w in jpayload.get("draws") or []]
+        jsids = [w.get("share_id") for w in jpayload.get("draws") or []]
+        jjobs = [w.get("job") for w in jpayload.get("draws") or []]
         check("jobs-json-schema", jpayload.get("schema") == JOBS_SCHEMA, str(jpayload.get("schema")))
         check(
             "jobs-json-winners-have-share-id",
-            jsids and all(jsids) and "weakShare" in jsids and "zzzShare" in jsids,
+            jsids and all(jsids) and "weakShare" in jsids,
             str(jsids),
         )
         check(
-            "jobs-json-skips-none-and-name-alpha",
-            "none" not in jjobs and "Aaa Best" not in jnames and "Aaa Shares" not in jnames,
+            "jobs-json-skips-none-and-no-share",
+            "none" not in jjobs and "Aaa Best" not in jnames and all(jsids),
             str(jpayload),
+        )
+        check(
+            "jobs-json-selector-envelope",
+            (jpayload.get("selector") or {}).get("method") == "thompson"
+            and (jpayload.get("selector") or {}).get("prior") == "beta(1,1)"
+            and "weights" not in (jpayload.get("selector") or {})
+            and jpayload.get("bandit_user_version") == mb.USER_VERSION,
+            str(jpayload.get("selector")),
+        )
+        ship_names = set()
+        for _ in range(40):
+            again = json.loads(_capture(lambda: cmd_jobs(jobs_root, True, offline=True))[1])
+            for w in again.get("draws") or []:
+                if w.get("job") == "ship":
+                    ship_names.add(w.get("name"))
+        check(
+            "jobs-no-outcome-explores-ship",
+            ship_names == {"Aaa Shares", "Zzz Both"},
+            str(ship_names),
         )
         blocked = jpayload.get("blocked") or []
         check(
@@ -983,6 +1097,29 @@ def selftest() -> int:
             bcode == EXIT_ENVIRONMENT and "refuse" in bout,
             bout,
         )
+        bandit_bad = root / "jobs-bandit-bad"
+        (bandit_bad / "usecases").mkdir(parents=True)
+        mdb.rebuild(
+            bandit_bad / "usecases" / mdb.DB_NAME,
+            [
+                mdb.canonicalize_row(
+                    {
+                        "name": "Zzz Weak",
+                        "category": "Ops",
+                        "share_id": "weakShare",
+                        "from_shares": True,
+                    }
+                )
+            ],
+            [],
+        )
+        (bandit_bad / "usecases" / mb.DB_NAME).write_bytes(b"not a sqlite database\n")
+        bbcode, bbout = _capture(lambda: cmd_jobs(bandit_bad, False, offline=True))
+        check(
+            "jobs-offline-bad-bandit-refused",
+            bbcode == EXIT_ENVIRONMENT and "refuse" in bbout,
+            bbout,
+        )
         stamps_only = root / "jobs-stamps-only"
         (stamps_only / "usecases").mkdir(parents=True)
         (stamps_only / "usecases" / "2026-09-11T0600.json").write_text(json.dumps(corpus_cur) + "\n")
@@ -993,11 +1130,50 @@ def selftest() -> int:
             tout,
         )
         cli = _capture(lambda: body(["jobs", "--offline", "--root", str(jobs_root)]))
-        check("jobs-cli-action", cli[0] == 0 and "Zzz Weak" in cli[1] and "Zzz Both" in cli[1], cli[1][:300])
+        check("jobs-cli-action", cli[0] == 0 and "Zzz Weak" in cli[1] and "Aaa Best" not in cli[1], cli[1][:300])
+        keep = _capture(lambda: body(["keep", "weakShare", "--offline", "--root", str(jobs_root)]))
+        check(
+            "cli-keep-raises-alpha",
+            keep[0] == 0 and "KEEP" in keep[1] and "alpha=2" in keep[1] and "WINNER" not in keep[1],
+            keep[1][:300],
+        )
+        skip = _capture(lambda: body(["skip", "weakShare", "--offline", "--root", str(jobs_root)]))
+        check(
+            "cli-skip-raises-beta",
+            skip[0] == 0 and "SKIP" in skip[1] and "beta=2" in skip[1],
+            skip[1][:300],
+        )
+        for kind in ("keep", "skip", "ban"):
+            nosid = _capture(lambda: body([kind, "--offline", "--root", str(jobs_root)]))
+            check(
+                "cli-%s-no-share-refused" % kind,
+                nosid[0] == EXIT_USAGE and "no share_id" in nosid[1],
+                nosid[1],
+            )
+        missing = _capture(lambda: body(["ban", "noSuchShare", "--offline", "--root", str(jobs_root)]))
+        check(
+            "cli-ban-not-in-store-refused",
+            missing[0] == EXIT_ENVIRONMENT and "not in store" in missing[1],
+            missing[1],
+        )
+        ban = _capture(lambda: body(["ban", "weakShare", "--offline", "--root", str(jobs_root)]))
+        check("cli-ban-marks-ineligible", ban[0] == 0 and "banned" in ban[1], ban[1][:300])
+        after_ban = _capture(lambda: body(["jobs", "--offline", "--json", "--root", str(jobs_root)]))
+        after_payload = json.loads(after_ban[1]) if after_ban[1].strip().startswith("{") else {}
+        after_sids = [w.get("share_id") for w in after_payload.get("draws") or []]
+        check(
+            "cli-banned-not-drawn",
+            after_ban[0] == 0 and "weakShare" not in after_sids,
+            str(after_sids) + after_ban[1][:200],
+        )
         help_txt = _build_parser().format_help()
         check(
             "jobs-no-persona-flag",
-            "--persona" not in help_txt and "jobs" in help_txt,
+            "--persona" not in help_txt
+            and "jobs" in help_txt
+            and "keep" in help_txt
+            and "skip" in help_txt
+            and "ban" in help_txt,
             help_txt,
         )
 
@@ -1031,9 +1207,14 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "action",
         nargs="?",
-        choices=("refresh", "bots", "new", "jobs"),
+        choices=("refresh", "bots", "new", "jobs", "keep", "skip", "ban"),
         default="bots",
-        help="refresh | bots | new | jobs (one deployable winner per job)",
+        help="refresh | bots | new | jobs | keep | skip | ban",
+    )
+    ap.add_argument(
+        "share_id",
+        nargs="?",
+        help="keep/skip/ban: catalog share_id already in the bandit store",
     )
     ap.add_argument(
         "--corpus",
@@ -1073,6 +1254,8 @@ def body(argv: Optional[Sequence[str]] = None) -> int:
         return cmd_new(root, bool(args.json), bool(args.offline))
     if args.action == "jobs":
         return cmd_jobs(root, bool(args.json), bool(args.offline))
+    if args.action in ("keep", "skip", "ban"):
+        return cmd_verdict(root, args.action, args.share_id, bool(args.json))
     return cmd_bots(
         root,
         bool(args.json),

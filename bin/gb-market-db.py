@@ -108,101 +108,13 @@ def job_of(taxonomy: Any) -> str:
     return JOB_FROM_TAXONOMY.get(str(taxonomy or ""), "none")
 
 
-def _real_share_id(row: Dict[str, Any]) -> Optional[str]:
+def real_share_id(row: Dict[str, Any]) -> Optional[str]:
+    """Pass through a catalog share_id. Never invent one."""
     sid = row.get("share_id")
     if sid in (None, ""):
         return None
     text = str(sid).strip()
     return text or None
-
-
-def _origin_both(row: Dict[str, Any]) -> int:
-    return 1 if str(row.get("origin") or "") == "both" else 0
-
-
-def _approval(row: Dict[str, Any]) -> int:
-    return 1 if row.get("has_approval_language") else 0
-
-
-def _prompt_chars(row: Dict[str, Any]) -> int:
-    try:
-        return int(row.get("prompt_chars") or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
-def _added_at(row: Dict[str, Any]) -> str:
-    return str(row.get("added_at") or "")
-
-
-def _row_name_key(row: Dict[str, Any]) -> str:
-    return str(row.get("name_key") or name_key(row.get("name")))
-
-
-def job_winners(rows: Sequence[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
-    """At most one deployable winner per job. Skip `none`. Never invent share_id.
-
-    Rank measured keys only, among rows that already have a real share_id:
-    origin `both`, has_approval_language, higher prompt_chars, newer added_at,
-    then stable name_key. Display-name alpha is not a ranking key. Charter
-    words are not a ranking key. A job with rows but no share_id is blocked.
-    """
-    by_job: Dict[str, List[Dict[str, Any]]] = {}
-    for row in rows:
-        job = str(row.get("job") or "none")
-        if job in ("", "none"):
-            continue
-        by_job.setdefault(job, []).append(dict(row))
-
-    winners: List[Dict[str, Any]] = []
-    blocked: List[Dict[str, Any]] = []
-    for job in sorted(by_job):
-        group = by_job[job]
-        deployable = [r for r in group if _real_share_id(r)]
-        if not deployable:
-            blocked.append(
-                {
-                    "count": len(group),
-                    "job": job,
-                    "reason": "no share_id",
-                }
-            )
-            continue
-        # name_key first so a later stable sort keeps A-before-Z on full ties.
-        deployable.sort(key=_row_name_key)
-        deployable.sort(
-            key=lambda r: (
-                _origin_both(r),
-                _approval(r),
-                _prompt_chars(r),
-                _added_at(r),
-            ),
-            reverse=True,
-        )
-        top = deployable[0]
-        sid = _real_share_id(top)
-        if not sid:
-            blocked.append(
-                {
-                    "count": len(group),
-                    "job": job,
-                    "reason": "no share_id",
-                }
-            )
-            continue
-        winners.append(
-            {
-                "added_at": top.get("added_at"),
-                "has_approval_language": bool(top.get("has_approval_language")),
-                "job": job,
-                "name": top.get("name"),
-                "name_key": _row_name_key(top),
-                "origin": top.get("origin"),
-                "prompt_chars": _prompt_chars(top),
-                "share_id": sid,
-            }
-        )
-    return {"blocked": blocked, "winners": winners}
 
 
 class CacheRefused(Exception):
@@ -659,115 +571,13 @@ def selftest() -> int:
 
         missing = refuse_path(root / "nope.sqlite")
         check("missing-is-refused", missing is not None and "no cache" in missing, str(missing))
-
-        # job_winners: one deployable pick per job. Name alpha is not a ranking key.
-        no_share_best = canonicalize_row(
-            {
-                "name": "Aaa Best",
-                "category": "Ops",
-                "origin": "both",
-                "prompt_chars": 9999,
-                "has_approval_language": True,
-                "added_at": "2026-12-31",
-                "charter": "looks like the winner if share_id is ignored",
-            }
-        )
-        weak_share = canonicalize_row(
-            {
-                "name": "Zzz Weak",
-                "category": "Ops",
-                "share_id": "weakShare",
-                "from_shares": True,
-                "origin": "shares",
-                "prompt_chars": 1,
-                "has_approval_language": False,
-                "added_at": "2020-01-01",
-            }
-        )
-        shares_first = canonicalize_row(
-            {
-                "name": "Aaa Shares",
-                "category": "Ops",
-                "share_id": "aaaShare",
-                "from_shares": True,
-                "origin": "shares",
-                "prompt_chars": 999,
-                "has_approval_language": True,
-                "added_at": "2026-12-31",
-            }
-        )
-        both_later = canonicalize_row(
-            {
-                "name": "Zzz Both",
-                "category": "Ops",
-                "share_id": "zzzShare",
-                "origin": "both",
-                "prompt_chars": 1,
-                "has_approval_language": False,
-                "added_at": "2020-01-01",
-            }
-        )
-        personal = canonicalize_row(
-            {
-                "name": "Aaa Personal",
-                "category": "Personal",
-                "share_id": "persShare",
-                "origin": "both",
-                "prompt_chars": 5000,
-                "has_approval_language": True,
-                "added_at": "2026-12-31",
-            }
-        )
-        sales_ghost = canonicalize_row(
-            {
-                "name": "Aaa Sales Ghost",
-                "category": "Sales",
-                "origin": "directory",
-                "prompt_chars": 800,
-                "added_at": "2026-12-31",
-            }
-        )
-        picked = job_winners(
-            [no_share_best, weak_share, personal, sales_ghost]
-        )
-        win_by_job = {w["job"]: w for w in picked["winners"]}
-        blocked_by_job = {b["job"]: b for b in picked["blocked"]}
+        catalog_src = open(__file__).read().split("def selftest()", 1)[0]
         check(
-            "no-share-cannot-win",
-            win_by_job.get("operate", {}).get("share_id") == "weakShare"
-            and win_by_job.get("operate", {}).get("name") == "Zzz Weak"
-            and all(w.get("share_id") for w in picked["winners"]),
-            str(picked),
-        )
-        both_pick = job_winners([shares_first, both_later, personal])
-        operate = {w["job"]: w for w in both_pick["winners"]}.get("operate") or {}
-        check(
-            "both-beats-shares-only",
-            operate.get("share_id") == "zzzShare" and operate.get("name") == "Zzz Both",
-            str(both_pick),
-        )
-        check(
-            "none-never-a-winner",
-            all(w.get("job") != "none" for w in picked["winners"])
-            and all(w.get("job") != "none" for w in both_pick["winners"])
-            and "none" not in blocked_by_job
-            and personal["job"] == "none",
-            str(picked),
-        )
-        check(
-            "no-share-job-is-blocked",
-            "sell" in blocked_by_job
-            and blocked_by_job["sell"].get("count") == 1
-            and blocked_by_job["sell"].get("reason")
-            and "sell" not in win_by_job
-            and all(w.get("share_id") for w in picked["winners"]),
-            str(picked),
-        )
-        check(
-            "does-not-invent-decide-refuse",
-            all(w.get("job") not in ("decide", "refuse") for w in picked["winners"])
-            and all(b.get("job") not in ("decide", "refuse") for b in picked["blocked"]),
-            str(picked),
+            "catalog-has-no-winner-sort",
+            "def job_winners" not in catalog_src
+            and ("SCORE" + "_WEIGHTS") not in catalog_src
+            and ("PRIOR" + "_VARIANCE") not in catalog_src,
+            "winner pick leaked into catalog cache",
         )
 
     failed = [n for n, ok, _ in legs if not ok]

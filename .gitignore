@@ -31,4 +31,6 @@ venv/
 /surface/
 /typecheck/
 /usecases/
+/usecases/bandit.sqlite
+/usecases/*.sqlite.lock
 /utilization/
