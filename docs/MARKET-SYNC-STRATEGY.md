@@ -21,7 +21,7 @@ Engine is stock sqlite3 (Python stdlib). fsqlite is not involved.
 
 ## Sync Triggers
 
-- On command: `gb market bots` (default live pull), `gb market jobs` (same live pull, then one Thompson draw per job), and `gb market refresh --corpus`.
+- On command: `gb market bots` (default live pull), `gb market jobs` (same live pull, then one Thompson draw per job), and `gb market refresh --corpus`. `gb market keep|skip|ban <share_id>` write the bandit store only. They do not import, deploy, or invent a share_id.
 - On exit: none.
 - Timer/throttle: none required. `--offline` reads cache only. `gb market jobs --offline` refuses if the catalog `integrity_check` or `user_version` fail. A planted-bad bandit store is also refused. A missing bandit store is a cold start (explore), not a refuse.
 - One-way: catalog → sqlite → optional JSON stamp. Never sqlite → catalog. Never JSON → sqlite unless `--offline` and sqlite missing (rebuild cache from newest stamp, then integrity_check). Never catalog rebuild → bandit store.
@@ -29,7 +29,7 @@ Engine is stock sqlite3 (Python stdlib). fsqlite is not involved.
 ## Versioning
 
 - Catalog DB marker: `PRAGMA user_version` on `market.sqlite`. Now 3 (job column). Bump on every catalog DDL. A v1 cache is refused, then rebuilt from live catalogs.
-- Bandit DB marker: `PRAGMA user_version` on `bandit.sqlite`. Now 1. Own cookie. A stale or planted-bad file is refused; it is not reconstructed from the catalog.
+- Bandit DB marker: `PRAGMA user_version` on `bandit.sqlite`. Now 2 (impressions, banned, outcome kind). Own cookie. A stale or planted-bad file is refused; it is not reconstructed from the catalog.
 - JSONL/JSON marker: `schema` field `gb-usecases/1` until the sqlite layer ships `gb-usecases/2`.
 - Catalog row identity: `name_key` (casefold collapsed space) plus optional `share_id`. share_id is passed through from the catalog, never invented.
 - Arm identity: `job + name_key + share_id` (C106). Same name, different share_id is a different arm.
@@ -78,9 +78,11 @@ One deployable arm per job. Thompson sampling, Beta(1,1) per arm. Not a frozen s
 - Catalog fields (`origin`, `has_approval_language`, `prompt_chars`, `added_at`, name, charter) are display only. They are not ranking keys and not a prior mean.
 - Selection: two Gamma(shape, 1) draws, θ = Ga(α,1) / (Ga(α,1) + Ga(β,1)), pick max. Ties are a random choice among equals, not name-alpha. UCB1 is the wrong first-hour algorithm (it walks every arm first; `brief` has 100+ deployable arms).
 - Posterior starts uninformative: α=1, β=1. With no outcomes the draw must explore. Select does not invent a reward.
-- A recorded hit increments α; a miss increments β. That write is `record_outcome` on `usecases/bandit.sqlite`, never a side effect of `gb market jobs`.
+- `gb market jobs` records an impression (α/β unchanged). A keep increments α; a skip increments β. Those writes are `record_outcome` on `usecases/bandit.sqlite`. Ban sets `banned=1` and is a hard filter on the next draw, not a silent β bump.
 - Product state lives under `usecases/`. Never under /tmp.
 
-## Bandit store (`usecases/bandit.sqlite`, user_version 1)
+A Thompson draw without a recorded keep or skip is only an impression: the arm was shown, not judged. There is no champion and no WINNER until outcomes exist. `gb market keep <share_id>` and `gb market skip <share_id>` are the verdicts for that subject's latest or only matching arm; they refuse if the share_id is missing or not in the store, and they never invent one. `gb market ban <share_id>` marks the arm ineligible so constrained select never draws it again. Ban is a hard filter, not a posterior tweak. Charter text and likes are not rewards.
+
+## Bandit store (`usecases/bandit.sqlite`, user_version 2)
 
 Separate file from `market.sqlite`. Own `integrity_check` and `user_version`. Gitignored. Catalog rebuild replaces only the catalog cache (C49).

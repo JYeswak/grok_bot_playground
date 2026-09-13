@@ -26,13 +26,17 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from gbtypes import main as gbmain  # noqa: E402
 
-USER_VERSION = 1
+USER_VERSION = 2
 DB_NAME = "bandit.sqlite"
 LOCK_NAME = "bandit.sqlite.lock"
 PRODUCT_DIR = "usecases"
 PRIOR_ALPHA = 1.0
 PRIOR_BETA = 1.0
 SELECTOR_METHOD = "thompson"
+KIND_IMPRESSION = "impression"
+KIND_KEEP = "keep"
+KIND_SKIP = "skip"
+KIND_BAN = "ban"
 
 SCHEMA_SQL = """
 CREATE TABLE arms (
@@ -44,6 +48,8 @@ CREATE TABLE arms (
   pulls INTEGER NOT NULL DEFAULT 0,
   hits INTEGER NOT NULL DEFAULT 0,
   misses INTEGER NOT NULL DEFAULT 0,
+  impressions INTEGER NOT NULL DEFAULT 0,
+  banned INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (job, name_key, share_id)
 );
 CREATE TABLE outcomes (
@@ -51,7 +57,8 @@ CREATE TABLE outcomes (
   job TEXT NOT NULL,
   name_key TEXT NOT NULL,
   share_id TEXT NOT NULL,
-  hit INTEGER NOT NULL,
+  hit INTEGER,
+  kind TEXT NOT NULL,
   recorded_at TEXT NOT NULL
 );
 CREATE TABLE meta (
@@ -256,13 +263,16 @@ def load_posteriors(path: pathlib.Path) -> Dict[Tuple[str, str, str], Dict[str, 
         apply_pragmas(conn)
         out: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
         for row in conn.execute(
-            "SELECT job, name_key, share_id, alpha, beta, pulls, hits, misses FROM arms"
+            "SELECT job, name_key, share_id, alpha, beta, pulls, hits, misses, "
+            "impressions, banned FROM arms"
         ):
             key = _arm_id(row["job"], row["name_key"], row["share_id"])
             out[key] = {
                 "alpha": float(row["alpha"]),
                 "beta": float(row["beta"]),
+                "banned": bool(row["banned"]),
                 "hits": int(row["hits"] or 0),
+                "impressions": int(row["impressions"] or 0),
                 "job": key[0],
                 "misses": int(row["misses"] or 0),
                 "name_key": key[1],
@@ -270,6 +280,105 @@ def load_posteriors(path: pathlib.Path) -> Dict[Tuple[str, str, str], Dict[str, 
                 "share_id": key[2],
             }
         return out
+    finally:
+        conn.close()
+
+
+def _empty_arm(key: Tuple[str, str, str]) -> Dict[str, Any]:
+    return {
+        "alpha": PRIOR_ALPHA,
+        "banned": False,
+        "beta": PRIOR_BETA,
+        "hits": 0,
+        "impressions": 0,
+        "job": key[0],
+        "misses": 0,
+        "name_key": key[1],
+        "pulls": 0,
+        "share_id": key[2],
+    }
+
+
+def _read_arm(conn: sqlite3.Connection, key: Tuple[str, str, str]) -> Optional[Dict[str, Any]]:
+    found = conn.execute(
+        "SELECT alpha, beta, pulls, hits, misses, impressions, banned FROM arms "
+        "WHERE job = ? AND name_key = ? AND share_id = ?",
+        key,
+    ).fetchone()
+    if not found:
+        return None
+    return {
+        "alpha": float(found[0]),
+        "banned": bool(found[6]),
+        "beta": float(found[1]),
+        "hits": int(found[3] or 0),
+        "impressions": int(found[5] or 0),
+        "job": key[0],
+        "misses": int(found[4] or 0),
+        "name_key": key[1],
+        "pulls": int(found[2] or 0),
+        "share_id": key[2],
+    }
+
+
+def _write_arm(conn: sqlite3.Connection, arm: Dict[str, Any]) -> None:
+    conn.execute(
+        """
+        INSERT INTO arms (
+          job, name_key, share_id, alpha, beta, pulls, hits, misses, impressions, banned
+        ) VALUES (?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(job, name_key, share_id) DO UPDATE SET
+          alpha=excluded.alpha,
+          beta=excluded.beta,
+          pulls=excluded.pulls,
+          hits=excluded.hits,
+          misses=excluded.misses,
+          impressions=excluded.impressions,
+          banned=excluded.banned
+        """,
+        (
+            arm["job"],
+            arm["name_key"],
+            arm["share_id"],
+            arm["alpha"],
+            arm["beta"],
+            arm["pulls"],
+            arm["hits"],
+            arm["misses"],
+            arm["impressions"],
+            1 if arm.get("banned") else 0,
+        ),
+    )
+
+
+def latest_subject(path: pathlib.Path, share_id: str) -> Optional[Dict[str, Any]]:
+    """Latest/only arm in the store for this share_id. Does not invent one."""
+    sid = real_share_id({"share_id": share_id})
+    if not sid:
+        return None
+    err = refuse_path(path)
+    if err:
+        raise StoreRefused(err)
+    if not path.is_file():
+        return None
+    conn = sqlite3.connect("file:%s?mode=ro" % path.as_posix(), uri=True)
+    try:
+        apply_pragmas(conn)
+        row = conn.execute(
+            "SELECT job, name_key, share_id FROM outcomes WHERE share_id = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (sid,),
+        ).fetchone()
+        if row is None:
+            row = conn.execute(
+                "SELECT job, name_key, share_id FROM arms WHERE share_id = ? "
+                "ORDER BY impressions DESC, job, name_key LIMIT 1",
+                (sid,),
+            ).fetchone()
+        if row is None:
+            return None
+        key = _arm_id(row[0], row[1], row[2])
+        return _read_arm(conn, key) or _empty_arm(key)
     finally:
         conn.close()
 
@@ -284,7 +393,7 @@ def record_outcome(
     n: int = 1,
     recorded_at: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Write n recorded outcomes and update that arm. Select does not call this."""
+    """Write n keep/skip outcomes. Select does not call this. Not an impression."""
     if n < 1:
         raise StoreRefused("gb-market-bandit: refuse outcome — n must be >= 1")
     sid = real_share_id({"share_id": share_id})
@@ -295,67 +404,146 @@ def record_outcome(
         raise StoreRefused("gb-market-bandit: refuse outcome — job none is not an arm")
     key = _arm_id(job_s, name_key, sid)
     stamp = recorded_at or dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
+    kind = KIND_KEEP if hit else KIND_SKIP
     ensure_store(path)
     lock = _lock(path.parent / LOCK_NAME)
     try:
         conn = sqlite3.connect(str(path))
         try:
             apply_pragmas(conn, write=True)
-            found = conn.execute(
-                "SELECT alpha, beta, pulls, hits, misses FROM arms "
-                "WHERE job = ? AND name_key = ? AND share_id = ?",
-                key,
-            ).fetchone()
-            if found:
-                alpha, beta, pulls, hits, misses = (
-                    float(found[0]),
-                    float(found[1]),
-                    int(found[2] or 0),
-                    int(found[3] or 0),
-                    int(found[4] or 0),
-                )
-            else:
-                alpha, beta, pulls, hits, misses = PRIOR_ALPHA, PRIOR_BETA, 0, 0, 0
-            rows = [(key[0], key[1], key[2], 1 if hit else 0, stamp) for _ in range(n)]
+            arm = _read_arm(conn, key) or _empty_arm(key)
             conn.executemany(
-                "INSERT INTO outcomes (job, name_key, share_id, hit, recorded_at) "
-                "VALUES (?,?,?,?,?)",
-                rows,
+                "INSERT INTO outcomes (job, name_key, share_id, hit, kind, recorded_at) "
+                "VALUES (?,?,?,?,?,?)",
+                [(key[0], key[1], key[2], 1 if hit else 0, kind, stamp) for _ in range(n)],
             )
             if hit:
-                alpha += n
-                hits += n
+                arm["alpha"] += n
+                arm["hits"] += n
             else:
-                beta += n
-                misses += n
-            pulls += n
-            conn.execute(
-                """
-                INSERT INTO arms (job, name_key, share_id, alpha, beta, pulls, hits, misses)
-                VALUES (?,?,?,?,?,?,?,?)
-                ON CONFLICT(job, name_key, share_id) DO UPDATE SET
-                  alpha=excluded.alpha,
-                  beta=excluded.beta,
-                  pulls=excluded.pulls,
-                  hits=excluded.hits,
-                  misses=excluded.misses
-                """,
-                (key[0], key[1], key[2], alpha, beta, pulls, hits, misses),
-            )
+                arm["beta"] += n
+                arm["misses"] += n
+            arm["pulls"] += n
+            _write_arm(conn, arm)
             conn.commit()
             ok, text = integrity_ok(conn)
             if not ok:
                 raise StoreRefused("integrity_check after outcome: %s" % text)
-            return {
-                "alpha": alpha,
-                "beta": beta,
-                "hits": hits,
-                "job": key[0],
-                "misses": misses,
-                "name_key": key[1],
-                "pulls": pulls,
-                "share_id": key[2],
-            }
+            return arm
+        finally:
+            conn.close()
+    finally:
+        try:
+            import fcntl
+
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+        except Exception:
+            pass
+        lock.close()
+
+
+def record_impression(
+    path: pathlib.Path,
+    *,
+    job: str,
+    name_key: str,
+    share_id: str,
+    recorded_at: Optional[str] = None,
+) -> Dict[str, Any]:
+    """A draw is an impression. Does not change alpha/beta. Not a keep/skip."""
+    sid = real_share_id({"share_id": share_id})
+    if not sid:
+        raise StoreRefused("gb-market-bandit: refuse impression — arm has no share_id")
+    job_s = str(job or "")
+    if job_s in ("", "none"):
+        raise StoreRefused("gb-market-bandit: refuse impression — job none is not an arm")
+    key = _arm_id(job_s, name_key, sid)
+    stamp = recorded_at or dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
+    ensure_store(path)
+    lock = _lock(path.parent / LOCK_NAME)
+    try:
+        conn = sqlite3.connect(str(path))
+        try:
+            apply_pragmas(conn, write=True)
+            arm = _read_arm(conn, key) or _empty_arm(key)
+            arm["impressions"] = int(arm.get("impressions") or 0) + 1
+            conn.execute(
+                "INSERT INTO outcomes (job, name_key, share_id, hit, kind, recorded_at) "
+                "VALUES (?,?,?,?,?,?)",
+                (key[0], key[1], key[2], None, KIND_IMPRESSION, stamp),
+            )
+            _write_arm(conn, arm)
+            conn.commit()
+            ok, text = integrity_ok(conn)
+            if not ok:
+                raise StoreRefused("integrity_check after impression: %s" % text)
+            return arm
+        finally:
+            conn.close()
+    finally:
+        try:
+            import fcntl
+
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+        except Exception:
+            pass
+        lock.close()
+
+
+def apply_verdict(
+    path: pathlib.Path,
+    share_id: str,
+    kind: str,
+    recorded_at: Optional[str] = None,
+) -> Dict[str, Any]:
+    """keep / skip / ban the latest store subject for share_id. Never invents a share_id."""
+    sid = real_share_id({"share_id": share_id})
+    if not sid:
+        raise StoreRefused("gb-market-bandit: refuse %s — no share_id" % kind)
+    if kind not in (KIND_KEEP, KIND_SKIP, KIND_BAN):
+        raise StoreRefused("gb-market-bandit: refuse — unknown verdict %r" % kind)
+    subject = latest_subject(path, sid)
+    if subject is None:
+        raise StoreRefused("gb-market-bandit: refuse %s — not in store" % kind)
+    if kind == KIND_KEEP:
+        return record_outcome(
+            path,
+            job=subject["job"],
+            name_key=subject["name_key"],
+            share_id=sid,
+            hit=True,
+            recorded_at=recorded_at,
+        )
+    if kind == KIND_SKIP:
+        return record_outcome(
+            path,
+            job=subject["job"],
+            name_key=subject["name_key"],
+            share_id=sid,
+            hit=False,
+            recorded_at=recorded_at,
+        )
+    stamp = recorded_at or dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
+    ensure_store(path)
+    lock = _lock(path.parent / LOCK_NAME)
+    try:
+        conn = sqlite3.connect(str(path))
+        try:
+            apply_pragmas(conn, write=True)
+            key = _arm_id(subject["job"], subject["name_key"], sid)
+            arm = _read_arm(conn, key) or _empty_arm(key)
+            arm["banned"] = True
+            conn.execute(
+                "INSERT INTO outcomes (job, name_key, share_id, hit, kind, recorded_at) "
+                "VALUES (?,?,?,?,?,?)",
+                (key[0], key[1], key[2], None, KIND_BAN, stamp),
+            )
+            _write_arm(conn, arm)
+            conn.commit()
+            ok, text = integrity_ok(conn)
+            if not ok:
+                raise StoreRefused("integrity_check after ban: %s" % text)
+            return arm
         finally:
             conn.close()
     finally:
@@ -393,7 +581,7 @@ def pick_jobs(
             continue
         by_job.setdefault(job, []).append(dict(row))
 
-    winners: List[Dict[str, Any]] = []
+    draws: List[Dict[str, Any]] = []
     blocked: List[Dict[str, Any]] = []
     for job in sorted(by_job):
         group = by_job[job]
@@ -403,18 +591,16 @@ def pick_jobs(
             continue
         best_sample: Optional[float] = None
         chosen: List[Tuple[Dict[str, Any], float, Dict[str, Any]]] = []
+        banned_n = 0
         for row in deployable:
             sid = real_share_id(row)
             if not sid:
                 continue
             key = _arm_id(job, row.get("name_key") or name_key(row.get("name")), sid)
-            state = posteriors.get(key) or {
-                "alpha": PRIOR_ALPHA,
-                "beta": PRIOR_BETA,
-                "pulls": 0,
-                "hits": 0,
-                "misses": 0,
-            }
+            state = posteriors.get(key) or _empty_arm(key)
+            if state.get("banned"):
+                banned_n += 1
+                continue
             sample = thompson_sample(float(state["alpha"]), float(state["beta"]), draw)
             item = (row, sample, state)
             if best_sample is None or sample > best_sample:
@@ -422,14 +608,25 @@ def pick_jobs(
                 chosen = [item]
             elif sample == best_sample:
                 chosen.append(item)
+        if not chosen:
+            blocked.append(
+                {
+                    "count": banned_n or len(deployable),
+                    "job": job,
+                    "reason": "banned" if banned_n else "no share_id",
+                }
+            )
+            continue
         top, sample, state = draw.choice(chosen)
         sid = real_share_id(top)
         if not sid:
             blocked.append({"count": len(group), "job": job, "reason": "no share_id"})
             continue
-        winner = {
+        drawn = {
             "alpha": float(state.get("alpha") or PRIOR_ALPHA),
+            "banned": bool(state.get("banned")),
             "beta": float(state.get("beta") or PRIOR_BETA),
+            "impressions": int(state.get("impressions") or 0),
             "job": job,
             "name": top.get("name"),
             "name_key": name_key(top.get("name_key") or top.get("name")),
@@ -437,9 +634,9 @@ def pick_jobs(
             "sample": sample,
             "share_id": sid,
         }
-        winner.update(display_fields(top))
-        winners.append(winner)
-    return {"blocked": blocked, "selector": selector_meta(), "winners": winners}
+        drawn.update(display_fields(top))
+        draws.append(drawn)
+    return {"blocked": blocked, "draws": draws, "selector": selector_meta(), "winners": draws}
 
 
 def selftest() -> int:
@@ -697,13 +894,61 @@ def selftest() -> int:
             str((ship, list(load_posteriors(store)))),
         )
 
+        record_impression(
+            store, job="operate", name_key="zzz both", share_id="zzzShare"
+        )
+        before_keep = load_posteriors(store)[_arm_id("operate", "zzz both", "zzzShare")]
+        kept_arm = apply_verdict(store, "zzzShare", KIND_KEEP)
+        check(
+            "keep-raises-alpha",
+            kept_arm["alpha"] == before_keep["alpha"] + 1
+            and kept_arm["beta"] == before_keep["beta"]
+            and kept_arm["pulls"] == before_keep["pulls"] + 1,
+            str((before_keep, kept_arm)),
+        )
+        skipped_arm = apply_verdict(store, "zzzShare", KIND_SKIP)
+        check(
+            "skip-raises-beta",
+            skipped_arm["beta"] == kept_arm["beta"] + 1
+            and skipped_arm["alpha"] == kept_arm["alpha"],
+            str(skipped_arm),
+        )
+        record_outcome(
+            store, job="operate", name_key="aaa shares", share_id="aaaShare", hit=True, n=1
+        )
+        apply_verdict(store, "aaaShare", KIND_BAN)
+        banned_state = load_posteriors(store)[_arm_id("operate", "aaa shares", "aaaShare")]
+        check("ban-is-hard-filter-not-beta-bump", banned_state.get("banned") is True, str(banned_state))
+        never = set()
+        for seed in range(40):
+            drawn = pick_jobs([aaa, zzz], store=store, rng=random.Random(seed))
+            operate = [w for w in drawn["draws"] if w.get("job") == "operate"]
+            if operate:
+                never.add(operate[0].get("share_id"))
+        check(
+            "banned-arm-not-selected-even-if-rewarded",
+            never == {"zzzShare"} and "aaaShare" not in never,
+            str(never),
+        )
+        for kind in (KIND_KEEP, KIND_SKIP, KIND_BAN):
+            try:
+                apply_verdict(store, "", kind)
+                check("no-share-cannot-%s" % kind, False, "wrote")
+            except StoreRefused as e:
+                check("no-share-cannot-%s" % kind, "share_id" in str(e).lower(), str(e))
+        try:
+            apply_verdict(store, "missingShare", KIND_KEEP)
+            check("keep-refuses-not-in-store", False, "wrote")
+        except StoreRefused as e:
+            check("keep-refuses-not-in-store", "not in store" in str(e).lower(), str(e))
+
         catalog = root / PRODUCT_DIR / "market.sqlite"
         catalog.parent.mkdir(parents=True, exist_ok=True)
         catalog.write_bytes(b"rebuilt-catalog-placeholder\n")
         kept = load_posteriors(store)
         check(
             "catalog-rebuild-does-not-wipe-posterior",
-            (kept.get(_arm_id("operate", "aaa shares", "aaaShare")) or {}).get("pulls") == 1000,
+            (kept.get(_arm_id("operate", "aaa shares", "aaaShare")) or {}).get("pulls") >= 1000,
             str(kept),
         )
 
