@@ -27,6 +27,7 @@ from gbtypes import main as gbmain  # noqa: E402
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BIN = ROOT / "bin"
 SCHEMA = "gb-market-bots/1"
+JOBS_SCHEMA = "gb-market-jobs/1"
 PREVIEW_ROWS = 20
 EXIT_OK, EXIT_USAGE, EXIT_ENVIRONMENT = 0, 2, 3
 SOURCES = ("official", "corpus", "both")
@@ -480,6 +481,75 @@ def cmd_bots(
     return EXIT_OK
 
 
+def print_jobs_human(payload: dict) -> None:
+    winners = list(payload.get("winners") or [])
+    blocked = list(payload.get("blocked") or [])
+    emit("JOB WINNERS  n=%d  blocked=%d" % (len(winners), len(blocked)))
+    emit(
+        "%-28s %-10s %-16s %-10s %5s %s"
+        % ("NAME", "JOB", "SHARE_ID", "ORIGIN", "CHARS", "ADDED")
+    )
+    rows: List[Tuple[str, dict]] = [("win", w) for w in winners] + [
+        ("block", b) for b in blocked
+    ]
+    rows.sort(key=lambda item: str(item[1].get("job") or ""))
+    for kind, row in rows:
+        job = str(row.get("job") or "-")
+        if kind == "block":
+            emit(
+                "%-28s %-10s %-16s %-10s %5s %s"
+                % ("-", job[:10], "BLOCKED", "-", "-", "-")
+            )
+            continue
+        emit(
+            "%-28s %-10s %-16s %-10s %5s %s"
+            % (
+                str(row.get("name") or "-")[:28],
+                job[:10],
+                str(row.get("share_id") or "BLOCKED")[:16],
+                str(row.get("origin") or "-")[:10],
+                str(row.get("prompt_chars") if row.get("prompt_chars") is not None else "-"),
+                str(row.get("added_at") or "-")[:10],
+            )
+        )
+    for row in blocked:
+        emit(
+            "blocked  %s  %s  %s"
+            % (row.get("job"), row.get("count"), row.get("reason") or "no share_id")
+        )
+
+
+def cmd_jobs(root: pathlib.Path, as_json: bool, offline: bool = False) -> int:
+    if not offline:
+        cmd_refresh(True, quiet=as_json)
+    mdb = _market_db()
+    path = root / "usecases" / mdb.DB_NAME
+    err = mdb.refuse_path(path)
+    if err:
+        emit(err.replace("gb-market-db:", "gb market jobs:", 1))
+        return EXIT_ENVIRONMENT
+    try:
+        rows = mdb.load_bots(path)
+        picked = mdb.job_winners(rows)
+    except mdb.CacheRefused as e:
+        emit(str(e).replace("gb-market-db:", "gb market jobs:", 1))
+        return EXIT_ENVIRONMENT
+    payload = {
+        "blocked": picked.get("blocked") or [],
+        "schema": JOBS_SCHEMA,
+        "user_version": mdb.USER_VERSION,
+        "winners": picked.get("winners") or [],
+    }
+    if any(not w.get("share_id") for w in payload["winners"]):
+        emit("gb market jobs: refuse — a winner is missing share_id")
+        return EXIT_ENVIRONMENT
+    if as_json:
+        emit(dumps(payload))
+        return EXIT_OK
+    print_jobs_human(payload)
+    return EXIT_OK
+
+
 def cmd_new(root: pathlib.Path, as_json: bool, offline: bool = False) -> int:
     if not offline:
         cmd_refresh(True, quiet=as_json)
@@ -764,6 +834,173 @@ def selftest() -> int:
         )
         check("refresh-quiet-is-silent", rc_q == 0 and out_q.strip() == "", repr(out_q))
 
+        mdb = _market_db()
+        jobs_root = root / "jobs-cache"
+        (jobs_root / "usecases").mkdir(parents=True)
+        planted = [
+            mdb.canonicalize_row(
+                {
+                    "name": "Aaa Best",
+                    "category": "Ops",
+                    "origin": "both",
+                    "prompt_chars": 9999,
+                    "has_approval_language": True,
+                    "added_at": "2026-12-31",
+                    "charter": "no share must not win",
+                }
+            ),
+            mdb.canonicalize_row(
+                {
+                    "name": "Zzz Weak",
+                    "category": "Ops",
+                    "share_id": "weakShare",
+                    "from_shares": True,
+                    "origin": "shares",
+                    "prompt_chars": 1,
+                    "has_approval_language": False,
+                    "added_at": "2020-01-01",
+                }
+            ),
+            mdb.canonicalize_row(
+                {
+                    "name": "Aaa Shares",
+                    "category": "coding-shipping",
+                    "share_id": "aaaShare",
+                    "from_shares": True,
+                    "origin": "shares",
+                    "prompt_chars": 999,
+                    "has_approval_language": True,
+                    "added_at": "2026-12-31",
+                }
+            ),
+            mdb.canonicalize_row(
+                {
+                    "name": "Zzz Both",
+                    "category": "coding-shipping",
+                    "share_id": "zzzShare",
+                    "origin": "both",
+                    "prompt_chars": 1,
+                    "has_approval_language": False,
+                    "added_at": "2020-01-01",
+                }
+            ),
+            mdb.canonicalize_row(
+                {
+                    "name": "Aaa Personal",
+                    "category": "Personal",
+                    "share_id": "persShare",
+                    "origin": "both",
+                    "prompt_chars": 5000,
+                    "has_approval_language": True,
+                    "added_at": "2026-12-31",
+                }
+            ),
+            mdb.canonicalize_row(
+                {
+                    "name": "Aaa Sales Ghost",
+                    "category": "Sales",
+                    "origin": "directory",
+                    "prompt_chars": 800,
+                    "added_at": "2026-12-31",
+                }
+            ),
+        ]
+        mdb.rebuild(jobs_root / "usecases" / mdb.DB_NAME, planted, [])
+        jcode, jout = _capture(lambda: cmd_jobs(jobs_root, False, offline=True))
+        check("jobs-exit-ok", jcode == 0, str(jcode) + jout[:200])
+        check(
+            "jobs-no-share-cannot-win",
+            "Zzz Weak" in jout and "weakShare" in jout and "Aaa Best" not in jout,
+            jout,
+        )
+        check(
+            "jobs-both-beats-shares-only",
+            "Zzz Both" in jout and "zzzShare" in jout and "Aaa Shares" not in jout,
+            jout,
+        )
+        check(
+            "jobs-none-never-printed",
+            "Aaa Personal" not in jout and " persShare" not in jout and " none " not in jout,
+            jout,
+        )
+        check(
+            "jobs-blocked-not-invented",
+            "BLOCKED" in jout and "sell" in jout and "Aaa Sales Ghost" not in jout,
+            jout,
+        )
+        check("jobs-human-has-origin-chars-added", "shares" in jout and "both" in jout and "2020-01-01" in jout, jout)
+        jj = _capture(lambda: cmd_jobs(jobs_root, True, offline=True))[1]
+        jpayload = json.loads(jj) if jj.strip().startswith("{") else {}
+        jnames = [w.get("name") for w in jpayload.get("winners") or []]
+        jsids = [w.get("share_id") for w in jpayload.get("winners") or []]
+        jjobs = [w.get("job") for w in jpayload.get("winners") or []]
+        check("jobs-json-schema", jpayload.get("schema") == JOBS_SCHEMA, str(jpayload.get("schema")))
+        check(
+            "jobs-json-winners-have-share-id",
+            jsids and all(jsids) and "weakShare" in jsids and "zzzShare" in jsids,
+            str(jsids),
+        )
+        check(
+            "jobs-json-skips-none-and-name-alpha",
+            "none" not in jjobs and "Aaa Best" not in jnames and "Aaa Shares" not in jnames,
+            str(jpayload),
+        )
+        blocked = jpayload.get("blocked") or []
+        check(
+            "jobs-json-blocked-count-reason",
+            any(b.get("job") == "sell" and b.get("count") == 1 and b.get("reason") for b in blocked),
+            str(blocked),
+        )
+
+        stale_root = root / "jobs-stale"
+        (stale_root / "usecases").mkdir(parents=True)
+        import sqlite3 as _sql
+
+        stale = stale_root / "usecases" / "market.sqlite"
+        conn = _sql.connect(str(stale))
+        try:
+            conn.executescript(mdb.SCHEMA_SQL)
+            conn.execute("PRAGMA user_version = 0")
+            conn.execute(
+                "INSERT INTO bots (name_key, name, origin, taxonomy, job, share_id) "
+                "VALUES ('x','X','both','ops','operate','sid')"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        scode, sout = _capture(lambda: cmd_jobs(stale_root, False, offline=True))
+        check(
+            "jobs-offline-stale-version-refused",
+            scode == EXIT_ENVIRONMENT and "user_version" in sout,
+            sout,
+        )
+        bad_root = root / "jobs-bad"
+        (bad_root / "usecases").mkdir(parents=True)
+        (bad_root / "usecases" / "market.sqlite").write_bytes(b"not a sqlite database\n")
+        bcode, bout = _capture(lambda: cmd_jobs(bad_root, False, offline=True))
+        check(
+            "jobs-offline-integrity-refused",
+            bcode == EXIT_ENVIRONMENT and "refuse" in bout,
+            bout,
+        )
+        stamps_only = root / "jobs-stamps-only"
+        (stamps_only / "usecases").mkdir(parents=True)
+        (stamps_only / "usecases" / "2026-09-11T0600.json").write_text(json.dumps(corpus_cur) + "\n")
+        tcode, tout = _capture(lambda: cmd_jobs(stamps_only, False, offline=True))
+        check(
+            "jobs-offline-requires-cache",
+            tcode == EXIT_ENVIRONMENT and "cache" in tout.lower(),
+            tout,
+        )
+        cli = _capture(lambda: body(["jobs", "--offline", "--root", str(jobs_root)]))
+        check("jobs-cli-action", cli[0] == 0 and "Zzz Weak" in cli[1] and "Zzz Both" in cli[1], cli[1][:300])
+        help_txt = _build_parser().format_help()
+        check(
+            "jobs-no-persona-flag",
+            "--persona" not in help_txt and "jobs" in help_txt,
+            help_txt,
+        )
+
     check("refresh-producer-exists", (BIN / "gb-market-snapshot.py").is_file(), "")
     check("corpus-refresh-producer-exists", (BIN / "gb-usecases.py").is_file(), "")
 
@@ -786,7 +1023,7 @@ def _capture(fn: Callable[[], int]) -> Tuple[int, str]:
     return code, buf.getvalue() + err.getvalue()
 
 
-def body(argv: Optional[Sequence[str]] = None) -> int:
+def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="gb-market.py",
         description="Official marketplace ∪ public corpus ∪ curated URLs.",
@@ -794,9 +1031,9 @@ def body(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument(
         "action",
         nargs="?",
-        choices=("refresh", "bots", "new"),
+        choices=("refresh", "bots", "new", "jobs"),
         default="bots",
-        help="refresh (network) | bots (live pull, then union) | new (live, then new-since)",
+        help="refresh | bots | new | jobs (one deployable winner per job)",
     )
     ap.add_argument(
         "--corpus",
@@ -817,10 +1054,15 @@ def body(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument(
         "--offline",
         action="store_true",
-        help="bots/new: read stamps only (no live pull)",
+        help="bots/new: stamps only; jobs: valid sqlite cache only",
     )
     ap.add_argument("--root", default="", help="artifact root (tests)")
     ap.add_argument("--selftest", action="store_true")
+    return ap
+
+
+def body(argv: Optional[Sequence[str]] = None) -> int:
+    ap = _build_parser()
     args = ap.parse_args(list(argv) if argv is not None else None)
     if args.selftest:
         return selftest()
@@ -829,6 +1071,8 @@ def body(argv: Optional[Sequence[str]] = None) -> int:
     root = pathlib.Path(args.root) if args.root else ROOT
     if args.action == "new":
         return cmd_new(root, bool(args.json), bool(args.offline))
+    if args.action == "jobs":
+        return cmd_jobs(root, bool(args.json), bool(args.offline))
     return cmd_bots(
         root,
         bool(args.json),

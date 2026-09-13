@@ -20,9 +20,9 @@ Engine is stock sqlite3 (Python stdlib). fsqlite is not involved.
 
 ## Sync Triggers
 
-- On command: `gb market bots` (default live pull) and `gb market refresh --corpus`.
+- On command: `gb market bots` (default live pull), `gb market jobs` (same live pull, then one winner per job), and `gb market refresh --corpus`.
 - On exit: none.
-- Timer/throttle: none required. `--offline` reads cache only.
+- Timer/throttle: none required. `--offline` reads cache only. `gb market jobs --offline` refuses if integrity_check or user_version fail.
 - One-way: catalog → sqlite → optional JSON stamp. Never sqlite → catalog. Never JSON → sqlite unless `--offline` and sqlite missing (rebuild cache from newest stamp, then integrity_check).
 
 ## Versioning
@@ -49,7 +49,7 @@ Engine is stock sqlite3 (Python stdlib). fsqlite is not involved.
 1. integrity_check on a planted malformed file → refuse.
 2. Merge: directory charter wins; share_id fills in; name_key join only.
 3. Upstream `category` is preserved. `taxonomy` is an explicit alias table only: Personal=personal-admin→personal, Sales=customer-sales→sales. Unknown → unmapped. Do not guess from charter text.
-4. `gb market bots` first row must not be used as a persona pick list until jobs sit on this taxonomy.
+4. `gb market bots` first row is not a persona pick list. `gb market jobs` is the deployable shortlist: one winner per job.
 
 ## Fail
 
@@ -62,3 +62,13 @@ See `TAXONOMY_MAP` in `bin/gb-market-db.py`. Only those keys map. Everything els
 ## Jobs (user_version 3)
 
 `job` is assigned only from `taxonomy` via `JOB_FROM_TAXONOMY`. personal / productivity / success / unmapped → `none`. Name and charter never assign a job. decide and refuse have no taxonomy yet.
+
+## Job winners (`gb market jobs`)
+
+One deployable winner per job from the live cache. Foundation for persona deploy, not the persona ranker.
+
+- Skip job `none`. Do not invent decide/refuse.
+- A winner MUST have a real `share_id` passed through from the catalog. Never invent one.
+- If a job has rows but none are deployable, list it as blocked (count + reason). Do not fill it with a no-share row.
+- Rank measured keys only, in this order: origin `both` (directory charter + share) beats shares-only or directory-only; `has_approval_language`; higher `prompt_chars` (raw directory body length); newer `added_at`; then stable `name_key`.
+- Do not rank by display name alpha as the primary key. Do not guess quality from charter words.

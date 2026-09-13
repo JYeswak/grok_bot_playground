@@ -279,6 +279,8 @@ EXAMPLES = """\
   gb setup --selftest            offline fake-producer rollback and commit proofs
   gb market bots                 live pull (botdirectory ∪ shares), then list
   gb market bots --offline       stamps only
+  gb market jobs                 one deployable winner per job from the live cache
+  gb market jobs --offline       valid sqlite cache only
   gb market refresh --corpus     official snapshot + public corpus + shares
   gb market bots                 official ∪ corpus ∪ URL finds; denominators printed
   gb templates deploy <id> --apply   create that Bot (CreateGrokBotAgentFromTemplate + Update)
@@ -629,14 +631,14 @@ class MarketArgs:
 
     action: str = arg(
         default="bots",
-        help="refresh | bots | new",
-        choices=("refresh", "bots", "new"),
+        help="refresh | bots | new | jobs",
+        choices=("refresh", "bots", "new", "jobs"),
         positional=True,
     )
     corpus: bool = arg(help="refresh: also run the public usecases/ corpus refresh")
     urls: bool = arg(help="bots: dump curated URL rows (default: counts by section/host)")
     full: bool = arg(help="bots: print every row (default: first 20)")
-    offline: bool = arg(help="bots/new: stamps only, no live pull")
+    offline: bool = arg(help="bots/new: stamps only; jobs: valid sqlite cache only")
     json: bool = arg(help="machine-readable envelope on stdout")
     selftest: bool = arg(help="offline stamp fixtures")
 
