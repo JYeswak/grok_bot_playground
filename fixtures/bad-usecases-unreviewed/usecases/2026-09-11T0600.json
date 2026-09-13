@@ -1,0 +1,74 @@
+{
+ "schema": "gb-usecases/1",
+ "captured_at": "2026-09-11T06:00:00+00:00",
+ "corpus_repo": "fixture/corpus",
+ "bots": 5,
+ "curated_links": 10,
+ "categories": [
+  [
+   "Ops",
+   5
+  ]
+ ],
+ "integrations": [
+  [
+   "Gmail",
+   3
+  ],
+  [
+   "Notion",
+   2
+  ]
+ ],
+ "integration_gap": [
+  {
+   "integration": "Gmail",
+   "bots": 3,
+   "installed": false
+  },
+  {
+   "integration": "Notion",
+   "bots": 2,
+   "installed": false
+  }
+ ],
+ "approval_share": 0.3,
+ "rows": [
+  {
+   "name": "Bot 0",
+   "category": "Ops",
+   "integrations": [
+    "Gmail"
+   ]
+  },
+  {
+   "name": "Bot 1",
+   "category": "Ops",
+   "integrations": [
+    "Gmail"
+   ]
+  },
+  {
+   "name": "Bot 2",
+   "category": "Ops",
+   "integrations": [
+    "Gmail"
+   ]
+  },
+  {
+   "name": "Bot 3",
+   "category": "Ops",
+   "integrations": [
+    "Gmail"
+   ]
+  },
+  {
+   "name": "Bot 4",
+   "category": "Ops",
+   "integrations": [
+    "Gmail"
+   ]
+  }
+ ],
+ "links": []
+}

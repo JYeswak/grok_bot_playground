@@ -1,0 +1,22 @@
+{
+ "schema": "gb-types-floor/1",
+ "why": "Files proven clean under BOTH mypy --strict and pyright. A ratchet: entries are added the day they first pass and are never removed \u2014 a file that regresses is a RED gate, not a smaller floor.",
+ "files": [
+  "bin/gb",
+  "bin/gb-feeds.py",
+  "bin/gb-github.py",
+  "bin/gb-links.py",
+  "bin/gb-mine.py",
+  "bin/gb-research.py",
+  "bin/gb-schema.py",
+  "bin/gb-sources.py",
+  "bin/gb-store.py",
+  "bin/gb-typecheck.py",
+  "bin/gb-x-sweep.py",
+  "bin/gb-x.py",
+  "bin/gbargs.py",
+  "bin/gbhttp.py",
+  "bin/gblib.py",
+  "bin/gbtypes.py"
+ ]
+}

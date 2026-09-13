@@ -1,0 +1,74 @@
+{
+ "audience": "First-run users who need one finished loop before any desk: computer alive, one file read, one plugin proved",
+ "bots": [
+  {
+   "template": "hello-computer",
+   "why": "Proves the cloud computer is alive with one command and its raw output, before any plugin is connected."
+  },
+  {
+   "template": "first-file-desk",
+   "why": "Official first task: one attached file becomes five quoted bullets, every date, and the open questions. Zero integrations."
+  },
+  {
+   "template": "plugin-proof",
+   "why": "Installed is not enabled and enabled is not working. One read-only call and a dated line with a real returned value."
+  }
+ ],
+ "human_steps": [
+  "Create the hello-computer Bot and run its command once; the pasted kernel string is the receipt that the VM answers.",
+  "Attach one real file to first-file-desk; do not skip this for a description of a file.",
+  "In Settings → Plugins, click one connector on, complete the browser auth, and attach it to plugin-proof. There is no connector-install API.",
+  "Never paste a secret into chat. Keys go on the variable card (secret-card-setup).",
+  "Ask the Bot in chat to create its routine, then confirm routines_with_runs moves 0 → 1. There is no routine-create RPC."
+ ],
+ "id": "first-hour",
+ "mcps": [],
+ "name": "First Hour",
+ "policies": [
+  "READ-ONLY: this pack inspects and reports. It never sends, posts, installs, or writes outside the thread and /tmp.",
+  "ONE-COMPUTER: the cloud computer is shared by every Bot on the account. A write here is a write in every other Bot's workspace.",
+  "NO-SECRETS-IN-CHAT: credentials are ${VAR} names on the variable card, never pasted.",
+  "INSTALLED-IS-NOT-WORKING: a plugin counts only after one read-only call returned data in this conversation."
+ ],
+ "routines": [
+  {
+   "name": "hello-computer",
+   "owner_bot": "hello-computer",
+   "prompt_hint": "Run `uname -a && date -u && pwd` and paste the raw output in a code block, then name the command. Failure is the answer.",
+   "schedule": "weekdays 07:00 local"
+  },
+  {
+   "name": "first-file-desk",
+   "owner_bot": "first-file-desk",
+   "prompt_hint": "If a file was attached since last run, post five quoted bullets, every date, and the open questions. Else one line: no file.",
+   "schedule": "weekdays 09:00 local"
+  },
+  {
+   "name": "plugin-proof",
+   "owner_bot": "plugin-proof",
+   "prompt_hint": "Make one read-only call through the newest unproven plugin and post a dated line with the real value it returned, or the error verbatim.",
+   "schedule": "Mon 08:00 local"
+  }
+ ],
+ "setup_order": [
+  "deploy-hello-computer",
+  "run-one-command-paste-output",
+  "deploy-first-file-desk",
+  "attach-one-file",
+  "human-click-one-plugin-in-settings",
+  "deploy-plugin-proof",
+  "install-skills-plugin-enable-verify-routine-first-run-secret-card-setup-plan-eligibility-takeover-2fa",
+  "create-routine-hello-computer",
+  "create-routine-first-file-desk",
+  "create-routine-plugin-proof",
+  "confirm-routines-with-runs-0-to-1"
+ ],
+ "skills": [
+  "plugin-enable-verify",
+  "routine-first-run",
+  "secret-card-setup",
+  "plan-eligibility",
+  "takeover-2fa"
+ ],
+ "tagline": "One hour, three receipts: the computer answers, a file is read, a plugin returns data."
+}

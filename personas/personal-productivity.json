@@ -1,0 +1,96 @@
+{
+ "audience": "Individuals running personal life-admin, home ops, and fitness from one daily brief",
+ "bots": [
+  {
+   "template": "morning-briefing",
+   "why": "Weekday brief of open items with one FIRST marker; invented nothing, pads nothing."
+  },
+  {
+   "template": "home-ops",
+   "why": "Weekly home-ops review; carries the household list between runs."
+  },
+  {
+   "template": "fitness-coach",
+   "why": "Weekly coaching check-in; the largest built personal category allots one bot per lane, not one bot for everything."
+  },
+  {
+   "template": "alfred-desk",
+   "why": "Keep the fleet small: every proposed Bot defaults to zero until a manual workflow has already worked."
+  },
+  {
+   "template": "errand-run",
+   "why": "Turns the week's piled errands into one ordered trip."
+  },
+  {
+   "template": "partner-list",
+   "why": "Shared grocery and errand list for two humans; who added each item, what is still open, no send."
+  },
+  {
+   "template": "plugin-watch",
+   "why": "Week-1 Bot: diffs installed plugin gitRefs and quotes every move. Installed is not working."
+  }
+ ],
+ "human_steps": [
+  "Approve or edit every draft before it sends; no bot in this pack sends anything on its own.",
+  "Install and sign in to Gmail, Calendar, and Drive connectors by hand; paste each charter and type each routine prompt in chat.",
+  "Say when a brief item is done; bot guesses are never completions.",
+  "Confirm disk-cleanup deletions from the disksaver-audit report before anything is removed."
+ ],
+ "id": "personal-productivity",
+ "mcps": [
+  "gmail",
+  "calendar",
+  "drive"
+ ],
+ "name": "Personal Productivity",
+ "policies": [
+  "DRAFT-NEVER-SEND: every outbound is a draft until the human says send on that exact message.",
+  "NO-AUTO-DELETE: triage archives nothing without an explicit yes; cleanup deletions need per-item confirmation.",
+  "MEMORY-EXPLICIT: an item stays open until the operator says it is done."
+ ],
+ "routines": [
+  {
+   "name": "weekday-morning-brief",
+   "owner_bot": "morning-briefing",
+   "prompt_hint": "Post the brief: date, open items with FIRST marked, overnight adds; one line and stop if nothing is open.",
+   "schedule": "weekdays 07:00 local"
+  },
+  {
+   "name": "weekly-home-ops-review",
+   "owner_bot": "home-ops",
+   "prompt_hint": "Post the home-ops list: what is open, what stalled, the one thing to move this week.",
+   "schedule": "Sun 18:00 local"
+  },
+  {
+   "name": "weekly-fitness-checkin",
+   "owner_bot": "fitness-coach",
+   "prompt_hint": "Post the training check-in: last week actuals vs plan, this week plan, one form cue.",
+   "schedule": "Sun 18:30 local"
+  }
+ ],
+ "setup_order": [
+  "create-bot-morning-briefing",
+  "create-bot-home-ops",
+  "create-bot-fitness-coach",
+  "connect-gmail-calendar-drive",
+  "install-skills-inbox-triage-meeting-actions-standup-writer-disksaver-audit",
+  "create-routine-weekday-morning-brief",
+  "create-routine-weekly-home-ops-review",
+  "create-routine-weekly-fitness-checkin",
+  "install-skills-vector-retrieval-photos-organize",
+  "deploy-alfred-desk",
+  "deploy-errand-run",
+  "deploy-partner-list",
+  "deploy-plugin-watch"
+ ],
+ "skills": [
+  "inbox-triage",
+  "meeting-actions",
+  "standup-writer",
+  "disksaver-audit",
+  "photos-organize",
+  "vector-retrieval",
+  "plugin-enable-verify"
+ ],
+ "tagline": "One brief each morning; home, health, and inbox each get a lane."
+}

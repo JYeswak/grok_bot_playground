@@ -1,0 +1,35 @@
+# Line endings are part of the payload here, not a formatting preference.
+#
+# MEASURED 2026-09-11 on a real windows-latest runner: both Windows cells of the CI matrix
+# failed `gb-surface-gate.py --selftest` at 49/54, and only the five known-good* fixtures
+# failed. Root cause: Git for Windows defaults to core.autocrlf=true, so `actions/checkout`
+# rewrote LF to CRLF in every `fixtures/**/pages/*.md`, while `gb-surface-gate.py` hashes the
+# file's RAW BYTES against a manifest digest computed over LF. Every page mismatched.
+#
+# The gate is right to hash raw bytes — it is a fetch-integrity check, and normalising before
+# hashing would make it blind to exactly the corruption it exists to catch. The defect is that
+# git was permitted to rewrite the bytes under it. So the fix belongs here, at the point where
+# the mutation happens, not in the checker.
+#
+# Reproduced and cured on macOS without a Windows machine, because core.autocrlf is a git
+# setting rather than an OS one:
+#   git -c core.autocrlf=true  clone <repo>  ->  SELFTEST FAIL — 49/54 fixtures
+#   git -c core.autocrlf=false clone <repo>  ->  SELFTEST PASS — 54/54 fixtures
+# 49/54 is the exact figure both Windows cells produced, which is what makes it the same
+# defect rather than a lookalike.
+
+# SECOND DEFECT, found by cloning the PUBLISHED repo the way Windows would (2026-09-11):
+# pinning only the data was not enough. `bin/gb` is extensionless and executable, and its
+# shebang was translated too -- a Windows checkout produced
+#     env: python3\r: No such file or directory      (exit 127)
+# so the CLI did not fail a check, it failed to START. That is worse than the fixture bug and
+# it was invisible from my own repo, where nothing is ever re-materialised under autocrlf.
+#
+# So the rule is the whole tree, not a list of extensions. Nothing here benefits from CRLF
+# translation: every file is hashed, executed, or parsed. A denylist of "the types we thought
+# of" is exactly how the shebang got missed the first time.
+* -text
+
+# The hero is binary; say so rather than relying on detection.
+*.jpg binary
+*.png binary

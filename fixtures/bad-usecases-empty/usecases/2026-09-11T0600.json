@@ -1,0 +1,18 @@
+{
+ "schema": "gb-usecases/1",
+ "captured_at": "2026-09-11T06:00:00+00:00",
+ "corpus_repo": "fixture/corpus",
+ "bots": 0,
+ "curated_links": 10,
+ "categories": [
+  [
+   "Ops",
+   0
+  ]
+ ],
+ "integrations": [],
+ "integration_gap": [],
+ "approval_share": 0.3,
+ "rows": [],
+ "links": []
+}

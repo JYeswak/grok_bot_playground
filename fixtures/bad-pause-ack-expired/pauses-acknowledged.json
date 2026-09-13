@@ -1,0 +1,13 @@
+{
+ "schema": "gb-pauses/1",
+ "acknowledged": [
+  {
+   "bot": "Chief of Staff",
+   "routine": "morning digest",
+   "reason": "fixture: pause never re-decided",
+   "acked_by": "fixture",
+   "acked_at": "2026-05-01",
+   "review_by": "2026-08-01"
+  }
+ ]
+}

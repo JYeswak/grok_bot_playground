@@ -1,0 +1,12 @@
+{
+  "_comment": "Ready-to-paste entry for xai-org/plugin-marketplace .grok-plugin/marketplace.json. Refresh sha at PR time: git ls-remote https://github.com/JYeswak/grok_bot_playground.git HEAD. Then: python3 scripts/generate-plugin-index.py, validate-catalog.py, generate-plugin-index.py --check. PR is Joshua's (identity).",
+  "name": "grok-bot-playground",
+  "description": "Capabilities the Grok Bot catalog does not have: a statistics desk that computes on the Bot's own machine, a document extractor with provenance, and a weekly self-audit of your own deployment.",
+  "category": "productivity",
+  "source": {
+    "source": "url",
+    "url": "https://github.com/JYeswak/grok_bot_playground.git",
+    "sha": "REFRESH-AT-PR-TIME"
+  },
+  "homepage": "https://github.com/JYeswak/grok_bot_playground"
+}

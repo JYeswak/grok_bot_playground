@@ -1,0 +1,57 @@
+{
+ "schema": "gb-inventory/1",
+ "device": "brain",
+ "hostname": "fixture-brain.local",
+ "recorded_at": "2026-09-11T07:00:00+00:00",
+ "app_version": "0.47.0",
+ "usage": {
+  "period_start": "2026-09-05T18:22:04Z",
+  "next_reset": "2026-09-12T02:17:01Z",
+  "usage_percent": 2.7,
+  "has_available_usage": true,
+  "plan_label": "Grok Bot Plan",
+  "on_demand_enabled": false,
+  "on_demand_eligible": true,
+  "dashboard_url": "https://x/"
+ },
+ "local_exec_policy": "never",
+ "policy_recorded_at": "2026-09-05",
+ "auto_review_rules": [
+  {
+   "kind": "require-approval",
+   "rule": "require approval before sending any external email"
+  }
+ ],
+ "plugins": [],
+ "mcp_servers": [],
+ "server_bots": [
+  {
+   "name": "Chief of Staff",
+   "numeric_id": "1001",
+   "harness": "box",
+   "description_chars": 1200
+  }
+ ],
+ "bots": [
+  {
+   "name": "Chief of Staff",
+   "skills": [
+    "weekly-digest"
+   ],
+   "routines": [
+    {
+     "name": "morning digest",
+     "schedule": "weekdays 08:00",
+     "enabled": true,
+     "recent_runs": [
+      "failed",
+      "failed",
+      "failed"
+     ],
+     "provenance": "user",
+     "next_run_at_ms": null
+    }
+   ]
+  }
+ ]
+}

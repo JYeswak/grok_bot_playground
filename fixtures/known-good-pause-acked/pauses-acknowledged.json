@@ -1,0 +1,13 @@
+{
+ "schema": "gb-pauses/1",
+ "acknowledged": [
+  {
+   "bot": "Chief of Staff",
+   "routine": "morning digest",
+   "reason": "fixture: deliberate pause",
+   "acked_by": "fixture",
+   "acked_at": "2026-09-01",
+   "review_by": "2026-12-01"
+  }
+ ]
+}

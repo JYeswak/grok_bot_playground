@@ -1,0 +1,12 @@
+{
+ "schema": "gb-schema/1",
+ "app_version": "0.48.0",
+ "bundle_sha256": "7095c3c3426206baa3fb15eede59038f37068a52901d87345a0ca4f4ad246d3e",
+ "mined_at": "2026-09-11T06:00:00+00:00",
+ "counts": {
+  "services": 1,
+  "methods": 2,
+  "messages": 2,
+  "enums": 1
+ }
+}

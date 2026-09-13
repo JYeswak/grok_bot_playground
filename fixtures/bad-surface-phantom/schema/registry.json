@@ -1,0 +1,35 @@
+{
+ "methods": {
+  "GetBot": {
+   "first_seen": "0.47.0",
+   "last_seen": "0.48.0",
+   "services": [
+    "GrokBot"
+   ]
+  },
+  "ListBots": {
+   "first_seen": "0.47.0",
+   "last_seen": "0.47.0",
+   "services": [
+    "GrokBot"
+   ]
+  },
+  "CreateBot": {
+   "first_seen": "0.48.0",
+   "last_seen": "0.48.0",
+   "services": [
+    "GrokBot"
+   ]
+  }
+ },
+ "messages": {
+  "GetBotRequest": {
+   "first_seen": "0.47.0",
+   "last_seen": "0.48.0"
+  },
+  "GetBotResponse": {
+   "first_seen": "0.47.0",
+   "last_seen": "0.48.0"
+  }
+ }
+}

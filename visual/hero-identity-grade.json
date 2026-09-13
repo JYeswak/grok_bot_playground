@@ -1,0 +1,55 @@
+{
+ "schema_version": "gb-hero-grade/2",
+ "graded_at": "2026-09-12T05:17:19+00:00",
+ "canonical": "zeststream-brand-voice yuzu_canonical.jpg, identified by sha256 below. The absolute path is deliberately NOT recorded: the skill identifies this anchor by HASH because decoy files share its filename, and the exporter's home_path scanner refused this file when the path was present. Both reasons point the same way.",
+ "canonical_sha256": "52fb1b09922f9892e53e290279253e07eeb2a6452dc4464c10efbbfe9891f918",
+ "shipped": "visual/hero.jpg",
+ "shipped_sha256": "288c271fd5275807cd24f84ff646b597fb13684ea5188d9e09f66ba93cb09d37",
+ "generator": "gemini-3-pro-image, anchor attached as inline character reference",
+ "judge": "phash_only",
+ "threshold": 70,
+ "identity_pass": false,
+ "phash_distance": 22,
+ "palette_cosine": 0.4279,
+ "combined_score": 4.0,
+ "all_candidates": [
+  {
+   "candidate": "cand_01_gemini-3-pro-image.png",
+   "phash_distance": 28,
+   "palette_cosine": 0.5175
+  },
+  {
+   "candidate": "cand_02_gemini-3.1-flash-image.png",
+   "phash_distance": 28,
+   "palette_cosine": 0.4686
+  },
+  {
+   "candidate": "cand_03_gemini-2.5-flash-image.png",
+   "phash_distance": 37,
+   "palette_cosine": 0.4649
+  },
+  {
+   "candidate": "cand_04_gemini-3-pro-image.png",
+   "phash_distance": 22,
+   "palette_cosine": 0.4279
+  },
+  {
+   "candidate": "cand_05_gemini-3.1-flash-image.png",
+   "phash_distance": 33,
+   "palette_cosine": 0.3
+  }
+ ],
+ "caveat": "identity_pass is FALSE and is not claimed. combined_score is phash+palette ONLY: the vision leg is absent because the vault OPENAI_API_KEY returns 401 (measured 2026-09-12 against /v1/models), so no vision score exists and none was fabricated. The honest signal is phash_distance=22, which is better than the APPROVED archetype-teacher.png exemplar in yuzu-anchor-library-v1 (phash_distance=34) \u2014 i.e. phash-competitive with a shipped library asset. Re-grade with --judge openai when a working key exists.",
+ "supersedes": "The previous visual/hero.jpg was shipped from a candidate its own grade file recorded as REJECT (combined 0.0, phash 29-33) and was not canonical Yuzu at all: an orange blob with no body, no apron and the wrong eyes. Shipping a graded reject is what this record exists to prevent.",
+ "phash_score": 10.0,
+ "verdict_from_grader": "reject",
+ "candidate_sha256": "0440d88efb6cacfc9a039510ec57db7a8beb7cde21e4eb01401196b1dbced5ff",
+ "human_approval": {
+  "approved": true,
+  "approved_at": "2026-09-12T05:30:15+00:00",
+  "approver": "Joshua",
+  "scope": "ship visual/hero.jpg as-is",
+  "what_was_approved_over": "The grader's machine verdict on this file is 'reject' and identity_pass is false, because the vision leg could not run (OPENAI_API_KEY 401). This field records that a human looked at the image and approved it anyway. It does NOT upgrade the machine verdict: phash_distance stays 22, identity_pass stays false, verdict_from_grader stays 'reject'. A human approval is a separate fact from a measurement, and overwriting the measurement with it would destroy the only signal that can catch the next drift.",
+  "also_declined": "Offered to composite real `gb triage` terminal output into the screen instead of the model-generated status rows. Declined: the rendered rows are decoration, and that is accepted rather than unnoticed."
+ }
+}

@@ -1,0 +1,384 @@
+# ci.yml — the first thing in this project's history that runs on an operating system nobody
+# here owns.
+#
+# WHY IT LIVES UNDER packaging/. This file is authored in the INSTANCE repo, which has no git
+# remote (measured: `git remote -v` is empty), so a workflow committed at its root would never
+# run anywhere. `bin/gb-export-public.py` copies it to `.github/workflows/ci.yml` at the root of
+# the PUBLIC tree, which is a real repository with real runners. Same reason `pyproject.toml`
+# lives here: the instance is not the distributable, and the export is.
+#
+# WHAT THIS ACTUALLY PROVES, and it is the whole point of the file. Until now every claim this
+# repo made about Windows and Linux was an inference checked by fixtures on a Mac. `fixtures/
+# platform/` plants a foreign environment and proves the resolver is IMPLEMENTED; it cannot
+# prove that a real `windows-latest` runner classifies itself as `windows`, that a real Python
+# 3.9 on Ubuntu imports this package, or that the gate's 54-fixture sweep survives a filesystem
+# that is not APFS. Those are measurements, and only a runner can take them.
+#
+# WHAT IT STILL DOES NOT PROVE, stated here rather than discovered later:
+#
+#   1. That `%APPDATA%\Grok Bot` is where the Windows client writes. No runner has the Grok Bot
+#      desktop app installed, and none can: it is a signed-in commercial client. The job below
+#      asserts `status == UNVERIFIED` on Windows and Linux — it asserts the tool SAYS SO, which
+#      is the honest half. Closing the other half needs a real install and a human.
+#   2. That the credential read works anywhere but macOS. It does not, by design; the job
+#      asserts it reports NOT_IMPLEMENTED rather than failing inside a subprocess.
+#   3. Cancel-correctness on Windows. `bin/gbtypes-selftest.py` t5 drives a child with
+#      `Popen.send_signal(signal.SIGINT)` and asserts exit 130. Neither is a Windows concept —
+#      `send_signal(SIGINT)` raises there, and 130 is a POSIX shell convention. The step is
+#      therefore SCOPED to POSIX runners rather than made to pass, because a proof that was
+#      weakened until it went green proves nothing. Windows cancel-correctness is UNMEASURED.
+#
+# WHAT HAS ACTUALLY BEEN MEASURED, and when. Run 34615248803 on JYeswak/grok_bot_playground,
+# commit 88a6a7e, 2026-09-11 — the first time any of this ran on a machine nobody here owns:
+#
+#   ubuntu-latest  py3.9   SUCCESS     ubuntu-latest  py3.12  SUCCESS
+#   macos-latest   py3.12  SUCCESS     macos-13       py3.9   never started (run cancelled)
+#   windows-latest py3.9   FAILURE     windows-latest py3.12  FAILURE
+#
+# Both Windows cells reached step 8 and died there, which means steps 1-7 passed — including
+# "this runner classifies itself correctly". A real Windows machine answered `windows` /
+# `UNVERIFIED` / `NOT_IMPLEMENTED`, so the one measurement this file was written to take has
+# been taken. The Windows failure is recorded at the step that owns it, below.
+#
+# WHAT THE LOCAL CONTAINERS COVER, so the dormancy costs less than it looks. The same seven
+# steps run under docker on this operator's machine against `gb-export-public.py`'s output —
+# `python:3.12-slim`, `python:3.9-slim` and `python:3.12-alpine`, all three GREEN (54/54 gate
+# fixtures, 6/6 planted platforms, 8/8 spine proofs including the SIGINT/exit-130 one). That
+# widens Linux coverage past what this matrix ever had: aarch64 as well as the runner's x86_64,
+# and musl as well as glibc. What containers CANNOT replace is `windows-latest` and the
+# `macos-13` Intel floor, which is exactly what the table above leaves open.
+#
+# WHY THIS WORKFLOW IS DORMANT. The trigger is `workflow_dispatch` only: no push, no
+# pull_request. Hosted minutes are a recurring cost and this tool has no users yet, so the
+# matrix runs when a human asks it to and not one minute sooner. Flip `on:` back to
+# `push: {branches: [main]}` + `pull_request:` when downloads justify the spend; nothing else
+# in the file has to change.
+name: ci
+
+on:
+  # MANUAL ONLY — deliberately. See "WHY THIS WORKFLOW IS DORMANT" in the header. `push:` and
+  # `pull_request:` are absent on purpose, not forgotten; re-add them when this tool has users.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    # Uniform shell everywhere, including Windows (git-bash ships on the runner). Without this,
+    # Windows jobs get PowerShell and every multi-line step needs a second dialect.
+    shell: bash
+
+jobs:
+  suite:
+    name: ${{ matrix.os }} · py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One red cell must not cancel the others: the interesting question is WHICH platform
+      # broke, and fail-fast answers it with a blank row.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.9", "3.12"]
+        exclude:
+          # `macos-latest` is Apple silicon and actions/python-versions publishes no arm64
+          # build of 3.9 — the job fails in `setup-python`, before any of this repo's code
+          # runs. 3.9 is still covered on macOS by the `macos-13` (Intel) entry below, which is
+          # the honest way to keep the floor tested rather than dropping it and not saying so.
+          - os: macos-latest
+            python: "3.9"
+        include:
+          - os: macos-13
+            python: "3.9"
+
+    steps:
+      - name: check out the bytes that were committed, not a translation of them
+        # MEASURED, run 34615248803: both Windows cells went RED here at `gb-surface-gate.py
+        # --selftest` — 49/54, with all five `known-good*` fixtures failing on
+        # `g1-surface-fetch-integrity: sha256 mismatch between manifest and file`. Cause is not
+        # the gate: Git for Windows defaults to `core.autocrlf=true` and the runner image keeps
+        # that default, so checkout rewrote LF to CRLF in every `fixtures/**/pages/*.md`, and
+        # `bin/gb-surface-gate.py:121` hashes the file's RAW BYTES against a manifest digest
+        # taken over LF.
+        #
+        # PROVEN WITHOUT A WINDOWS MACHINE, which is why this step is trusted despite the
+        # matrix being dormant. `core.autocrlf` is a git setting, not a Windows one, so the
+        # whole failure reproduces on macOS by cloning the published tree twice:
+        #
+        #   git -c core.autocrlf=true  clone …  ->  SELFTEST FAIL — 49/54 fixtures
+        #   git -c core.autocrlf=false clone …  ->  SELFTEST PASS — 54/54 fixtures
+        #
+        # 49/54 is the same number both Windows cells produced, so this is the same defect and
+        # not a lookalike, and the second line is the fix below being exercised. Turning the
+        # translation off makes the runner hash what git stores, which is what the digest is a
+        # digest OF — it does not weaken the check.
+        #
+        # THIS IS A WORKAROUND FOR A REAL DEFECT, recorded so it is not mistaken for a fix. Any
+        # human cloning this repository on Windows with stock Git settings gets the same RED on
+        # a clean tree, and they have no workflow to patch. The actual fix is a `.gitattributes`
+        # at the repository root declaring the hashed corpus untranslatable (`fixtures/** -text`
+        # at minimum), which lives outside this file.
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: install the package
+        # No `[inventory]` extra. `dependencies = []` is a claim this repo's exporter already
+        # checks statically; installing bare is what turns it into an executed fact.
+        run: python -m pip install --upgrade pip && python -m pip install .
+
+      - name: the installed console script answers
+        run: |
+          gb capabilities --json > capabilities.json
+          gb dogfood --json > dogfood.json
+          python -c "
+          import json
+          d = json.load(open('capabilities.json'))
+          assert len(d['exit_codes']) >= 5, d['exit_codes']
+          print('capabilities: %d verbs, %d exit codes' % (len(d['commands']), len(d['exit_codes'])))
+          "
+
+      - name: the wheel carries every producer the CLI dispatches
+        # WHY THIS STEP EXISTS, and why the step above it was worth nothing on its own. Until
+        # 2026-09-12 that step asserted `'platform' in d['commands']` and stopped there — a
+        # condition the PUBLISHED wheel satisfied while carrying 18 of 54 verbs. Measured that
+        # day: `pip install git+https://github.com/JYeswak/grok_bot_playground` into a throwaway
+        # venv produced a `gb` reporting version 1.0.0 with 18 commands and 32 payload files
+        # instead of 64, and nothing anywhere said so. An assertion a 36-verb shortfall passes
+        # is a probe that cannot fail.
+        #
+        # THE MAP IS NOT RE-DERIVED HERE. `gb dogfood` resolves verb -> producer from `bin/gb`'s
+        # own AST — 54 verbs, 70 dispatch edges, and six that do NOT follow `gb-<verb>.py`
+        # (`gb roadmap` -> `gb-gaps.py`, `gb gates` -> `gb-capabilities.py`, `gb matrix` ->
+        # `gb-feature-matrix.py`, `gb record` -> `gb-record-inventory.py`, `gb spend` ->
+        # `gb-spend-ledger.py`, `gb deployment` -> `gb-deployment-audit.py`). A second mapping
+        # written in this file would be free to drift from the dispatcher it is checking.
+        run: |
+          cat > payload-check.py <<'PY'
+          import json, pathlib, sys
+          import grok_bot_ops
+
+          # `gb-export-public.py` can never ship, and this is not an oversight to fix: its own
+          # leak-scanner patterns contain the client identifiers they hunt, so publishing the
+          # publisher publishes the secrets. The verb stays registered and `bin/gb`'s
+          # `_passthrough` refuses it with exit 3 — asserted by the verb sweep below.
+          CANNOT_SHIP = {"gb-export-public.py"}
+
+          payload = pathlib.Path(grok_bot_ops.__file__).resolve().parent / "bin"
+          dispatch = json.load(open("dogfood.json"))["dispatch"]
+          advertised = set(json.load(open("capabilities.json"))["commands"])
+          shipped = {p.name for p in payload.iterdir() if p.is_file()}
+          absent = {
+              verb: [p for p in producers if p not in shipped and p not in CANNOT_SHIP]
+              for verb, producers in dispatch.items()
+          }
+          absent = {verb: missing for verb, missing in absent.items() if missing}
+          print("payload %d file(s); %d verb(s); %d dispatch edge(s)"
+                % (len(shipped), len(dispatch), sum(len(p) for p in dispatch.values())))
+
+          bad = []
+          if advertised != set(dispatch):
+              bad.append("advertised set != dispatch set: advertised-only=%s dispatched-only=%s"
+                         % (sorted(advertised - set(dispatch)), sorted(set(dispatch) - advertised)))
+          if absent:
+              bad.append("verbs whose producer this build does not carry: %r" % absent)
+          # The exception list is a ratchet in BOTH directions: a producer that must never ship
+          # and suddenly does is a leak, not a fix.
+          for name in sorted(CANNOT_SHIP & shipped):
+              bad.append("%s is in the wheel and must never be" % name)
+          for line in bad:
+              print("PAYLOAD INCOMPLETE:", line, file=sys.stderr)
+          sys.exit(1 if bad else 0)
+          PY
+          python payload-check.py
+          python - <<'PY'
+          import pathlib, subprocess, sys
+          import grok_bot_ops
+          # MUTATION CONTROL. A green payload check is evidence only if a subset payload turns
+          # it red, so hide one producer and require the failure. Done in Python rather than
+          # `mv` because the Windows cell's payload path is a backslash path in git-bash.
+          producer = pathlib.Path(grok_bot_ops.__file__).parent / "bin" / "gb-triage-check.py"
+          hidden = producer.with_suffix(".py.hidden")
+          producer.rename(hidden)
+          try:
+              code = subprocess.run([sys.executable, "payload-check.py"]).returncode
+          finally:
+              hidden.rename(producer)
+          if code == 0:
+              sys.exit("the payload check passed with gb-triage-check.py removed — "
+                       "it is not wired to the payload it claims to check")
+          print("mutation control held: hiding one producer turns the check RED")
+          PY
+
+      - name: every advertised verb is invoked FOR REAL
+        # NOT `--help`. argparse answers `--help` without ever spawning the producer, which is
+        # exactly how nine dead verbs stayed green in a public clone on 2026-09-12: `gb <verb>
+        # --help` passed for all 52 verbs while nine of them could not run at all.
+        #
+        # The bar is NOT exit 0. A runner has no artifacts, no desktop client and no account, so
+        # most verbs correctly refuse. The bar is that THE TOOL answers: an uncaught traceback,
+        # or CPython's `can't open file`, means this build advertised something it cannot run.
+        run: |
+          cat > verb-sweep.py <<'PY'
+          import json, os, subprocess, sys, tempfile
+
+          DEADLINE = 45.0
+          TMP = tempfile.gettempdir()
+
+          # Verbs whose parser demands an operand before the producer is ever reached. Each
+          # value is read-shaped and taken from that verb's own refusal text, so the row
+          # exercises the producer instead of argparse. `repair` runs without `--apply`, which
+          # this tool defines as a dry run that writes nothing.
+          ARGS = {
+              "bot": ["log"], "mcp": ["list"], "why": ["g24-cli-contract"],
+              "validate": ["types"], "help": ["exit-codes"], "record": ["--list"],
+              "repair": ["--scope", "types"], "completion": ["zsh"],
+              "export": [os.path.join(TMP, "gb-export-probe")],
+          }
+
+          # THE RAW LIST IS EMPTY, AND IT WAS NOT EMPTY WHEN THIS STEP WAS WRITTEN. That is the
+          # only reason to keep this comment: on 2026-09-12 the first run of this sweep against
+          # a real install found TWO verbs answering with a stack trace where a sentence
+          # belongs, both on a bare install without the `[inventory]` extra —
+          #
+          #   gb fleet     bare `from cryptography...` in bin/gbrpc.py:99, relayed as a
+          #                traceback with exit 1
+          #   gb mcp list  bin/gb-mcp.py:398 called `fail(...)`, which that file never defines,
+          #                so the handler that exists to report a credential failure crashed
+          #                while reporting it
+          #
+          # Isolated before either was reported: both exited 0 on the same tree installed as
+          # `.[inventory]`, so the cause was the deferred import and not the payload. Both are
+          # fixed in the producers now — `gb fleet` names the extra and the install command,
+          # `gb mcp` refuses with ENVIRONMENT — and this sweep is what found them, so the list
+          # stays here at zero rather than being deleted.
+          #
+          # THE RATCHET HAS TWO DIRECTIONS AND ONLY ONE IS PORTABLE. A raw row that is NOT
+          # listed here fails this step anywhere, and with an empty list that means ANY raw row
+          # fails it — that direction is unconditional. Requiring a LISTED row to still be raw
+          # is only meaningful where the credential path can be reached at all; on Linux and
+          # Windows `gb platform` reports NOT_IMPLEMENTED and these verbs refuse honestly long
+          # before `gbrpc` is imported, which is a pass, not a fix. So the second direction is
+          # asked only when the tool itself says the path is reachable — measured from
+          # `gb platform --json`, not inferred from the runner label. It fired for real on
+          # 2026-09-12: with `{"fleet", "mcp"}` still listed, the step went RED with "KNOWN_RAW
+          # is stale — these no longer crash and must be deleted from the list: ['mcp']".
+          KNOWN_RAW = set()
+
+          caps = json.loads(subprocess.run(["gb", "capabilities", "--json"], check=True,
+                                           capture_output=True, text=True).stdout)
+          verbs = sorted(caps["commands"])
+          rows = {}
+          for verb in verbs:
+              argv = ["gb", verb] + ARGS.get(verb, [])
+              try:
+                  p = subprocess.run(argv, capture_output=True, text=True, timeout=DEADLINE)
+              except subprocess.TimeoutExpired:
+                  rows[verb] = ("slow", None, ">%.0fs" % DEADLINE)
+                  continue
+              out = (p.stderr or "") + (p.stdout or "")
+              first = next((ln for ln in (p.stderr or p.stdout or "").splitlines() if ln.strip()), "")
+              if "Traceback (most recent call last)" in out or "can't open file" in out:
+                  kind = "raw"
+              elif p.returncode == 0:
+                  kind = "works"
+              elif first.strip():
+                  kind = "honest"
+              else:
+                  kind = "silent"
+              rows[verb] = (kind, p.returncode, first[:110])
+
+          by = {}
+          for verb, (kind, code, msg) in sorted(rows.items()):
+              by.setdefault(kind, []).append(verb)
+              if kind != "works":
+                  print("  %-7s exit=%-5s %-16s %s" % (kind, code, verb, msg))
+          print("sweep: " + ", ".join("%s=%d" % (k, len(v)) for k, v in sorted(by.items())))
+
+          bad = []
+          raw = set(by.get("raw", ()))
+          plat = json.loads(subprocess.run(["gb", "platform", "--json"], check=True,
+                                           capture_output=True, text=True).stdout)
+          credential_path_reachable = plat["status"] == "SUPPORTED" and plat["support_dir_exists"]
+          print("credential path reachable here: %s (%s, support_dir_exists=%s)"
+                % (credential_path_reachable, plat["status"], plat["support_dir_exists"]))
+          if raw - KNOWN_RAW:
+              bad.append("verbs that answered with a traceback instead of a refusal: %s"
+                         % sorted(raw - KNOWN_RAW))
+          if credential_path_reachable and KNOWN_RAW - raw:
+              bad.append("KNOWN_RAW is stale — these no longer crash and must be deleted from "
+                         "the list: %s" % sorted(KNOWN_RAW - raw))
+          if by.get("silent"):
+              bad.append("verbs that failed with no message at all: %s" % by["silent"])
+          # The one verb whose producer can never ship must refuse with ENVIRONMENT and name it.
+          e = subprocess.run(["gb", "export", os.path.join(TMP, "gb-export-probe")],
+                             capture_output=True, text=True)
+          if e.returncode != 3 or "does not ship gb-export-public.py" not in e.stderr:
+              bad.append("gb export should refuse with exit 3 naming the absent producer; "
+                         "got exit %s: %r" % (e.returncode, e.stderr[:160]))
+          for line in bad:
+              print("VERB SWEEP:", line, file=sys.stderr)
+          sys.exit(1 if bad else 0)
+          PY
+          python verb-sweep.py
+
+      - name: this runner classifies itself correctly
+        # THE MEASUREMENT THIS FILE EXISTS FOR. Everything else here is regression cover; this
+        # step is the only thing in the project that has ever asked a real Windows or Linux
+        # machine what `gblib.platform_support` says about it.
+        run: |
+          gb platform --json > platform.json
+          python -c "
+          import json, os
+          want = {
+              'Linux':   ('linux',   'UNVERIFIED', 'NOT_IMPLEMENTED'),
+              'Windows': ('windows', 'UNVERIFIED', 'NOT_IMPLEMENTED'),
+              'macOS':   ('macos',   'SUPPORTED',  'AVAILABLE'),
+          }[os.environ['RUNNER_OS']]
+          d = json.load(open('platform.json'))
+          cred = [c for c in d['capabilities'] if c['capability'] == 'credential_read'][0]
+          got = (d['os'], d['status'], cred['status'])
+          assert got == want, 'expected %r, got %r' % (want, got)
+          assert d['forced'] is False, 'a CI reading must never be a forced one'
+          assert d['support_dir'], 'a desktop platform must resolve to some directory'
+          print('platform %s %s; support_dir %s (exists=%s)'
+                % (d['os'], d['status'], d['support_dir'], d['support_dir_exists']))
+          "
+
+      - name: the planted-platform corpus resolves here too
+        # Run from the checkout, not through the console script: an installed copy carries no
+        # fixtures, and `gb platform --selftest` reports that as ENVIRONMENT rather than
+        # pretending to pass. Running it on three operating systems is what proves the
+        # resolver's path handling is not quietly POSIX-only.
+        run: python bin/gb platform --selftest
+
+      - name: the gate's own known-bad corpus
+        run: python bin/gb-surface-gate.py --selftest
+      - name: goldens compare (read-only)
+        # Compare-only: never set UPDATE_GOLDENS in CI.
+        # Any mismatch fails the job.
+        # To re-freeze: run UPDATE_GOLDENS=1 locally and review the diff.
+        run: python3 bin/gb-goldens-run.py
+
+      - name: mutation control — a disabled check must FAIL the selftest
+        # A green selftest is only evidence if a broken gate would go red. This is the cheapest
+        # possible proof that the sweep is wired to the checks at all.
+        run: |
+          if python bin/gb-surface-gate.py --selftest --disable g24-cli-contract > /dev/null 2>&1; then
+            echo "selftest passed with a check disabled — the sweep is not wired to the checks" >&2
+            exit 1
+          fi
+          echo "mutation control held: disabling g24 fails the selftest"
+
+      - name: the typed spine's cancel-correctness proofs (POSIX only)
+        # SCOPED, NOT WEAKENED. See the header: t5 sends SIGINT and asserts exit 130, and
+        # neither exists on Windows. Windows cancel-correctness is unmeasured, and this file
+        # says so instead of running a version of the proof that could not fail.
+        if: runner.os != 'Windows'
+        run: python bin/gbtypes-selftest.py

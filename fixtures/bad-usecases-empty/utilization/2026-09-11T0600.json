@@ -1,0 +1,23 @@
+{
+ "schema": "gb-utilization/1",
+ "captured_at": "2026-09-11T06:00:00+00:00",
+ "bots": [
+  {
+   "name": "Ops",
+   "entries": 20,
+   "last_active_days": 0.5,
+   "routines": 1,
+   "routines_with_runs": 0,
+   "skills": 1,
+   "idle_credentialed": false
+  }
+ ],
+ "live_entries": 20,
+ "orphaned_entries": 0,
+ "orphaned_replicas": 0,
+ "idle_credentialed": [],
+ "routines_total": 1,
+ "usage_percent": 2.7,
+ "memory_shards_with_content": 0,
+ "bot_count": 1
+}

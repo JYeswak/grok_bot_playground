@@ -1,0 +1,30 @@
+{
+ "why": "UNSUPPORTED, and a producer asks for the credential read anyway: it must be refused with a remediation, never raised and never answered empty",
+ "sys_platform": "linux",
+ "plant": [
+  "home"
+ ],
+ "env": {
+  "HOME": "home"
+ },
+ "env_literal": {
+  "ANDROID_ROOT": "/system"
+ },
+ "expect": {
+  "os": "android",
+  "status": "UNSUPPORTED",
+  "support_dir": null,
+  "support_dir_exists": false,
+  "capabilities": {
+   "credential_read": "NOT_IMPLEMENTED",
+   "scheduler_install": "NOT_IMPLEMENTED",
+   "deployment_audit": "NOT_IMPLEMENTED",
+   "local_exec_policy": "AVAILABLE"
+  },
+  "why_mentions": "no Grok Bot desktop client",
+  "keychain_probe": {
+   "status": "NOT_IMPLEMENTED",
+   "has_remediation": true
+  }
+ }
+}

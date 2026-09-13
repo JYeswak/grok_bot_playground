@@ -1,0 +1,45 @@
+{
+ "captured_at": "2026-09-11T06:00:00+00:00",
+ "index_url": "https://docs.x.ai/llms.txt",
+ "index_status": 200,
+ "index_bytes": 16540,
+ "index_sha256": "2c983205795bbf038b585fa925adeb03a8d47c4d2729ea7a4a6fdba32d9ef752",
+ "index_error": "",
+ "llms_total_pages": 3,
+ "grok_bot_pages_listed": 2,
+ "pages": [
+  {
+   "section": "Grok Bot",
+   "title": "Fixture 1",
+   "url": "https://docs.x.ai/grok-bot/fixture-01.md",
+   "slug": "grok-bot__fixture-01",
+   "status": 200,
+   "bytes": 837,
+   "sha256": "606f97fb76c15badd60dee8d15ab47535ccb1085fc4be7b1d3953f8074324183",
+   "marker_ok": true,
+   "error": ""
+  },
+  {
+   "section": "Grok Bot",
+   "title": "Fixture 2",
+   "url": "https://docs.x.ai/grok-bot/fixture-02.md",
+   "slug": "grok-bot__fixture-02",
+   "status": 200,
+   "bytes": 837,
+   "sha256": "0b6a2db24f0812ea36b66a1f49c6059dc5e23b60f2608ff0d08211277809696b",
+   "marker_ok": true,
+   "error": ""
+  }
+ ],
+ "extras": [
+  {
+   "label": "practitioner-index",
+   "url": "https://example.invalid/README.md",
+   "status": 200,
+   "bytes": 211120,
+   "min_bytes": 100000,
+   "sha256": "2826175969166cfd3d8918948ed385def3ac100b927559885e005166d9f0b371",
+   "error": ""
+  }
+ ]
+}

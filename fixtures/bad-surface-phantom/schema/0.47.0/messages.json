@@ -1,0 +1,21 @@
+{
+ "GetBotRequest": [
+  {
+   "no": 1,
+   "name": "id",
+   "kind": "string"
+  },
+  {
+   "no": 2,
+   "name": "verbose",
+   "kind": "bool"
+  }
+ ],
+ "GetBotResponse": [
+  {
+   "no": 1,
+   "name": "bot",
+   "kind": "message"
+  }
+ ]
+}

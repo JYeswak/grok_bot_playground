@@ -1,0 +1,27 @@
+{
+ "why": "GB_SUPPORT_DIR wins over the inferred path \u2014 and the status stays UNVERIFIED",
+ "sys_platform": "win32",
+ "plant": [
+  "appdata/Grok Bot",
+  "elsewhere/GrokBotData"
+ ],
+ "env": {
+  "HOME": "home",
+  "APPDATA": "appdata",
+  "GB_SUPPORT_DIR": "elsewhere/GrokBotData"
+ },
+ "expect": {
+  "os": "windows",
+  "status": "UNVERIFIED",
+  "support_dir": "elsewhere/GrokBotData",
+  "support_dir_exists": true,
+  "capabilities": {
+   "credential_read": "NOT_IMPLEMENTED",
+   "scheduler_install": "NOT_IMPLEMENTED",
+   "deployment_audit": "PARTIAL",
+   "local_exec_policy": "AVAILABLE"
+  },
+  "path_source_mentions": "never the status",
+  "why_mentions": "the path is not a guess here"
+ }
+}

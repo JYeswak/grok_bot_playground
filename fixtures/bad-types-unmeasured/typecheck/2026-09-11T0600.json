@@ -1,0 +1,30 @@
+{
+ "schema": "gb-typecheck/1",
+ "measured_at": "2026-09-11T06:00:00-06:00",
+ "floor_size": 3,
+ "checked": [
+  "bin/gbargs.py",
+  "bin/gbtypes.py",
+  "bin/gb-typecheck.py"
+ ],
+ "missing_from_disk": [],
+ "runs": [
+  {
+   "tool": "mypy",
+   "version": "mypy 1.11.0",
+   "ran": false,
+   "error_count": 0,
+   "errors": [],
+   "detail": "3 file(s) under --strict"
+  },
+  {
+   "tool": "pyright",
+   "version": "pyright 1.1.390",
+   "ran": false,
+   "error_count": 0,
+   "errors": [],
+   "detail": "3 file(s)"
+  }
+ ],
+ "clean": false
+}

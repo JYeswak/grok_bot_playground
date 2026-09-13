@@ -1,0 +1,34 @@
+# Exported to the public tree as `.gitignore`. Kept unprefixed here so it does not shadow the
+# source repo's own ignore rules.
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+
+# Artifact roots. An installed or cloned `gb` writes its own measurements here; they belong to
+# whoever ran it, never to this repository. The list is every directory a producer in bin/
+# writes a dated artifact into — omitting one means the first `gb doctor` a user runs leaves
+# an untracked directory behind and their next `git status` blames them for it.
+/archive/
+/capabilities/
+/deployment/
+/discovery/
+/findings/
+/gaps/
+/inventory/
+/market/
+/mcp/
+/policy/
+/rebuild/
+/schedule/
+/state/
+/surface/
+/typecheck/
+/usecases/
+/utilization/

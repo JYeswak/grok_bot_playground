@@ -1,0 +1,25 @@
+{
+ "schema": "gb-context-archive/1",
+ "captured_at": "2026-09-11T06:00:00+00:00",
+ "archive_dir": "/fixture/archive",
+ "client_cap": 200,
+ "replicas": 2,
+ "entries_total": 250,
+ "orphaned_entries": 50,
+ "at_cap": [
+  "uuid-0",
+  "uuid-1",
+  "uuid-2"
+ ],
+ "rows": [
+  {
+   "uuid": "uuid-0",
+   "entries": 200,
+   "at_client_cap": true,
+   "belonged_to": "Ops",
+   "status": "live",
+   "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "bytes": 10
+  }
+ ]
+}

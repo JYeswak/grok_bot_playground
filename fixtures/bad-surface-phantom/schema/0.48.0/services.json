@@ -1,0 +1,32 @@
+{
+ "GrokBot": [
+  {
+   "name": "GetBot",
+   "input": "GetBotRequest",
+   "output": "GetBotResponse",
+   "kind": "unary",
+   "fields": [
+    {
+     "name": "id",
+     "req": true
+    },
+    {
+     "name": "verbose",
+     "req": true
+    }
+   ]
+  },
+  {
+   "name": "CreateBot",
+   "input": "CreateBotRequest",
+   "output": "CreateBotResponse",
+   "kind": "unary",
+   "fields": [
+    {
+     "name": "name",
+     "req": true
+    }
+   ]
+  }
+ ]
+}

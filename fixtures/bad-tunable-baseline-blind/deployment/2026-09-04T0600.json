@@ -1,0 +1,89 @@
+{
+ "captured_at": "2026-09-04T06:00:00+00:00",
+ "host": "fixture.local",
+ "support_dir": "/fixture/Application Support/Grok Bot",
+ "support_present": true,
+ "app": {
+  "path": "/fixture/Grok Bot.app",
+  "present": true,
+  "version": "0.47.0",
+  "bundle_id": "com.anysphere.sand",
+  "signed_by": "Developer ID Application: Anysphere Incorporated"
+ },
+ "update_marker": {
+  "version": 1,
+  "phase": "applied",
+  "mechanism": "squirrel",
+  "targetVersion": "0.47.0",
+  "fromVersion": "0.46.0",
+  "stagedAtMs": 1789000000000
+ },
+ "session_marker": {
+  "version": 1,
+  "appVersion": "0.47.0",
+  "crashSeen": false
+ },
+ "secret_keys": [
+  "cursor-accounts",
+  "cursor-machine-id",
+  "local-exec-file-key"
+ ],
+ "bots": [
+  {
+   "id": "b1",
+   "name": "Chief of Staff",
+   "is_group": false,
+   "description_chars": 1214,
+   "idle_days": 0.4,
+   "notifications_enabled": true,
+   "unread_count": 0,
+   "hidden": false,
+   "member_ids": []
+  },
+  {
+   "id": "b2",
+   "name": "CRM",
+   "is_group": false,
+   "description_chars": 1094,
+   "idle_days": 1.1,
+   "notifications_enabled": true,
+   "unread_count": 0,
+   "hidden": false,
+   "member_ids": []
+  },
+  {
+   "id": "b3",
+   "name": "Ops",
+   "is_group": false,
+   "description_chars": 960,
+   "idle_days": 2.0,
+   "notifications_enabled": true,
+   "unread_count": 0,
+   "hidden": false,
+   "member_ids": []
+  }
+ ],
+ "gates": {
+  "total": 2760,
+  "enabled": 3,
+  "decoded": 609,
+  "enabled_names": [
+   "sand_auto_review",
+   "sand_multi_machine_local_exec",
+   "sand_teach_by_demonstration"
+  ],
+  "undecoded_enabled": 0,
+  "hash_used": "djb2",
+  "enabled_ids": [
+   "2253049356",
+   "3948259326",
+   "665689261"
+  ]
+ },
+ "account": {
+  "app_version_seen_by_backend": "0.47.0",
+  "membership": "ultra",
+  "is_enterprise_user": false,
+  "is_enterprise_trial_user": false
+ }
+}

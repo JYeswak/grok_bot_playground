@@ -1,0 +1,14 @@
+{
+ "schema": "gb-pauses/1",
+ "acknowledged": [],
+ "self_created_reviewed": [
+  {
+   "bot": "Chief of Staff",
+   "routine": "self-made digest",
+   "reason": "fixture: reviewed and kept",
+   "acked_by": "fixture",
+   "acked_at": "2026-09-01",
+   "review_by": "2026-12-01"
+  }
+ ]
+}
