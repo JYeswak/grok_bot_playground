@@ -163,6 +163,16 @@ def _kwargs_for(
 
     if typing.get_origin(tp) in (tuple, list):
         (item_tp,) = [a for a in typing.get_args(tp) if a is not Ellipsis] or [str]
+        if spec.positional:
+            # Repeatable positionals are nargs="*", not action=append. `gb market deploy a b`
+            # must type as a sequence; append on a positional still consumes one token.
+            kwargs.update(
+                nargs="*",
+                default=None,
+                type=_converter(item_tp),
+                metavar=spec.metavar or item_tp.__name__.upper(),
+            )
+            return kwargs
         kwargs.update(
             action="append",
             default=None,

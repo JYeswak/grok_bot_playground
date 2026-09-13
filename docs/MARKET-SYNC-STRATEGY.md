@@ -14,16 +14,16 @@ Engine is stock sqlite3 (Python stdlib). fsqlite is not involved.
 
 ## Status honesty
 
-- Live: live HTTP pull, stamp write, `PRAGMA integrity_check`, `user_version`.
+- Live: live HTTP pull, stamp write, `PRAGMA integrity_check`, `user_version`. `gb market deploy` prints one-click cards (name, job, catalog charter, official `https://x.ai/bot/<id>`). Dry-run is the whole door. Does not create Bots.
 - Dormant: official desktop snapshot on Linux (skip, exit 3, no traceback).
 - Design: persona shortlist, swarm-from-live-shares. Not this file.
 - Issue-limited: RongleCat link harvest still 0 on a clone (local index only).
 
 ## Sync Triggers
 
-- On command: `gb market bots` (default live pull), `gb market jobs` (same live pull, then one Thompson draw per job), and `gb market refresh --corpus`. `gb market keep|skip|ban <share_id>` write the bandit store only. They do not import, deploy, or invent a share_id.
+- On command: `gb market bots` (default live pull), `gb market jobs` (same live pull, then one Thompson draw per job), `gb market deploy <share_id> [...]` (cards + official share URL), and `gb market refresh --corpus`. `gb market keep|skip|ban <share_id>` write the bandit store only. They do not import, deploy, or invent a share_id.
 - On exit: none.
-- Timer/throttle: none required. `--offline` reads cache only. `gb market jobs --offline` refuses if the catalog `integrity_check` or `user_version` fail. A planted-bad bandit store is also refused. A missing bandit store is a cold start (explore), not a refuse.
+- Timer/throttle: none required. `--offline` reads cache only. `gb market jobs --offline` and `gb market deploy --offline` refuse if the catalog `integrity_check` or `user_version` fail. A planted-bad bandit store is also refused. A missing bandit store is a cold start (explore), not a refuse.
 - One-way: catalog → sqlite → optional JSON stamp. Never sqlite → catalog. Never JSON → sqlite unless `--offline` and sqlite missing (rebuild cache from newest stamp, then integrity_check). Never catalog rebuild → bandit store.
 
 ## Versioning
@@ -81,7 +81,19 @@ One deployable arm per job. Thompson sampling, Beta(1,1) per arm. Not a frozen s
 - `gb market jobs` records an impression (α/β unchanged). A keep increments α; a skip increments β. Those writes are `record_outcome` on `usecases/bandit.sqlite`. Ban sets `banned=1` and is a hard filter on the next draw, not a silent β bump.
 - Product state lives under `usecases/`. Never under /tmp.
 
-A Thompson draw without a recorded keep or skip is only an impression: the arm was shown, not judged. There is no champion and no WINNER until outcomes exist. `gb market jobs` prints the full catalog `share_id` (never a 16-char slice) after recording the impression, so IMPR is the post-draw count and PULLS stays keep/skip outcomes. `gb market keep <share_id>` and `gb market skip <share_id>` are the verdicts for that subject's latest or only matching arm; they accept a unique prefix of one stored share_id so a copied truncated id still records, and they refuse if the share_id is missing, not in the store, or the prefix matches two or more arms. They never invent one. `gb market ban <share_id>` marks the arm ineligible so constrained select never draws it again. Ban is a hard filter, not a posterior tweak. Charter text and likes are not rewards.
+A Thompson draw without a recorded keep or skip is only an impression: the arm was shown, not judged. There is no champion and no WINNER until outcomes exist. `gb market jobs` prints the full catalog `share_id` (never a 16-char slice) after recording the impression, so IMPR is the post-draw count and PULLS stays keep/skip outcomes. `gb market keep <share_id>` and `gb market skip <share_id>` are the verdicts for that subject's latest or only matching arm; they accept a unique prefix of one stored share_id so a copied truncated id still records, and they refuse if the share_id is missing, not in the store, or the prefix matches two or more arms. They never invent one. `gb market ban <share_id>` marks the arm ineligible so constrained select never draws it again. Ban is a hard filter, not a posterior tweak. Charter text and likes are not rewards. keep/skip/ban still do not import or deploy.
+
+## Deploy cards (`gb market deploy`)
+
+Live. Cards plus the official share URL. Not a Bot create. Not `gb templates deploy`. Not `gb role`. Not a pack.
+
+- One or more catalog `share_id`s. No args is usage. Do not auto-deploy job draws (that would be a pack).
+- Resolve an exact id, or a unique prefix, against the catalog and — when the id is in the bandit store — via `resolve_share_id` / `list_share_ids_with_prefix`. 0 or 2+ matches refuse. Never invent a share_id.
+- Job `none` is allowed on deploy if they named the id. Taxonomy job only; name and charter do not assign one.
+- Card: NAME, JOB, SHARE_URL `https://x.ai/bot/<full share_id>` (never truncated), CHARTER as stored (or CHARTER MISSING), ORIGIN / category as display only. Empty charter still prints the URL. Do not scrape x.ai and guess a prompt.
+- JSON schema `gb-market-deploy/1` with `rows[{name, job, share_id, share_url, charter, origin}]`.
+- `--offline` is the same refuse rules as jobs.
+- Dry-run is v1. `--apply` refuses with one line: open the SHARE_URL (do not call CreateGrokBot or templates).
 
 ## Bandit store (`usecases/bandit.sqlite`, user_version 2)
 
