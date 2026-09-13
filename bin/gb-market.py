@@ -91,6 +91,29 @@ def corpus_links(doc: Optional[dict]) -> List[dict]:
     return [r for r in rows if isinstance(r, dict)]
 
 
+def _market_db():
+    import importlib.util
+
+    path = pathlib.Path(__file__).resolve().parent / "gb-market-db.py"
+    spec = importlib.util.spec_from_file_location("gb_market_db", path)
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def cache_corpus(root: pathlib.Path) -> Tuple[Optional[List[dict]], Optional[List[dict]]]:
+    """Valid sqlite cache wins over the JSON stamp. Refuse is not a silent fallback."""
+    path = root / "usecases" / "market.sqlite"
+    if not path.is_file():
+        return None, None
+    mdb = _market_db()
+    err = mdb.refuse_path(path)
+    if err:
+        return None, None
+    return mdb.load_bots(path), mdb.load_links(path)
+
+
 def official_share_id(row: Optional[dict]) -> Optional[str]:
     if not row:
         return None
@@ -221,6 +244,9 @@ def build_payload(
         return None, miss
     official = official_rows(m_doc)
     corpus = corpus_rows(u_doc)
+    cached_bots, cached_links = cache_corpus(root)
+    if cached_bots is not None:
+        corpus = cached_bots
     bots = union_bots(official, corpus)
     prev_ids = set(identities(official_rows(m_prev_doc), corpus_rows(u_prev_doc)))
     cur_ids = set(identities(official, corpus))
@@ -261,7 +287,7 @@ def build_payload(
             "usecases": u_path.name if u_path else None,
         },
         "union": len(bots),
-        "urls": url_block(corpus_links(u_doc), include_urls),
+        "urls": url_block(cached_links if cached_links is not None else corpus_links(u_doc), include_urls),
     }, None
 
 
